@@ -1,0 +1,7 @@
+[package]
+name = "sv_parser"
+version = "0.1.0"
+authors = ["Clams <clams@mail.com>"]
+edition = "2018"
+
+[dependencies]
