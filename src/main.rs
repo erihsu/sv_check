@@ -10,6 +10,9 @@ fn main() {
                 .unwrap_or_else(|_| panic!("File not found!"));
     let ts = tokenizer::TokenStream::new(&mut src);
     for t in ts {
-        println!("{:?}",t);
+        match t {
+            Ok(x)  => println!("{}", x), 
+            Err(e) => {println!("{}", e); break;},
+        }
     }
 }
