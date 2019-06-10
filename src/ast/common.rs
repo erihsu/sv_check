@@ -217,7 +217,7 @@ pub fn parse_data_type(ts : &mut TokenStream, node : &mut AstNode) -> Result<(),
     ts.rewind(0); // Ensure we start analyzing data from
     let mut t = next_t!(ts,true);
     let mut s = t.value.clone();
-    println!("[parse_data_type] First Token = {}", t);
+    // println!("[parse_data_type] First Token = {}", t);
     // First word of a data type
     match t.kind {
         // Integer vector type -> has signing and packed dimension
@@ -495,6 +495,16 @@ pub fn parse_typedef(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), Sv
         TokenKind::KwEnum => node_type = parse_enum(ts)?,
         TokenKind::KwStruct |
         TokenKind::KwUnion  => node_type = parse_struct(ts)?,
+        TokenKind::Ident         |
+        TokenKind::TypeIntAtom   |
+        TokenKind::TypeIntVector |
+        TokenKind::TypeReal      |
+        TokenKind::TypeString    |
+        TokenKind::TypeCHandle   |
+        TokenKind::TypeEvent     => {
+            node_type = AstNode::new(AstNodeKind::Typedef);
+            parse_data_type(ts,&mut node_type)?;
+        }
         _ => return Err(SvError::new(SvErrorKind::Syntax, t.pos,
                             format!("Unexpected {} ({:?}) in typedef declaration",t.value, t.kind)))
     }
@@ -503,6 +513,7 @@ pub fn parse_typedef(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), Sv
     if t.kind!=TokenKind::Ident {
         return Err(SvError::syntax(t, "typedef enum. Expecting identifier".to_string()));
     }
+    node_type.kind = AstNodeKind::Typedef;
     node_type.attr.insert("name".to_string(),t.value);
     node.child.push(node_type);
     t = next_t!(ts,false);

@@ -144,7 +144,7 @@ pub fn parse_module_body(ts : &mut TokenStream, node : &mut AstNode, cntxt : Mod
             TokenKind::KwEndModule   if cntxt == ModuleCntxt::Top      => break,
             // Any un-treated token is an error
             _ => {
-                println!("{}", node);
+                // println!("{}", node);
                 return Err(SvError::new(SvErrorKind::Syntax, t.pos,
                                 format!("Unexpected {} ({:?}) in module body",t.value, t.kind)))
             }
@@ -337,8 +337,6 @@ pub fn parse_always(ts : &mut TokenStream) -> Result<AstNode, SvError> {
     // Loop on statement, if/else / case
     parse_stmt(ts,&mut node, is_block)?;
 
-    ts.flush(0);
-    // println!("[parse_always] {}", node);
     Ok(node)
 }
 
@@ -553,6 +551,8 @@ pub fn parse_case(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), SvErr
         // println!("[parse_case] case item {}", t);
         let mut node_i =  AstNode::new(AstNodeKind::CaseItem);
         match t.kind {
+            TokenKind::OpPlus   |
+            TokenKind::OpMinus  |
             TokenKind::Integer  |
             TokenKind::Ident    |
             TokenKind::KwTagged  => {

@@ -31,11 +31,11 @@ pub enum AstNodeKind {
     Nettype(String),
     Signal(String),
     Genvar(String),
-    Typedef(String),
+    Typedef,
     Struct, Union,
     Enum, EnumIdent,
-    Function(String),
-    Task(String),
+    Function,
+    Task,
 }
 
 #[allow(dead_code)]

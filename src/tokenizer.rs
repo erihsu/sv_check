@@ -17,6 +17,9 @@ pub struct TokenStream<'a> {
 #[derive(PartialEq, Debug)]
 enum NumParseState {Start, Base, Int, Dec, Exp}
 
+#[derive(PartialEq, Debug)]
+enum NumBase {Binary, Octal, Hexa, Decimal}
+
 impl<'a> TokenStream<'a> {
 
     // Create a token stream with for a source code
@@ -177,14 +180,14 @@ impl<'a> TokenStream<'a> {
         let mut s = String::new();
         let p = self.last_pos;
         let mut has_xz = false;
-        let mut has_que = false;
+        let mut base = NumBase::Decimal;
         let mut fsm = if first_char=='\'' {NumParseState::Base} else  {NumParseState::Start};
         s.push(first_char);
         while let Some(c) = self.source.get_char() {
             match c {
                 // x/z allowed for integer number only
                 'x'|'X'|'z'|'Z' => {
-                    if fsm != NumParseState::Start && fsm != NumParseState::Int {
+                    if base != NumBase::Binary && base != NumBase::Hexa && fsm!=NumParseState::Int {
                         return Err(SvError::new(SvErrorKind::Token,p,s));
                     }
                     has_xz = true;
@@ -204,15 +207,27 @@ impl<'a> TokenStream<'a> {
                     }
                     s.push(c);
                 }
-                'b'|'o'|'h'|'d'|'B'|'O'|'H'|'D' => {
-                    if fsm != NumParseState::Base {
-                        return Err(SvError::new(SvErrorKind::Token,p,s));
-                    }
+                'b'|'B' if fsm == NumParseState::Base => {
                     fsm = NumParseState::Int;
                     s.push(c);
-                    has_que = s=="1'b".to_string();
+                    base = NumBase::Binary;
                 }
-                '?' if has_que => {
+                'o'|'O' if fsm == NumParseState::Base => {
+                    fsm = NumParseState::Int;
+                    s.push(c);
+                    base = NumBase::Octal;
+                }
+                'h'|'H' if fsm == NumParseState::Base => {
+                    fsm = NumParseState::Int;
+                    s.push(c);
+                    base = NumBase::Hexa;
+                }
+                'd'|'D' if fsm == NumParseState::Base => {
+                    fsm = NumParseState::Int;
+                    s.push(c);
+                }
+                'a'|'b'|'c'|'d'|'e'|'f'|'A'|'B'|'C'|'D'|'E'|'F' if base==NumBase::Hexa => s.push(c),
+                '?' if base==NumBase::Binary => {
                     if fsm != NumParseState::Int {
                         return Err(SvError::new(SvErrorKind::Token,p,s));
                     }

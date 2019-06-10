@@ -7,7 +7,7 @@ use std::{fs,path,io, mem, str, iter};
 #[derive(Debug, Clone)]
 pub struct Source {
     /// filename used to initialize the code
-    pub filename : String,
+    pub filename : path::PathBuf,
     /// String representing the source code to analyze
     _code : String,
     /// Current position in the code
@@ -20,9 +20,8 @@ impl Source {
 
     /// Create a Source struct from a file.
     /// Return an io error if unable to open the file
-    pub fn from_file(fname: &str) -> Result<Source,io::Error>  {
-        let filename = fname.to_string();
-        let _code = fs::read_to_string(path::Path::new(&filename))?;
+    pub fn from_file(filename: path::PathBuf) -> Result<Source,io::Error>  {
+        let _code = fs::read_to_string(&filename)?;
         let chars = unsafe { mem::transmute(_code.chars().peekable()) };
         let pos = Position::new();
         Ok(Source {filename, _code, pos, chars})

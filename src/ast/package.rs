@@ -86,7 +86,7 @@ pub fn parse_package(ts : &mut TokenStream) -> Result<AstNode, SvError> {
             TokenKind::KwEndPackage => break,
             // Any un-treated token is an error
             _ => {
-                println!("{}", node);
+                // println!("{}", node);
                 return Err(SvError::syntax(t, "in package".to_string()))
             }
         }

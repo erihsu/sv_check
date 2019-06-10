@@ -53,7 +53,7 @@ impl Ast {
                                 }
                             },
                             // Display all un-implemented token (TEMP)
-                            _ => println!("{}", t),
+                            _ => {} //println!("{}", t),
                         }
                     },
                     Err(e) => {println!("{}", e); break;},
