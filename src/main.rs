@@ -12,5 +12,8 @@ fn main() {
                 .unwrap_or_else(|_| panic!("File not found!"));
     let mut ts = tokenizer::TokenStream::new(&mut src);
     let mut ast = ast::Ast::new();
-    ast.build(&mut ts).unwrap_or_else(|e| println!("{:?}", e));
+    match ast.build(&mut ts) {
+        Err(e) => println!("{}", e),
+        _ => println!("{}", ast.tree)
+    }
 }

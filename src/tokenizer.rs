@@ -10,7 +10,7 @@ pub struct TokenStream<'a> {
     last_char: char,
     last_pos : Position,
     buffer : VecDeque<Token>,
-    rd_ptr : usize,
+    rd_ptr : u8,
 }
 
 /// Enum for the state machine parsing number
@@ -158,13 +158,17 @@ impl<'a> TokenStream<'a> {
         while let Some(c) = self.source.get_char() {
             s.push(c);
             if c == ')' && self.last_char == '*' {
-                self.last_char = ' '; // Last char is consume
+                self.last_char = ' '; // Last char is consumed
                 break;
             }
             self.last_char = c;
         }
         self.last_pos = self.source.pos;
-        Ok(Token::new(TokenKind::Attribute,s,p))
+        if s.len() == 3 {
+            Ok(Token::new(TokenKind::SensiAll,s,p))
+        } else {
+            Ok(Token::new(TokenKind::Attribute,s,p))
+        }
     }
 
 
@@ -173,6 +177,7 @@ impl<'a> TokenStream<'a> {
         let mut s = String::new();
         let p = self.last_pos;
         let mut has_xz = false;
+        let mut has_que = false;
         let mut fsm = if first_char=='\'' {NumParseState::Base} else  {NumParseState::Start};
         s.push(first_char);
         while let Some(c) = self.source.get_char() {
@@ -204,6 +209,13 @@ impl<'a> TokenStream<'a> {
                         return Err(SvError::new(SvErrorKind::Token,p,s));
                     }
                     fsm = NumParseState::Int;
+                    s.push(c);
+                    has_que = s=="1'b".to_string();
+                }
+                '?' if has_que => {
+                    if fsm != NumParseState::Int {
+                        return Err(SvError::new(SvErrorKind::Token,p,s));
+                    }
                     s.push(c);
                 }
                 // Dot -> real number
@@ -489,7 +501,10 @@ impl<'a> TokenStream<'a> {
                     '&' => return Ok(Token::new(TokenKind::OpNand ,"~&".to_string(),p)),
                     '|' => return Ok(Token::new(TokenKind::OpNor  ,"~|".to_string(),p)),
                     '^' => return Ok(Token::new(TokenKind::OpXnor ,"~^".to_string(),p)),
-                    _   => return Ok(Token::new(TokenKind::OpTilde,"~".to_string() ,p)),
+                    _   => {
+                        self.updt_last(nc);
+                        return Ok(Token::new(TokenKind::OpTilde,"~".to_string() ,p));
+                    }
                 }
             }
             // Parenthesis
@@ -522,7 +537,10 @@ impl<'a> TokenStream<'a> {
             '.' => {
                 let nc = self.source.peek_char().unwrap_or(&' ');
                 match nc {
-                    '*' => return Ok(Token::new(TokenKind::DotStar,".*".to_string(),p)),
+                    '*' => {
+                        self.source.get_char().unwrap(); // Consume next char
+                        return Ok(Token::new(TokenKind::DotStar,".*".to_string(),p));
+                    }
                     _ => return Ok(Token::new(TokenKind::Dot      ,".".to_string(),p)),
                 }
 
@@ -589,14 +607,14 @@ impl<'a> TokenStream<'a> {
     }
 
     pub fn next_non_comment(&mut self, peek: bool) -> Option<Result<Token,SvError>> {
-        // println!("Buffer = {:?} , rdptr = {}", self.buffer, self.rd_ptr);
-        if self.buffer.len()>self.rd_ptr || (!peek && self.buffer.len()>0) {
+        // println!("Buffer = {:?} , rd_ptr = {}", self.buffer, self.rd_ptr);
+        if self.buffer.len() as u8>self.rd_ptr || (!peek && self.buffer.len()>0) {
             if !peek {
                 if self.rd_ptr>0 {self.rd_ptr -= 1;}
                 return Some(Ok(self.buffer.pop_front()?));
             }
             else {
-                let t = self.buffer.get(self.rd_ptr)?;
+                let t = self.buffer.get(self.rd_ptr as usize)?;
                 self.rd_ptr += 1;
                 return Some(Ok(t.clone()));
             }
@@ -620,14 +638,29 @@ impl<'a> TokenStream<'a> {
         }
     }
 
-    pub fn flush(&mut self) {
-        // println!("Flushing: Buffer size = {:?} , rdptr = {}", self.buffer, self.rd_ptr);
-        self.buffer.clear();
-        self.rd_ptr = 0;
+    pub fn flush(&mut self, nb : u8) {
+        // println!("Flushing: Buffer size = {:?} , rd_ptr = {}", self.buffer, self.rd_ptr);
+        if nb==0 || nb>=self.buffer.len() as u8 {
+            self.buffer.clear();
+            self.rd_ptr = 0;
+        } else {
+            for _i in 0..nb {
+                self.buffer.pop_front();
+            }
+        }
     }
 
-    pub fn rewind(&mut self) {
-        self.rd_ptr = 0;
+    pub fn rewind(&mut self, nb : u8) {
+        self.rd_ptr = if nb==0 || self.rd_ptr < nb {0} else {self.rd_ptr - nb};
+    }
+
+    #[allow(dead_code)]
+    pub fn display_status(&self) {
+        let mut s = format!("Buffer with {} element / ptr = {}",self.buffer.len(),  self.rd_ptr);
+        for t in &self.buffer {
+            s = format!("{}\n - {:?}",s,t);
+        }
+        println!("{}", s);
     }
 
 }

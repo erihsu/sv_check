@@ -1,13 +1,18 @@
 mod astnode;
-mod module;
+#[macro_use]
+mod common;
+mod module_hdr;
+mod module_body;
+mod package;
 
 use astnode::*;
+use module_hdr::*;
+use module_body::*;
 use crate::token::*;
 use crate::tokenizer::*;
 use crate::error::*;
 
 
-#[allow(dead_code)]
 #[derive(Debug)]
 pub struct Ast {
     pub tree  : AstNode,
@@ -33,7 +38,16 @@ impl Ast {
                             // TODO: actually use them to try associate comment with a node
                             TokenKind::Comment => continue,
                             TokenKind::KwModule => {
-                                match module::parse_module_hdr(ts) {
+                                match parse_module_hdr(ts) {
+                                    Ok(n) => self.tree.child.push(n),
+                                    Err(e) => return Err(e)
+                                }
+                                let mut node = AstNode::new(AstNodeKind::Body);
+                                parse_module_body(ts,&mut node, ModuleCntxt::Top)?;
+                                self.tree.child.last_mut().unwrap().child.push(node);
+                            },
+                            TokenKind::KwPackage => {
+                                match package::parse_package(ts) {
                                     Ok(n) => self.tree.child.push(n),
                                     Err(e) => return Err(e)
                                 }
