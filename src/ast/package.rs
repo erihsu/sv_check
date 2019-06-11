@@ -5,7 +5,7 @@ use crate::ast::astnode::*;
 use crate::ast::common::*;
 
 
-/// This function should be called after a keyword module/macromodule
+/// This function should be called after a keyword package
 pub fn parse_package(ts : &mut TokenStream) -> Result<AstNode, SvError> {
     let mut node = AstNode::new(AstNodeKind::Package);
     // Parse package header
@@ -40,7 +40,7 @@ pub fn parse_package(ts : &mut TokenStream) -> Result<AstNode, SvError> {
                     match nt.kind {
                         TokenKind::Comma => {}, // Comma indicate a list -> continue
                         TokenKind::SemiColon => {break;}, // Semi colon indicate end of statement, stop the loop
-                        _ => return Err(SvError::syntax(t, "in param declaration, expecting , or ;".to_string()))
+                        _ => return Err(SvError::syntax(t, "param declaration, expecting , or ;".to_string()))
                     }
                 }
             }
@@ -75,19 +75,19 @@ pub fn parse_package(ts : &mut TokenStream) -> Result<AstNode, SvError> {
                     match nt.kind {
                         TokenKind::Comma => s.push_str(", "),
                         TokenKind::SemiColon => break,
-                        _ => return Err(SvError::syntax(t, "in genvar, expecting  , or ;".to_string()))
+                        _ => return Err(SvError::syntax(t, "genvar, expecting  , or ;".to_string()))
                     }
                 }
                 node.child.push(AstNode::new(AstNodeKind::Genvar(s)));
             }
-            // Identifier -> In a package it conly be a signal declaration
+            // Identifier -> In a package it can only be a signal declaration
             TokenKind::Ident => parse_signal_decl_list(ts,&mut node)?,
             // End module -> parsing of body is done
             TokenKind::KwEndPackage => break,
             // Any un-treated token is an error
             _ => {
                 // println!("{}", node);
-                return Err(SvError::syntax(t, "in package".to_string()))
+                return Err(SvError::syntax(t, "package".to_string()))
             }
         }
     }

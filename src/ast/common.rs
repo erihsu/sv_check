@@ -59,7 +59,7 @@ pub fn parse_import(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), SvE
 /// Parse a param/localparam declaration
 pub fn parse_param_decl(ts : &mut TokenStream, is_body: bool) -> Result<AstNode, SvError> {
     let mut t = next_t!(ts,true);
-    let mut node = AstNode::new(AstNodeKind::Root);
+    let mut node = AstNode::new(AstNodeKind::Param);
     // optionnal keyword param/localparam
     match t.kind {
         TokenKind::KwParam | TokenKind::KwLParam  => {
@@ -74,9 +74,9 @@ pub fn parse_param_decl(ts : &mut TokenStream, is_body: bool) -> Result<AstNode,
     t = next_t!(ts,false);
     // Parameter name
     if t.kind != TokenKind::Ident {
-        return Err(SvError::syntax(t, "in param declaration, expecting identifier".to_string()));
+        return Err(SvError::syntax(t, "param declaration, expecting identifier".to_string()));
     }
-    node.kind = AstNodeKind::Param(t.value);
+    node.attr.insert("name".to_string(), ".*".to_string());
     // Optional Unpacked dimension : [x][y:z]
     t = next_t!(ts,false);
     if t.kind == TokenKind::SquareLeft {
@@ -87,7 +87,7 @@ pub fn parse_param_decl(ts : &mut TokenStream, is_body: bool) -> Result<AstNode,
 
     // Default value i.e. "= expr"
     if t.kind != TokenKind::OpEq {
-        return Err(SvError::syntax(t, "in param declaration, expecting =".to_string()));
+        return Err(SvError::syntax(t, "param declaration, expecting =".to_string()));
     }
     let cntxt = if is_body {ExprCntxt::StmtList} else {ExprCntxt::PortList};
     let s = parse_expr(ts,cntxt)?;
@@ -132,7 +132,7 @@ pub fn parse_signal_decl(ts : &mut TokenStream, has_type: bool) -> Result<AstNod
     // Signal name
     t = next_t!(ts,false);
     if t.kind != TokenKind::Ident {
-        return Err(SvError::syntax(t, "in signal declaration, expecting identifier".to_string()))
+        return Err(SvError::syntax(t, "signal declaration, expecting identifier".to_string()))
     }
     node.kind = AstNodeKind::Signal(t.value);
     // Optional Unpacked dimension : [x][y:z]
@@ -188,23 +188,23 @@ pub fn parse_strength(ts : &mut TokenStream, node : &mut AstNode) -> Result<(), 
             let mut s = t.value;
             t = next_t!(ts,false);
             if t.kind!=TokenKind::Comma {
-                return Err(SvError::syntax(t, "in drive strength declaration, expecting ,".to_string()))
+                return Err(SvError::syntax(t, "drive strength declaration, expecting ,".to_string()))
             }
             s.push(',');
             t = next_t!(ts,false);
             if t.kind!=TokenKind::KwDrive && t.kind!=TokenKind::KwSupply {
-                return Err(SvError::syntax(t, "in drive strength declaration, expecting ,".to_string()))
+                return Err(SvError::syntax(t, "drive strength declaration, expecting ,".to_string()))
             }
             s.push_str(&t.value);
             node.attr.insert("drivee".to_string(),s);
             // TODO: Check combination are actually valid
         }
-        _ => return Err(SvError::syntax(t, "in strength declaration, expecting drive or charge".to_string()))
+        _ => return Err(SvError::syntax(t, "strength declaration, expecting drive or charge".to_string()))
     }
     // Done, expecting closing parenthesis
     t = next_t!(ts,false);
     if t.kind!=TokenKind::ParenRight {
-        return Err(SvError::syntax(t, "in strength declaration, expecting )".to_string()))
+        return Err(SvError::syntax(t, "strength declaration, expecting )".to_string()))
     }
     Ok(())
 }
@@ -630,7 +630,8 @@ pub fn parse_port_connection(ts : &mut TokenStream, node: &mut AstNode, is_param
                 if nt.kind!=TokenKind::Ident {
                     return Err(SvError::new(SvErrorKind::Syntax, nt.pos, "Expecting port name".to_string()));
                 }
-                let mut node_p = AstNode::new( if is_param {AstNodeKind::Param(nt.value)} else {AstNodeKind::Port(nt.value)});
+                let mut node_p = AstNode::new( if is_param {AstNodeKind::Param} else {AstNodeKind::Port});
+                node_p.attr.insert("name".to_string(), nt.value);
                 nt = next_t!(ts,true);
                 match nt.kind {
                     TokenKind::ParenLeft => {
@@ -655,7 +656,8 @@ pub fn parse_port_connection(ts : &mut TokenStream, node: &mut AstNode, is_param
             },
             TokenKind::DotStar if allow_dot_star => {
                 allow_dot_star = false;
-                node.child.push(AstNode::new(AstNodeKind::Port(".*".to_string())));
+                node.child.push(AstNode::new(AstNodeKind::Port));
+                node.attr.insert("name".to_string(), ".*".to_string());
             },
             // Comma -> the list continue
             TokenKind::Comma => ts.flush(0),
@@ -667,14 +669,15 @@ pub fn parse_port_connection(ts : &mut TokenStream, node: &mut AstNode, is_param
                 if allow_list {
                     ts.rewind(0);
                     let s = parse_expr(ts,ExprCntxt::PortList)?;
-                    let mut node_p = AstNode::new( if is_param {AstNodeKind::Param("".to_string())} else {AstNodeKind::Port("".to_string())});
+                    let mut node_p = AstNode::new( if is_param {AstNodeKind::Param} else {AstNodeKind::Port});
+                    node_p.attr.insert("name".to_string(), "".to_string());
                     node_p.attr.insert("bind".to_string(), s);
                     node_p.attr.insert("pos".to_string(), format!("{}",cnt));
                     node.child.push(node_p);
                     cnt += 1;
                     ts.rewind(0); //
                 } else {
-                    return Err(SvError::syntax(t, "in port connection".to_string()));
+                    return Err(SvError::syntax(t, "port connection".to_string()));
                 }
             }
         }
@@ -693,7 +696,7 @@ pub fn parse_label(ts : &mut TokenStream, node: &mut AstNode, attr_name: String)
         ts.flush(0);
         t = next_t!(ts,false);
         if t.kind!=TokenKind::Ident {
-            return Err(SvError::syntax(t, "in block name".to_string()))
+            return Err(SvError::syntax(t, "block name".to_string()))
         }
         node.attr.insert(attr_name, t.value);
         return Ok(true)
@@ -702,4 +705,35 @@ pub fn parse_label(ts : &mut TokenStream, node: &mut AstNode, attr_name: String)
         node.attr.insert(attr_name, "".to_string());
         return Ok(false);
     }
+}
+
+/// Parse Macro/Directive
+pub fn parse_macro(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), SvError> {
+    let mut node_m = AstNode::new(AstNodeKind::Macro);
+    ts.rewind(1);
+    let mut t = next_t!(ts,true);
+    node_m.attr.insert("name".to_string(),t.value.clone());
+    match t.value.as_ref() {
+        // Directive with no parameters
+        "`else" | "`endif"| "`undefineall"| "`resetall"| "`celldefine"| "`endcelldefine" => ts.flush(0),
+        // Directive with one parameter
+        "`ifndef" | "`ifdef" | "`elsif" | "`undef" => {
+            t = next_t!(ts,true);
+            if t.kind!=TokenKind::Ident {
+                return Err(SvError::syntax(t, "ifdef directive".to_string()))
+            }
+            node_m.attr.insert("param".to_string(), t.value);
+            ts.flush(0);
+        }
+        // Include directive : `include <file> , `include "file" or `include `mymacro
+        // "`include" => {
+
+        // }
+        // `default_nettype wire | tri | tri0 | tri1 | wand | triand | wor | trior | trireg | uwire | none
+        _ => return Err(SvError::syntax(t, "macro".to_string()))
+    }
+    // println!("[parse_macro] {}", node_m);
+    // ts.display_status();
+    node.child.push(node_m);
+    Ok(())
 }

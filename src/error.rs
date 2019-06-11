@@ -44,7 +44,7 @@ impl fmt::Display for SvError {
             SvErrorKind::Null         => write!(f, "End of file reached."),
             SvErrorKind::Eof          => write!(f, "Unexpected end of file !"),
             SvErrorKind::Token        => write!(f, "line {} -- Unable to parse token \"{}\" !",self.pos, self.txt),
-            SvErrorKind::Syntax       => write!(f, "line {} -- Invalid syntax {} !",self.pos, self.txt),
+            SvErrorKind::Syntax       => write!(f, "line {} -- {} !",self.pos, self.txt),
             SvErrorKind::NotSupported => write!(f, "line {} -- Unsuported syntax : {} !",self.pos, self.txt),
         }
     }

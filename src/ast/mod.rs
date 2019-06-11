@@ -4,6 +4,7 @@ mod common;
 mod module_hdr;
 mod module_body;
 mod package;
+mod interface;
 
 use astnode::*;
 use module_hdr::*;
@@ -38,13 +39,18 @@ impl Ast {
                             // TODO: actually use them to try associate comment with a node
                             TokenKind::Comment => continue,
                             TokenKind::KwModule => {
-                                match parse_module_hdr(ts) {
+                                let mut node_m = AstNode::new(AstNodeKind::Module);
+                                parse_module_hdr(ts,&mut node_m)?;
+                                let mut node_b = AstNode::new(AstNodeKind::Body);
+                                parse_module_body(ts,&mut node_b, ModuleCntxt::Top)?;
+                                node_m.child.push(node_b);
+                                self.tree.child.push(node_m);
+                            },
+                            TokenKind::KwIntf => {
+                                match interface::parse_interface(ts) {
                                     Ok(n) => self.tree.child.push(n),
                                     Err(e) => return Err(e)
                                 }
-                                let mut node = AstNode::new(AstNodeKind::Body);
-                                parse_module_body(ts,&mut node, ModuleCntxt::Top)?;
-                                self.tree.child.last_mut().unwrap().child.push(node);
                             },
                             TokenKind::KwPackage => {
                                 match package::parse_package(ts) {

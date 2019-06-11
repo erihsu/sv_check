@@ -198,7 +198,7 @@ pub fn parse_assign_c(ts : &mut TokenStream) -> Result<AstNode, SvError> {
     }
     node.attr.insert("lhs".to_string(), s);
     if t.kind!=TokenKind::OpEq {
-        return Err(SvError::syntax(t, "in assign, expecting =".to_string()));
+        return Err(SvError::syntax(t, "assign, expecting =".to_string()));
     }
     let s = parse_expr(ts,ExprCntxt::Stmt)?;
     ts.flush(0); // Parse expression let the last character in the buffer -> this was a ;
@@ -245,7 +245,7 @@ pub fn parse_assign_bnb(ts : &mut TokenStream) -> Result<AstNode, SvError> {
     match t.kind {
         TokenKind::OpEq  => node = AstNode::new(AstNodeKind::AssignB),
         TokenKind::OpLTE => node = AstNode::new(AstNodeKind::AssignNB),
-        _ => return Err(SvError::syntax(t, "in assign, expecting = or <=".to_string()))
+        _ => return Err(SvError::syntax(t, "assign, expecting = or <=".to_string()))
     }
     node.attr.insert("lhs".to_string(), s);
     s = parse_expr(ts,ExprCntxt::Stmt)?;
@@ -322,7 +322,7 @@ pub fn parse_always(ts : &mut TokenStream) -> Result<AstNode, SvError> {
                                         format!("Sensitivity list not supported for {} process",t0.value))),
             // Parse the sensitivity list
             _ => {
-                let node_s = parse_sensitivity(ts)?;
+                let node_s = parse_sensitivity(ts,true)?;
                 node.child.push(node_s);
             }
         }
@@ -343,7 +343,7 @@ pub fn parse_always(ts : &mut TokenStream) -> Result<AstNode, SvError> {
 /// Parse sensitivity list
 /// Suppose Token @ has been consumed
 /// An empty sensitivity node corresponds to @(*) or @*
-pub fn parse_sensitivity(ts : &mut TokenStream) -> Result<AstNode, SvError> {
+pub fn parse_sensitivity(ts : &mut TokenStream, is_process: bool) -> Result<AstNode, SvError> {
     let mut node = AstNode::new(AstNodeKind::Sensitivity);
     // Check next character: open parenthesis or *
     let mut t = next_t!(ts,false);
@@ -351,6 +351,10 @@ pub fn parse_sensitivity(ts : &mut TokenStream) -> Result<AstNode, SvError> {
     match t.kind {
         TokenKind::OpStar   |
         TokenKind::SensiAll => return Ok(node),
+        TokenKind::Ident if !is_process => {
+            node.attr.insert("clk_event".to_string(), t.value);
+            return Ok(node);
+        }
         TokenKind::ParenLeft => t = next_t!(ts,false),
         _ => return Err(SvError::new(SvErrorKind::Syntax, t.pos,
                             format!("Unexpected {} {:?} for sensitivity list. Expecting *, (*) or ( event list )",t.value, t.kind))),
