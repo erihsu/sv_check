@@ -709,10 +709,11 @@ pub fn parse_label(ts : &mut TokenStream, node: &mut AstNode, attr_name: String)
 
 /// Parse Macro/Directive
 pub fn parse_macro(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), SvError> {
-    let mut node_m = AstNode::new(AstNodeKind::Macro);
-    ts.rewind(1);
+    let mut node_m = AstNode::new(AstNodeKind::Directive);
+    ts.rewind(0);
     let mut t = next_t!(ts,true);
     node_m.attr.insert("name".to_string(),t.value.clone());
+    // println!("[parse_macro] First token {:?}", t);
     match t.value.as_ref() {
         // Directive with no parameters
         "`else" | "`endif"| "`undefineall"| "`resetall"| "`celldefine"| "`endcelldefine" => ts.flush(0),
@@ -726,13 +727,115 @@ pub fn parse_macro(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), SvEr
             ts.flush(0);
         }
         // Include directive : `include <file> , `include "file" or `include `mymacro
-        // "`include" => {
+        "`include" => {
+            t = next_t!(ts,true);
+            match t.kind {
+                TokenKind::Macro => {node_m.attr.insert("include".to_string(),t.value);},
+                TokenKind::Str => {node_m.attr.insert("include".to_string(),t.value);},
+                TokenKind::OpLT => {
+                    t = next_t!(ts,true);
+                    if t.kind!=TokenKind::Ident {
+                        return Err(SvError::syntax(t, "include directive".to_string()));
+                    }
+                    node_m.attr.insert("include".to_string(),t.value);
+                    t = next_t!(ts,true);
+                    if t.kind!=TokenKind::OpGT {
+                        return Err(SvError::syntax(t, "include directive".to_string()));
+                    }
+                }
+                _ => return Err(SvError::syntax(t, "include directive".to_string()))
+            }
+            ts.flush(0);
+        }
+        // Define directive : first token is the name, followed by optional argument and then the content is all token until EOL
+        "`define" => {
+            t = next_t!(ts,true);
+            if t.kind!=TokenKind::Ident {
+                return Err(SvError::syntax(t, "ifdef directive".to_string()))
+            }
+            node_m.attr.insert("name".to_string(),t.value);
+            let mut line_num = t.pos.line;
+            ts.flush(0);
+            t = next_t!(ts,true);
+            if t.pos.line != line_num {
+                ts.rewind(0);
+            } else {
+                ts.flush(0);
+                if t.kind == TokenKind::ParenLeft {
+                    loop {
+                        match t.kind {
+                            TokenKind::Ident => {
+                                let mut node_p = AstNode::new(AstNodeKind::Param);
+                                node_p.attr.insert("name".to_string(),t.value);
+                                node_m.child.push(node_p);
+                                t = next_t!(ts,false);
+                                match t.kind {
+                                    TokenKind::Comma => {},
+                                    TokenKind::ParenRight => break,
+                                    _ =>  return Err(SvError::syntax(t,"modport. Expecting , or )".to_string())),
+                                }
+                            }
+                            TokenKind::LineCont => line_num += 1,
+                            _ =>  return Err(SvError::syntax(t,"modport. Expecting port name/expression".to_string())),
+                        }
+                    }
+                }
+                let mut content = "".to_string();
+                loop {
+                    t = next_t!(ts,true);
+                    // println!("[parse_macro] Define content next token = {:?}. Current line = {} vs {}", t, line_num, t.pos.line);
+                    if t.pos.line != line_num {
+                        node_m.attr.insert("content".to_string(),content);
+                        ts.rewind(0);
+                        // println!("[parse_macro] Define content = {:?}", node_m);
+                        break;
+                    } else if t.kind == TokenKind::LineCont {
+                        line_num += 1;
+                    } else {
+                        // TODO add each token as a child to ease string interpolation
+                        // Maybe also need to properly handle space characters ...
+                        content.push_str(&t.value);
+                    }
+                    ts.flush(0);
+                }
+            }
+        }
+        // wire | tri | tri0 | tri1 | wand | triand | wor | trior | trireg | uwire | none
+        "`default_nettype" => {
+            t = next_t!(ts,true);
+            node_m.attr.insert("name".to_string(),t.value);
+            t = next_t!(ts,true);
+            if t.kind!=TokenKind::KwNetType && (t.kind!=TokenKind::Ident || t.value != "none")  {
+                return Err(SvError::syntax(t,"default_nettype. Expecting net type (wire/tri/...) or none".to_string()));
+            }
+            node_m.attr.insert("nettype".to_string(),t.value);
+            ts.flush(0);
+        }
+        // User define macro
+        _ => {
+            node_m.kind = AstNodeKind::MacroCall;
+            node_m.attr.insert("name".to_string(),t.value);
+            ts.flush(0);
+            t = next_t!(ts,true);
+            if t.kind == TokenKind::ParenLeft {
+                ts.flush(0);
+                // Parse until closing parenthesis
+                let mut s = "".to_string();
+                loop {
+                    s.push_str(&parse_expr(ts,ExprCntxt::PortList)?);
+                    t = next_t!(ts,false);
+                    if t.kind == TokenKind::ParenRight {
+                        break;
+                    }
+                }
+                node_m.attr.insert("param".to_string(),s);
+            } else {
+                ts.rewind(0);
+            }
+        }
 
-        // }
-        // `default_nettype wire | tri | tri0 | tri1 | wand | triand | wor | trior | trireg | uwire | none
-        _ => return Err(SvError::syntax(t, "macro".to_string()))
     }
-    // println!("[parse_macro] {}", node_m);
+    // println!("[parse_macro] Done -> {}", node_m);
     // ts.display_status();
     node.child.push(node_m);
     Ok(())

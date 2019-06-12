@@ -30,7 +30,7 @@ pub enum AstNodeKind {
     Nettype,
     Signal(String),
     Genvar(String),
-    Macro,
+    Directive, MacroCall,
     Typedef,
     Struct, Union,
     Enum, EnumIdent,

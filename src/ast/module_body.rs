@@ -142,6 +142,7 @@ pub fn parse_module_body(ts : &mut TokenStream, node : &mut AstNode, cntxt : Mod
             TokenKind::KwEnd         if cntxt == ModuleCntxt::IfBlock  => break,
             TokenKind::KwEndGenerate if cntxt == ModuleCntxt::Generate => break,
             TokenKind::KwEndModule   if cntxt == ModuleCntxt::Top      => break,
+            TokenKind::Macro => parse_macro(ts,node)?,
             // Any un-treated token is an error
             _ => {
                 // println!("{}", node);

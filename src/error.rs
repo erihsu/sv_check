@@ -32,7 +32,7 @@ impl SvError {
         SvError {
             kind:SvErrorKind::Syntax,
             pos: t.pos,
-            txt: format!("Unexpected {} {:?} in {}", t.value, t.kind, s)
+            txt: format!("Unexpected {} ({:?}) in {}", t.value, t.kind, s)
         }
     }
 }

@@ -7,6 +7,7 @@ mod package;
 mod interface;
 
 use astnode::*;
+use common::*;
 use module_hdr::*;
 use module_body::*;
 use crate::token::*;
@@ -31,14 +32,17 @@ impl Ast {
 
     pub fn build(&mut self, ts : &mut TokenStream) -> Result<(),SvError> {
         loop {
-            if let Some(x) = ts.next() {
+            if let Some(x) = ts.next_non_comment(true) {
+                // println!("[AST] {:?}", x);
                 match x {
-                    Ok(t)  => {
+                    Ok(t) => {
                         match t.kind {
                             // Skip Comment / Atrribute (TEMP)
                             // TODO: actually use them to try associate comment with a node
-                            TokenKind::Comment => continue,
+                            TokenKind::Comment => {},
+                            TokenKind::Macro => parse_macro(ts,&mut self.tree)?,
                             TokenKind::KwModule => {
+                                ts.flush(0);
                                 let mut node_m = AstNode::new(AstNodeKind::Module);
                                 parse_module_hdr(ts,&mut node_m)?;
                                 let mut node_b = AstNode::new(AstNodeKind::Body);
@@ -47,28 +51,32 @@ impl Ast {
                                 self.tree.child.push(node_m);
                             },
                             TokenKind::KwIntf => {
+                                ts.flush(0);
                                 match interface::parse_interface(ts) {
                                     Ok(n) => self.tree.child.push(n),
                                     Err(e) => return Err(e)
                                 }
                             },
                             TokenKind::KwPackage => {
+                                ts.flush(0);
                                 match package::parse_package(ts) {
                                     Ok(n) => self.tree.child.push(n),
                                     Err(e) => return Err(e)
                                 }
                             },
                             // Display all un-implemented token (TEMP)
-                            _ => {} //println!("{}", t),
+                            _ => {
+                                ts.flush(0);
+                                //println!("{}", t),
+                            }
                         }
-                    },
-                    Err(e) => {println!("{}", e); break;},
+                    }
+                    Err(t) => return Err(t),
                 }
+            } else {
+                return Ok(());
             }
-            else {break;}
-
         }
-        Ok(())
     }
 
 }

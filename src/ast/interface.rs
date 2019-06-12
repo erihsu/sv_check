@@ -4,7 +4,7 @@ use crate::tokenizer::TokenStream;
 use crate::ast::astnode::*;
 use crate::ast::common::*;
 use crate::ast::module_hdr::{parse_module_hdr};
-use crate::ast::module_body::{parse_instance, parse_assign_c, parse_always, parse_for, parse_if_else, parse_sensitivity};
+use crate::ast::module_body::*;
 
 // TODO: rework to reuse a maximum of what s already done in module body parser
 

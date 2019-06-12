@@ -608,6 +608,13 @@ impl<'a> TokenStream<'a> {
                     _ => Err(SvError::new(SvErrorKind::Token,p,'\''.to_string()))
                 }
             }
+            '\\' => {
+                let nc = self.source.get_char().unwrap_or(' ');
+                match nc {
+                    '\n' => Ok(Token::new(TokenKind::LineCont ,"".to_string(),p)) ,
+                    _ => Err(SvError::new(SvErrorKind::Token,p,'\\'.to_string()))
+                }
+            }
             // String
             '"' => return self.parse_string(),
             // Identifier
