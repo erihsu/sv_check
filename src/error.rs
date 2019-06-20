@@ -1,3 +1,6 @@
+// This file is part of sv_parser and subject to the terms of MIT Licence
+// Copyright (c) 2019, clams@mail.com
+
 use crate::position::Position;
 use crate::token::Token;
 use std::fmt;

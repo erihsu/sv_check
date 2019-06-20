@@ -1,3 +1,6 @@
+// This file is part of sv_parser and subject to the terms of MIT Licence
+// Copyright (c) 2019, clams@mail.com
+
 use std::fmt;
 
 /// Structure holding source code to parse with function to read char by char
