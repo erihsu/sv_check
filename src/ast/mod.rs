@@ -1,4 +1,4 @@
-// This file is part of sv_parser and subject to the terms of MIT Licence
+// This file is part of sv_check and subject to the terms of MIT Licence
 // Copyright (c) 2019, clams@mail.com
 
 mod astnode;
@@ -8,6 +8,7 @@ mod module_hdr;
 mod module_body;
 mod package;
 mod interface;
+mod class;
 
 use astnode::*;
 use common::*;
@@ -67,6 +68,15 @@ impl Ast {
                                     Err(e) => return Err(e)
                                 }
                             },
+                            TokenKind::KwTypedef => parse_typedef(ts,&mut self.tree)?,
+                            TokenKind::KwClass => self.tree.child.push(class::parse_class(ts)?),
+                            TokenKind::KwVirtual => {
+                                let nt = next_t!(ts,true);
+                                match nt.kind {
+                                    TokenKind::KwClass => self.tree.child.push(class::parse_class(ts)?),
+                                    _ => return Err(SvError::syntax(nt, "virtual declaration. Expecting class".to_string()))
+                                }
+                            }
                             // Display all un-implemented token (TEMP)
                             _ => {
                                 ts.flush(0);

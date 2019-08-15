@@ -1,4 +1,4 @@
-// This file is part of sv_parser and subject to the terms of MIT Licence
+// This file is part of sv_check and subject to the terms of MIT Licence
 // Copyright (c) 2019, clams@mail.com
 
 use crate::position::Position;
@@ -18,7 +18,7 @@ pub struct TokenStream<'a> {
 
 /// Enum for the state machine parsing number
 #[derive(PartialEq, Debug)]
-enum NumParseState {Start, Base, Int, Dec, Exp}
+enum NumParseState {Start, Base, IntStart, Int, Dec, Exp}
 
 #[derive(PartialEq, Debug)]
 enum NumBase {Binary, Octal, Hexa, Decimal}
@@ -62,8 +62,12 @@ impl<'a> TokenStream<'a> {
         let p = self.last_pos;
         let mut is_pathpulse = false;
         let mut is_casting = false;
+        let mut second_char = ' ';
         while let Some(c) = self.source.get_char() {
-            if !c.is_alphanumeric() && c!='_' {
+            if s.len()==1 {
+                second_char = c;
+            }
+            if !c.is_alphanumeric() && c!='_' && !(s.len()==1 && second_char=='`' && first_char=='`'){
                 match c {
                     '$' if s=="PATHPULSE" => {
                         s.push(c);
@@ -93,10 +97,23 @@ impl<'a> TokenStream<'a> {
                 TokenKind::SystemTask
             }
             else if first_char == '`' {
-                if is_pathpulse || is_casting || s.len()==1 {
+                if is_pathpulse || s.len()==1 {
                     return Err(SvError::new(SvErrorKind::Token,p,s));
+                } else if is_casting {
+                    let nc = self.source.peek_char().unwrap_or(&' ');
+                    match nc {
+                        'b'|'B'|'o'|'O'|'h'|'H'|'d'|'D' => {
+                            let t = self.parse_number('\'')?;
+                            s.push_str(&t.value);
+                            return Ok(Token::new(t.kind,s,p));
+                        }
+                        '(' => {},
+                        _ => {return Err(SvError::new(SvErrorKind::Token,p,s));}
+                    }
                 }
-                TokenKind::Macro
+                if is_casting {TokenKind::Casting}
+                else if second_char=='`' && first_char=='`' {TokenKind::IdentInterpolated}
+                else {TokenKind::Macro}
             }
             else if is_casting {TokenKind::Casting}
             else if let Some(k) = basetype_from_str(s.as_ref()) {k}
@@ -111,8 +128,8 @@ impl<'a> TokenStream<'a> {
     }
 
     /// Get all characters until end of string
-    fn parse_string(&mut self) -> Result<Token,SvError> {
-        let mut s = String::from("\"");
+    fn parse_string(&mut self, is_macro: bool) -> Result<Token,SvError> {
+        let mut s = if is_macro {String::from("`\"")} else {String::from("\"")};
         let p = self.last_pos;
         while let Some(c) = self.source.get_char() {
             s.push(c);
@@ -187,14 +204,17 @@ impl<'a> TokenStream<'a> {
         let mut fsm = if first_char=='\'' {NumParseState::Base} else  {NumParseState::Start};
         s.push(first_char);
         while let Some(c) = self.source.get_char() {
+            if fsm==NumParseState::IntStart && !c.is_whitespace() {
+                fsm = NumParseState::Int;
+            }
+            // println!("[parse_number] char {} ({}), fsm={:?}, base={:?}, has_xz={}", c,c.is_whitespace(),fsm,base,has_xz);
             match c {
                 // x/z allowed for integer number only
                 'x'|'X'|'z'|'Z' => {
-                    if base != NumBase::Binary && base != NumBase::Hexa && fsm!=NumParseState::Int {
+                    if base != NumBase::Binary && base != NumBase::Hexa && fsm!=NumParseState::Int && &s!="'" {
                         return Err(SvError::new(SvErrorKind::Token,p,s));
                     }
                     has_xz = true;
-                    s.push(c);
                 }
                 // Base specifier
                 '\'' => {
@@ -202,47 +222,41 @@ impl<'a> TokenStream<'a> {
                         return Err(SvError::new(SvErrorKind::Token,p,s));
                     }
                     fsm = NumParseState::Base;
-                    s.push(c);
                 },
-                's'|'S' => {
-                    if fsm != NumParseState::Base || self.last_char!='\'' {
-                        return Err(SvError::new(SvErrorKind::Token,p,s));
-                    }
-                    s.push(c);
+                // s following a number can be the time unit
+                's' if fsm != NumParseState::Base => {
+                    self.last_char = c;
+                    break;
                 }
+                // s in the base part indicates a signed value
+                's'|'S' if fsm == NumParseState::Base => {}
                 'b'|'B' if fsm == NumParseState::Base => {
-                    fsm = NumParseState::Int;
-                    s.push(c);
+                    fsm = NumParseState::IntStart;
                     base = NumBase::Binary;
                 }
                 'o'|'O' if fsm == NumParseState::Base => {
-                    fsm = NumParseState::Int;
-                    s.push(c);
+                    fsm = NumParseState::IntStart;
                     base = NumBase::Octal;
                 }
                 'h'|'H' if fsm == NumParseState::Base => {
-                    fsm = NumParseState::Int;
-                    s.push(c);
+                    fsm = NumParseState::IntStart;
                     base = NumBase::Hexa;
                 }
                 'd'|'D' if fsm == NumParseState::Base => {
-                    fsm = NumParseState::Int;
-                    s.push(c);
+                    fsm = NumParseState::IntStart;
                 }
-                'a'|'b'|'c'|'d'|'e'|'f'|'A'|'B'|'C'|'D'|'E'|'F' if base==NumBase::Hexa => s.push(c),
-                '?' if base==NumBase::Binary => {
-                    if fsm != NumParseState::Int {
-                        return Err(SvError::new(SvErrorKind::Token,p,s));
-                    }
-                    s.push(c);
+                'a'|'b'|'c'|'d'|'e'|'f'|'A'|'B'|'C'|'D'|'E'|'F' if base==NumBase::Hexa => {},
+                '?' if base==NumBase::Binary && fsm != NumParseState::Int => {
+                    return Err(SvError::new(SvErrorKind::Token,p,s));
                 }
+                // _ can be used inside the value as a separator
+                '_' if fsm != NumParseState::Base => {}
                 // Dot -> real number
                 '.' => {
                     if fsm != NumParseState::Start || has_xz {
                         return Err(SvError::new(SvErrorKind::Token,p,s));
                     }
                     fsm = NumParseState::Dec;
-                    s.push(c);
                 }
                 // Exponent -> real number
                 'e' | 'E' => {
@@ -250,23 +264,30 @@ impl<'a> TokenStream<'a> {
                         return Err(SvError::new(SvErrorKind::Token,p,s));
                     }
                     fsm = NumParseState::Exp;
-                    s.push(c);
                 }
                 // Sign exponent
                 '+' | '-' => {
-                    if fsm == NumParseState::Exp && (self.last_char=='e' || self.last_char=='E') {
-                        s.push(c);
-                    } else {break;}
+                    if fsm != NumParseState::Exp || (self.last_char!='e' && self.last_char!='E') {
+                        self.last_char = c;
+                        break;
+                    }
                 }
                 // Standard number
-                _ if c.is_digit(10) => s.push(c),
+                _ if c.is_digit(10) => {},
+                // Standard number
+                _ if c.is_whitespace() && fsm==NumParseState::IntStart => {},
                 // Not part of a number -> Token is ready
                 _ => {
                     self.last_char = c;
                     break
                 }
             }
+            s.push(c);
             self.last_char = c;
+            if &s=="'0" || &s=="'1" || &s=="'x" || &s=="'z" || &s=="'X" || &s=="'Z" {
+                self.last_char = ' ';
+                break;
+            }
         }
         self.last_pos = self.source.pos;
         let k = if fsm==NumParseState::Dec || fsm==NumParseState::Exp {TokenKind::Real} else {TokenKind::Integer};
@@ -278,6 +299,7 @@ impl<'a> TokenStream<'a> {
         let c = self.get_first_char().ok_or(SvError::new(SvErrorKind::Null,self.last_pos,"".to_string()))?;
         let p = self.last_pos; // Save position of this first char since it will
         self.last_char = ' ';
+        // println!("[get_next_token] Character {} @ {}", c, self.source.pos );
         match c {
             // Operator
             '/' => {
@@ -605,9 +627,13 @@ impl<'a> TokenStream<'a> {
             }
             //
             '\'' => {
-                let nc = self.source.get_char().unwrap_or(' ');
+                let nc = self.source.peek_char().unwrap_or(&' ');
                 match nc {
-                    '{' => Ok(Token::new(TokenKind::TickCurly ,"'{".to_string(),p)) ,
+                    '{' => {
+                        self.source.get_char().unwrap(); // Consume next char
+                        Ok(Token::new(TokenKind::TickCurly ,"'{".to_string(),p))
+                    },
+                    'h'|'d'|'o'|'b'|'x'|'z'|'H'|'D'|'O'|'B'|'X'|'Z'|'1'|'0' => return self.parse_number(c),
                     _ => Err(SvError::new(SvErrorKind::Token,p,'\''.to_string()))
                 }
             }
@@ -619,7 +645,18 @@ impl<'a> TokenStream<'a> {
                 }
             }
             // String
-            '"' => return self.parse_string(),
+            '"' => return self.parse_string(false),
+            //
+            '`' => {
+                let nc = self.source.peek_char().unwrap_or(&' ');
+                match nc {
+                    '"' => {
+                        self.source.get_char().unwrap();
+                        return self.parse_string(true);
+                    },
+                    _ => return self.parse_ident(c)
+                }
+            }
             // Identifier
             _ => {
                 if c.is_digit(10) {
@@ -647,7 +684,7 @@ impl<'a> TokenStream<'a> {
         loop {
             match self.next() {
                 Some(Ok(t)) => {
-                    if t.kind!=TokenKind::Comment {
+                    if t.kind!=TokenKind::Comment && t.kind!=TokenKind::Attribute {
                         if peek {
                             self.buffer.push_back(t.clone());
                             self.rd_ptr += 1;
@@ -671,6 +708,7 @@ impl<'a> TokenStream<'a> {
         } else {
             for _i in 0..nb {
                 self.buffer.pop_front();
+                self.rd_ptr -= 1;
             }
         }
     }
@@ -679,9 +717,39 @@ impl<'a> TokenStream<'a> {
         self.rd_ptr = if nb==0 || self.rd_ptr < nb {0} else {self.rd_ptr - nb};
     }
 
+    pub fn skip_until(&mut self, tk_end: TokenKind) -> Result<(),SvError> {
+        // Count the (), {} and begin/end
+        let mut cnt_p = 0;
+        let mut cnt_c = 0;
+        let mut cnt_b = 0;
+        self.flush(0);
+        loop {
+            match self.next() {
+                Some(Ok(t)) => {
+                    match t.kind {
+                        TokenKind::ParenLeft  => cnt_p += 1,
+                        TokenKind::ParenRight => cnt_p -= 1,
+                        TokenKind::CurlyLeft  => cnt_c += 1,
+                        TokenKind::CurlyRight => cnt_c -= 1,
+                        TokenKind::KwBegin => cnt_b += 1,
+                        TokenKind::KwEnd   => cnt_b -= 1,
+                        _ => {}
+                    }
+                    if t.kind==tk_end && cnt_p<=0 && cnt_b<=0 && cnt_c<=0 {
+                        break;
+                    }
+                }
+                Some(Err(t)) => return Err(t),
+                None => return Err(SvError::eof())
+            };
+        }
+        self.last_pos = self.source.pos;
+        Ok(())
+    }
+
     #[allow(dead_code)]
-    pub fn display_status(&self) {
-        let mut s = format!("Buffer with {} element / ptr = {}",self.buffer.len(),  self.rd_ptr);
+    pub fn display_status(&self, comment : &str) {
+        let mut s = format!("{} : Last pos = {}, Buffer with {} element / ptr = {}",comment,self.last_pos, self.buffer.len(),  self.rd_ptr);
         for t in &self.buffer {
             s = format!("{}\n - {:?}",s,t);
         }

@@ -1,44 +1,47 @@
-// This file is part of sv_parser and subject to the terms of MIT Licence
+// This file is part of sv_check and subject to the terms of MIT Licence
 // Copyright (c) 2019, clams@mail.com
 
 use std::collections::HashMap;
 use std::fmt;
 
 #[allow(dead_code)]
-#[derive(Debug)]
+#[derive(PartialEq, Debug)]
 pub enum AstNodeKind {
     Root, // first node of a tree
-    // Top Level Nodes
-    Module,
-    Class(String),
+    Module, Ports, Port, Params, Param,
+    Class, Extends, Implements, Function, Task,
+    Constraint, Covergroup,
     Interface, Modport, Clocking,
     Package,
     Program,
     Udp,
-    Bind,
     Config,
     //
     Header,
     Body,
     //
-    Port, Param,
+    Identifier,
     Import,
-    AssignC, AssignB, AssignNB,
-    Process(String),
-    // Sensitivity list: contains child of Event(signal_name), each with an optional attribute of edge
+    Assign,
+    Statement, Block,
+    Process,
     Sensitivity,
-    Event(String),
-    Branch, Case, CaseItem, LoopFor,
-    Instance(String),
+    Event, EventCtrl,
+    Fork,
+    Wait,
+    Branch, Case, CaseItem, LoopFor,Loop,
+    Instances,Instance,Bind,
     Nettype,
-    Signal(String),
+    Declaration, MethodCall, SystemTask,
+    Expr, ExprGroup, Operation,
+    New, Args, Slice, Value, Return,
+    Assert,
+    VIntf,
     Genvar(String),
-    Directive, MacroCall,
-    Typedef,
-    Struct, Union,
+    Directive, MacroCall, Timescale,
+    Type, Typedef, Scope,
+    Struct, Union, StructInit, Concat, Replication,
     Enum, EnumIdent,
-    Function,
-    Task,
 }
 
 #[allow(dead_code)]

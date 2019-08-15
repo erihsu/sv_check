@@ -1,4 +1,4 @@
-// This file is part of sv_parser and subject to the terms of MIT Licence
+// This file is part of sv_check and subject to the terms of MIT Licence
 // Copyright (c) 2019, clams@mail.com
 
 use crate::error::{SvError};
@@ -6,6 +6,8 @@ use crate::token::{TokenKind};
 use crate::tokenizer::TokenStream;
 use crate::ast::astnode::*;
 use crate::ast::common::*;
+use crate::ast::module_body::{parse_timescale};
+use crate::ast::class::{parse_func,parse_task};
 
 
 /// This function should be called after a keyword package
@@ -31,7 +33,8 @@ pub fn parse_package(ts : &mut TokenStream) -> Result<AstNode, SvError> {
         // println!("[parse_module_body] Token = {}", t);
         match t.kind {
             // Import statement
-            TokenKind::KwImport => parse_import(ts,&mut node)?,
+            TokenKind::KwImport | TokenKind::KwExport => parse_import(ts,&mut node)?,
+            TokenKind::KwTimeunit | TokenKind::KwTimeprec => parse_timescale(ts,&mut node)?,
             // Only local param declaration
             TokenKind::KwLParam => {
                 ts.rewind(1); // put back the token so that it can be read by the parse param function
@@ -48,6 +51,7 @@ pub fn parse_package(ts : &mut TokenStream) -> Result<AstNode, SvError> {
                 }
             }
             // Nettype (might need another function to parse the signal to include strength/charge, delay, ...)
+            TokenKind::KwConst   |
             TokenKind::KwNetType |
             TokenKind::KwSupply  =>  parse_signal_decl_list(ts,&mut node)?,
             // Basetype
@@ -85,6 +89,9 @@ pub fn parse_package(ts : &mut TokenStream) -> Result<AstNode, SvError> {
             }
             // Identifier -> In a package it can only be a signal declaration
             TokenKind::Ident => parse_signal_decl_list(ts,&mut node)?,
+            TokenKind::Macro => parse_macro(ts,&mut node)?,
+            TokenKind::KwFunction => parse_func(ts, &mut node, false, false)?,
+            TokenKind::KwTask     => parse_task(ts, &mut node)?,
             // End module -> parsing of body is done
             TokenKind::KwEndPackage => break,
             // Any un-treated token is an error

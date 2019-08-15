@@ -1,4 +1,4 @@
-// This file is part of sv_parser and subject to the terms of MIT Licence
+// This file is part of sv_check and subject to the terms of MIT Licence
 // Copyright (c) 2019, clams@mail.com
 
 use crate::error::{SvErrorKind, SvError, };
@@ -6,6 +6,7 @@ use crate::token::{TokenKind};
 use crate::tokenizer::TokenStream;
 use crate::ast::astnode::*;
 use crate::ast::common::*;
+use crate::ast::class::{parse_func,parse_task,parse_class_stmt_or_block};
 
 // TODO
 // - when parsing named block, ensure the name is unique
@@ -13,7 +14,7 @@ use crate::ast::common::*;
 #[allow(dead_code)]
 #[derive(PartialEq,Debug)]
 pub enum ModuleCntxt {
-    Top, Generate, ForBlock, IfBlock, ForStmt, IfStmt
+    Top, Generate, Block, ForStmt, IfStmt
 }
 
 
@@ -30,16 +31,19 @@ pub fn parse_module_body(ts : &mut TokenStream, node : &mut AstNode, cntxt : Mod
                 ts.rewind(1); // put back the token so that it can be read by the parse param function
                 // potential list of param (the parse function extract only one at a time)
                 loop {
-                    let node_param = parse_param_decl(ts,true)?;
-                    node.child.push(node_param);
-                    let nt = next_t!(ts,false);
-                    match nt.kind {
-                        TokenKind::Comma => {}, // Comma indicate a list -> continue
-                        TokenKind::SemiColon => {break;}, // Semi colon indicate end of statement, stop the loop
-                        _ => return Err(SvError::new(SvErrorKind::Syntax, t.pos,
-                                format!("Unexpected {} ({:?}) in param declaration, expecting , or ;",t.value, t.kind)))
-                    }
+                    node.child.push(parse_param_decl(ts,true)?);
+                    loop_args_break_cont!(ts,"parameter declaration",SemiColon);
                 }
+            }
+            // Port
+            TokenKind::KwInput | TokenKind::KwOutput | TokenKind::KwInout | TokenKind::KwRef => {
+                ts.rewind(1); // put back the token so that it can be read by the parse param function
+                // potential list of param (the parse function extract only one at a time)
+                loop {
+                    node.child.push(parse_port_decl(ts,false)?);
+                    loop_args_break_cont!(ts,"parameter declaration",SemiColon);
+                }
+
             }
             // Nettype
             TokenKind::KwNetType |
@@ -86,6 +90,14 @@ pub fn parse_module_body(ts : &mut TokenStream, node : &mut AstNode, cntxt : Mod
                 match nt.kind {
                     // Scope -> this is a type definition
                     TokenKind::Scope => parse_signal_decl_list(ts,node)?,
+                    //
+                    TokenKind::Colon => {
+                        ts.flush(2);
+                        let mut n = AstNode::new(AstNodeKind::Statement);
+                        n.attr.insert("label".to_string(),t.value);
+                        // Expect assertion: not support for the moment ...
+                        ts.skip_until(TokenKind::SemiColon)?;
+                    }
                     // Identifier : could be a signal declaration or a module/interface instantiation
                     TokenKind::Ident => {
                         let nnt = next_t!(ts,true);
@@ -95,7 +107,7 @@ pub fn parse_module_body(ts : &mut TokenStream, node : &mut AstNode, cntxt : Mod
                             // Semi colon or comma indicate signal declaration
                             TokenKind::SemiColon |
                             TokenKind::Comma     =>  parse_signal_decl_list(ts,node)?,
-                            // Range -> can be either an unpacked array declaration or an array of instance ...
+                            // Slice -> can be either an unpacked array declaration or an array of instance ...
                             // TODO: handle case of array of instances
                             TokenKind::SquareLeft =>  {
                                 parse_signal_decl_list(ts,node)?;
@@ -119,38 +131,50 @@ pub fn parse_module_body(ts : &mut TokenStream, node : &mut AstNode, cntxt : Mod
                             format!("Unexpected '{} {}' in signal declaration, expecting type or instance",t.value, nt.value)))
                 }
             }
-            // End module -> parsing of body is done
-            TokenKind::KwAssign => {
-                ts.flush(0); // Consume assign keyword (should not be present to parse it)
-                let node_assign = parse_assign_c(ts)?;
-                node.child.push(node_assign);
+            TokenKind::KwBind => parse_bind(ts,node)?,
+            //
+            TokenKind::KwAssign | TokenKind::KwDefparam => {
+                ts.rewind(1);
+                node.child.push(parse_assign_c(ts)?);
             }
             // Always keyword
             TokenKind::KwAlways  |
             TokenKind::KwAlwaysC |
             TokenKind::KwAlwaysF |
-            TokenKind::KwAlwaysL => {
-                let node_proc = parse_always(ts)?;
-                node.child.push(node_proc);
-            }
+            TokenKind::KwAlwaysL  => parse_always(ts, node)?,
+            TokenKind::KwInitial  => parse_initial(ts, node)?,
+            TokenKind::KwFunction => parse_func(ts, node, false, false)?,
+            TokenKind::KwTask     => parse_task(ts, node)?,
             //
-            TokenKind::KwGenerate if cntxt==ModuleCntxt::Top => parse_module_body(ts,node,ModuleCntxt::Generate)?,
-            TokenKind::KwFor  => parse_for(ts,node)?,
+            TokenKind::KwTimeunit | TokenKind::KwTimeprec => parse_timescale(ts,node)?,
+            //
+            TokenKind::KwGenerate if cntxt==ModuleCntxt::Top => {
+                ts.flush(0);
+                parse_module_body(ts,node,ModuleCntxt::Generate)?;
+            }
+            TokenKind::KwFor  => parse_for(ts,node,true)?,
             TokenKind::KwIf   => {
                 ts.flush(0);
                 parse_if_else(ts,node, "if".to_string(), true)?;
             }
+            TokenKind::KwBegin => {
+                ts.flush(0);
+                let mut n = AstNode::new(AstNodeKind::Block);
+                parse_label(ts,&mut n,"block".to_string())?;
+                parse_module_body(ts,&mut n, ModuleCntxt::Block)?;
+                if n.attr["block"]!="" {
+                    check_label(ts, &n.attr["block"])?;
+                }
+            }
             // End of loop depends on context
-            TokenKind::KwEnd         if cntxt == ModuleCntxt::ForBlock => break,
-            TokenKind::KwEnd         if cntxt == ModuleCntxt::IfBlock  => break,
+            TokenKind::KwEnd         if cntxt == ModuleCntxt::Block    => break,
             TokenKind::KwEndGenerate if cntxt == ModuleCntxt::Generate => break,
             TokenKind::KwEndModule   if cntxt == ModuleCntxt::Top      => break,
             TokenKind::Macro => parse_macro(ts,node)?,
             // Any un-treated token is an error
             _ => {
                 // println!("{}", node);
-                return Err(SvError::new(SvErrorKind::Syntax, t.pos,
-                                format!("Unexpected {} ({:?}) in module body",t.value, t.kind)))
+                return Err(SvError::syntax(t, "module body".to_string()))
             }
         }
 
@@ -163,47 +187,15 @@ pub fn parse_module_body(ts : &mut TokenStream, node : &mut AstNode, cntxt : Mod
     // Err(SvError {kind:SvErrorKind::NotSupported, pos: t.pos, txt: "Module body".to_string()})
 }
 
-// Parse a continous assignment.
-// Suppose assign keyword was already consumed
+// Parse a continous assignment / defparam
 pub fn parse_assign_c(ts : &mut TokenStream) -> Result<AstNode, SvError> {
-
-    let mut t = next_t!(ts,false);
-    let mut node = AstNode::new(AstNodeKind::AssignC);
-    let mut s;
-    // println!("[parse_assign_c] First Token = {}", t);
-    loop {
-        match t.kind {
-            TokenKind::Ident => {
-                s = t.value;
-                break;
-            }
-            // TODO: support drive/delay
-            _ => return Err(SvError::new(SvErrorKind::Syntax, t.pos,
-                        format!("Unexpected {} ({:?}) in assign LHS.",t.value, t.kind)))
-        }
-    }
-    //
-    t = next_t!(ts,false);
-    // Check for hierarchical access
-    while t.kind == TokenKind::Dot {
-        s.push('.');
-        t = next_t!(ts,false);
-        if t.kind!=TokenKind::Ident {
-            return Err(SvError::syntax(t, "after dot in assign, expecting identifier".to_string()));
-        }
-        s.push_str(&t.value);
-        t = next_t!(ts,false);
-    }
-    // Check for optional range
-    if t.kind==TokenKind::SquareLeft {
-        let r = parse_range(ts)?;
-        s.push_str(&r);
-        t = next_t!(ts,false);
-    }
-    node.attr.insert("lhs".to_string(), s);
-    if t.kind!=TokenKind::OpEq {
-        return Err(SvError::syntax(t, "assign, expecting =".to_string()));
-    }
+    let mut node = AstNode::new(AstNodeKind::Assign);
+    let t = next_t!(ts,false); // Get first word: expect assign or defparam
+    node.attr.insert("kind".to_string(),t.value);
+    // TODO: support drive/delay
+    // t = next_t!(ts,true);
+    node.child.push(parse_ident_hier(ts)?);
+    expect_t!(ts,"continuous assignment",TokenKind::OpEq);
     let s = parse_expr(ts,ExprCntxt::Stmt)?;
     ts.flush(0); // Parse expression let the last character in the buffer -> this was a ;
     node.attr.insert("rhs".to_string(), s);
@@ -212,112 +204,74 @@ pub fn parse_assign_c(ts : &mut TokenStream) -> Result<AstNode, SvError> {
 }
 
 pub fn parse_assign_bnb(ts : &mut TokenStream) -> Result<AstNode, SvError> {
-
-    let mut t = next_t!(ts,false);
-    let mut node;
-    let mut s;
-    loop {
-        match t.kind {
-            TokenKind::Ident => {
-                s = t.value;
-                break;
-            }
-            // TODO: support drive/delay
-            _ => return Err(SvError::new(SvErrorKind::Syntax, t.pos,
-                        format!("Unexpected {} ({:?}) in assign LHS.",t.value, t.kind)))
+    let mut node = AstNode::new(AstNodeKind::Assign);
+    // Parse LHS
+    node.child.push(parse_ident_hier(ts)?);
+    // Expect <=, = or composed asisgnement
+    let mut t = expect_t!(ts,"assign",TokenKind::OpLTE,TokenKind::OpEq,TokenKind::OpCompAss);
+    node.attr.insert("kind".to_string(),t.value);
+    // Optional delay
+    if t.kind==TokenKind::OpLTE {
+        t = next_t!(ts,true);
+        if t.kind==TokenKind::Hash {
+            node.child.push(parse_delay(ts)?);
+        } else {
+            ts.rewind(1);
         }
     }
     //
-    t = next_t!(ts,false);
-    // Check for hierarchical access
-    while t.kind == TokenKind::Dot {
-        s.push('.');
-        t = next_t!(ts,false);
-        if t.kind!=TokenKind::Ident {
-            return Err(SvError::syntax(t, "after dot in assign, expecting identifier".to_string()));
-        }
-        s.push_str(&t.value);
-        t = next_t!(ts,false);
-    }
-    // Check for optional range
-    if t.kind==TokenKind::SquareLeft {
-        let r = parse_range(ts)?;
-        s.push_str(r.as_ref());
-        t = next_t!(ts,false);
-    }
-
-    match t.kind {
-        TokenKind::OpEq  => node = AstNode::new(AstNodeKind::AssignB),
-        TokenKind::OpLTE => node = AstNode::new(AstNodeKind::AssignNB),
-        _ => return Err(SvError::syntax(t, "assign, expecting = or <=".to_string()))
-    }
-    node.attr.insert("lhs".to_string(), s);
-    s = parse_expr(ts,ExprCntxt::Stmt)?;
-    ts.flush(0); // Parse expression let the last character in the buffer -> this was a ;
-    // println!("[parse_assign_bnb] {}", s.clone());
-    node.attr.insert("rhs".to_string(), s);
+    node.child.push(parse_class_expr(ts,ExprCntxt::Stmt,false)?);
+    ts.flush(0); // consume the ;
+    // println!("[parse_assign_c] {}", node);
     Ok(node)
 }
 
 // Parse an instance
+#[allow(unused_assignments)]
 pub fn parse_instance(ts : &mut TokenStream) -> Result<AstNode, SvError> {
-    let mut node;
+    let mut node = AstNode::new(AstNodeKind::Instances);
     // First token is the module type
     ts.rewind(0);
-    // ts.display_status();
+    // ts.display_status("");
     let mut t = next_t!(ts,false);
-    node = AstNode::new(AstNodeKind::Instance(t.value));
+    node.attr.insert("type".to_string(), t.value);
     t = next_t!(ts,true);
-    if t.kind==TokenKind::Hash {
-        ts.flush(0); // Cons ume the hash token
-        parse_port_connection(ts,&mut node,true)?;
-    } else {
-        ts.rewind(0);
-    }
+    parse_opt_params!(ts,node,t);
+    ts.rewind(0);
     // Instances can be a list
     loop {
-        t = next_t!(ts,false);
-        if t.kind!=TokenKind::Ident {
-            return Err(SvError::new(SvErrorKind::Syntax, t.pos,
-                        format!("Expecting instance name, got {} {:?}",t.value, t.kind)));
-        }
-        // TODO: maybe differentiate instance type and instance name ?
-        let mut node_i = AstNode::new(AstNodeKind::Instance(t.value));
-        t = next_t!(ts,true);
-        // TODO: Test for array of instance
-        if t.kind==TokenKind::SquareLeft {
-            unimplemented!("Instance array are not supported yet");
-        }
-        ts.rewind(0);;
+        t = expect_t!(ts,"instance name",TokenKind::Ident);
+        let mut node_i = AstNode::new(AstNodeKind::Instance);
+        node_i.attr.insert("name".to_string(), t.value);
+        // Test for array of instance
+        parse_opt_slice(ts, &mut node_i, false)?;
         parse_port_connection(ts,&mut node_i,false)?;
-        t = next_t!(ts,false);
-        match t.kind {
-            TokenKind::Comma => node.child.push(node_i),
-            TokenKind::SemiColon => {
-                node.child.push(node_i);
-                break;
-            },
-            _ => return Err(SvError::new(SvErrorKind::Syntax, t.pos,
-                            format!("Expecting , or ; at end of instantiation. Got {} ({:?})",t.value, t.kind)))
-
-        }
-        if t.kind!=TokenKind::Ident {
-            return Err(SvError::new(SvErrorKind::Syntax, t.pos,
-                        format!("Expecting instance name, got {} {:?}",t.value, t.kind)));
-        }
+        node.child.push(node_i);
+        loop_args_break_cont!(ts,"param declaration",SemiColon);
     }
     // println!("[Instance] {}",node);
     Ok(node)
 }
 
+// Parse an instance
+#[allow(unused_assignments)]
+pub fn parse_bind(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), SvError> {
+    ts.flush(1); // consume the bind keyword
+    let mut n = AstNode::new(AstNodeKind::Bind);
+    n.child.push(parse_ident_hier(ts)?); // TODO: handle variant of binding style
+    n.child.push(parse_instance(ts)?);
+    node.child.push(n);
+    Ok(())
+}
+
 /// Parse an always block
-pub fn parse_always(ts : &mut TokenStream) -> Result<AstNode, SvError> {
+pub fn parse_always(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), SvError> {
     let t0 = next_t!(ts,false);
-    let mut node = AstNode::new(AstNodeKind::Process(t0.value.clone()));
+    let mut n = AstNode::new(AstNodeKind::Process);
     let mut is_block = false;
     let mut t = next_t!(ts,true);
-
-    // println!("[parse_always] Node {}\nFirst Token {}",node, t);
+    n.attr.insert("kind".to_string(),t0.value.clone());
+    // println!("[parse_always] Node {}\nFirst Token {}",n, t);
     if t.kind == TokenKind::At {
         ts.flush(0);
         match t0.kind {
@@ -327,7 +281,7 @@ pub fn parse_always(ts : &mut TokenStream) -> Result<AstNode, SvError> {
             // Parse the sensitivity list
             _ => {
                 let node_s = parse_sensitivity(ts,true)?;
-                node.child.push(node_s);
+                n.child.push(node_s);
             }
         }
 
@@ -336,12 +290,12 @@ pub fn parse_always(ts : &mut TokenStream) -> Result<AstNode, SvError> {
     }
     if t.kind == TokenKind::KwBegin {
         is_block = true;
-        parse_label(ts,&mut node,"block".to_string())?;
+        parse_label(ts,&mut n,"block".to_string())?;
     }
     // Loop on statement, if/else / case
-    parse_stmt(ts,&mut node, is_block)?;
-
-    Ok(node)
+    parse_stmt(ts,&mut n, is_block)?;
+    node.child.push(n);
+    Ok(())
 }
 
 /// Parse sensitivity list
@@ -359,44 +313,56 @@ pub fn parse_sensitivity(ts : &mut TokenStream, is_process: bool) -> Result<AstN
             node.attr.insert("clk_event".to_string(), t.value);
             return Ok(node);
         }
-        TokenKind::ParenLeft => t = next_t!(ts,false),
-        _ => return Err(SvError::new(SvErrorKind::Syntax, t.pos,
-                            format!("Unexpected {} {:?} for sensitivity list. Expecting *, (*) or ( event list )",t.value, t.kind))),
+        TokenKind::ParenLeft => {
+            t = next_t!(ts,true);
+            if t.kind == TokenKind::OpStar {
+                ts.flush(1);
+                expect_t!(ts,"sensitivity list",TokenKind::ParenRight);
+                return Ok(node);
+            }
+        }
+        _ => return Err(SvError::syntax(t, "sensitivity list. Expecting *, (*) or ( event list )".to_string()))
     }
     // Parse event list
     loop {
         // println!("[parse_sensitivity] First Token of event expression {}", t);
-        match t.kind {
-            TokenKind::Ident => node.child.push(AstNode::new(AstNodeKind::Event(t.value))),
-            TokenKind::KwEdge => {
-                let nt = next_t!(ts,false);
-                if nt.kind!=TokenKind::Ident {
-                    return Err(SvError::new(SvErrorKind::Syntax, t.pos,
-                                format!("Expecting identifier after edge specifier, got {} {:?}",t.value, t.kind)));
-                }
-                let mut node_e = AstNode::new(AstNodeKind::Event(t.value));
-                node_e.attr.insert("edge".to_string(),nt.value );
-                node.child.push(node_e);
-            },
-            _ => return Err(SvError::new(SvErrorKind::Syntax, t.pos,
-                                format!("Unexpected {} {:?} inside sensitivity list.",t.value, t.kind))),
+        // Capture optionnal edge
+        let mut n = AstNode::new(AstNodeKind::Event);
+        if t.kind == TokenKind::KwEdge {
+            n.attr.insert("edge".to_string(),t.value );
+            ts.flush(0); // consume keyword
         }
+        // Capture event name
+        n.child.push(parse_ident_hier(ts)?);
+        // Check for iff
         t = next_t!(ts,false);
-        // TODO: support iff statement
-        // Expecting closing parenthesis, comme, or kezword or
+        if t.kind==TokenKind::KwIff {
+            n.child.push(parse_class_expr(ts,ExprCntxt::Sensitivity,false)?);
+            // n.child.push(parse_ident_hier(ts)?);
+            t = next_t!(ts,false);
+        }
+        node.child.push(n);
+        // Expecting closing parenthesis, comma, or keyword "or"
         // println!("[parse_sensitivity] event expression separator {}", t);
         match t.kind {
             TokenKind::ParenRight => break,
             TokenKind::KwOr  |
             TokenKind::Comma => {},
-            _ => return Err(SvError::new(SvErrorKind::Syntax, t.pos,
-                                format!("Unexpected {} {:?} inside sensitivity list.",t.value, t.kind))),
-
+            _ => return Err(SvError::syntax(t, "sensitivity list. Expecting comma, keyword 'or' or )".to_string()))
         }
-        t = next_t!(ts,false);
+        t = next_t!(ts,true);
     }
-    // println!("[parse_sensitivity] Node {}", node);
+    // println!("[parse_sensitivity] {}", node);
     Ok(node)
+}
+
+/// Parse an always block
+pub fn parse_initial(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), SvError> {
+    let mut n = AstNode::new(AstNodeKind::Process);
+    n.attr.insert("kind".to_string(),"initial".to_string());
+    parse_class_stmt_or_block(ts,&mut n)?;
+    node.child.push(n);
+    Ok(())
 }
 
 ///
@@ -420,7 +386,7 @@ pub fn parse_stmt(ts : &mut TokenStream, node: &mut AstNode, is_block: bool) -> 
     loop {
         let t = next_t!(ts,true);
         // println!("[parse_stmt] Token = {}", t);
-        // ts.display_status();
+        // ts.display_status("");
         match t.kind {
             TokenKind::KwIf   => {
                 ts.flush(0);
@@ -433,11 +399,12 @@ pub fn parse_stmt(ts : &mut TokenStream, node: &mut AstNode, is_block: bool) -> 
                 ts.rewind(0);
                 parse_case(ts,node)?;
             }
+            TokenKind::KwFor  => parse_for(ts,node,false)?,
             TokenKind::Ident  => {
                 ts.rewind(0);
                 node.child.push(parse_assign_bnb(ts)?)
             },
-            TokenKind::KwEnd  => {
+            TokenKind::KwEnd if is_block => {
                 ts.flush(0);
                 break;
             },
@@ -461,7 +428,7 @@ pub fn parse_if_else(ts : &mut TokenStream, node: &mut AstNode, cond: String, is
     }
     let mut node_if = AstNode::new(AstNodeKind::Branch);
     node_if.attr.insert("kind".to_string(),cond);
-    let s = parse_expr(ts,ExprCntxt::Port)?;
+    let s = parse_expr(ts,ExprCntxt::Arg)?;
     // println!("[parse_if_else] Expr = {}", s);
     ts.flush(0); // No need to check last token, with this context parse expr only go out on close parenthesis
     node_if.attr.insert("expr".to_string(), s);
@@ -471,10 +438,12 @@ pub fn parse_if_else(ts : &mut TokenStream, node: &mut AstNode, cond: String, is
     if t.kind == TokenKind::KwBegin {
         is_block = true;
         parse_label(ts,&mut node_if,"block".to_string())?;
+    } else {
+        ts.rewind(0);
     }
     // Loop on statement, if/else / case
     if is_gen {
-        parse_module_body(ts,&mut node_if, if is_block {ModuleCntxt::IfBlock} else {ModuleCntxt::IfStmt})?;
+        parse_module_body(ts,&mut node_if, if is_block {ModuleCntxt::Block} else {ModuleCntxt::IfStmt})?;
     } else {
         parse_stmt(ts,&mut node_if, is_block)?;
     }
@@ -501,7 +470,7 @@ pub fn parse_if_else(ts : &mut TokenStream, node: &mut AstNode, cond: String, is
                 }
                 if is_gen {
                     ts.rewind(0);
-                    parse_module_body(ts,&mut node_else, if is_block {ModuleCntxt::IfBlock} else {ModuleCntxt::IfStmt})?;
+                    parse_module_body(ts,&mut node_else, if is_block {ModuleCntxt::Block} else {ModuleCntxt::IfStmt})?;
                 } else {
                     parse_stmt(ts,&mut node_else, is_block)?;
                 }
@@ -538,7 +507,7 @@ pub fn parse_case(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), SvErr
         return Err(SvError::new(SvErrorKind::Syntax, t.pos,
                     format!("Expecting open parenthesis after if , got {} {:?}",t.value, t.kind)));
     }
-    let s = parse_expr(ts,ExprCntxt::Port)?;
+    let s = parse_expr(ts,ExprCntxt::Arg)?;
     ts.flush(0); // consume closing parenthesis
     // println!("[parse_case] case expr {}", s.clone());
     node_c.attr.insert("expr".to_string(),s);
@@ -604,7 +573,7 @@ pub fn parse_case(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), SvErr
     Ok(())
 }
 
-pub fn parse_for(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), SvError> {
+pub fn parse_for(ts : &mut TokenStream, node: &mut AstNode, is_generate: bool) -> Result<(), SvError> {
     ts.flush(0);
     let mut t = next_t!(ts,false);
     if t.kind!=TokenKind::ParenLeft {
@@ -620,19 +589,68 @@ pub fn parse_for(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), SvErro
     node_for.attr.insert("test".to_string(), s);
     ts.flush(0); // clear semi-colon
     // Parse incr part : end on )
-    let s = parse_expr(ts,ExprCntxt::Port)?;
+    let s = parse_expr(ts,ExprCntxt::Arg)?;
     node_for.attr.insert("incr".to_string(), s);
     ts.flush(0); // Clear parenthesis
     // TODO: analyze each statement to make sure those are valid
     // Check for begin
     let mut cntxt_body = ModuleCntxt::ForStmt;
     t = next_t!(ts,true);
-    if t.kind == TokenKind::KwBegin {
-        cntxt_body = ModuleCntxt::ForBlock;
+    let is_block = t.kind == TokenKind::KwBegin;
+    if is_block {
+        cntxt_body = ModuleCntxt::Block;
         parse_label(ts,&mut node_for,"block".to_string())?;
     }
     // Parse content of for loop as if inside a module body
-    parse_module_body(ts,&mut node_for,cntxt_body)?;
+    if is_generate {
+        parse_module_body(ts,&mut node_for,cntxt_body)?;
+    } else {
+        parse_stmt(ts,&mut node_for, is_block)?;
+    }
+    // println!("{}", node_for);
     node.child.push(node_for);
     Ok(())
+}
+
+
+pub fn parse_timescale(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), SvError> {
+    ts.rewind(0);
+    let mut node_ts = AstNode::new(AstNodeKind::Timescale);
+    let mut t = next_t!(ts,false);
+    let allow_timeprec = t.kind==TokenKind::KwTimeunit;
+    let mut time = parse_time(ts)?;
+    node_ts.attr.insert(t.value, time);
+    // Check if followed
+    t = next_t!(ts,false);
+    match t.kind {
+        TokenKind::SemiColon => {}
+        TokenKind::OpDiv if allow_timeprec => {
+            time = parse_time(ts)?;
+            node_ts.attr.insert("timeprecision".to_string(), time);
+            t = next_t!(ts,false);
+            if t.kind != TokenKind::SemiColon {
+                return Err(SvError::syntax(t,"timescale. Expecting ;".to_string()));
+            }
+        }
+        _ => return Err(SvError::syntax(t,"timescale. Expecting ; or /".to_string()))
+    }
+    node.child.push(node_ts);
+    Ok(())
+}
+
+
+pub fn parse_time(ts : &mut TokenStream) -> Result<String,SvError> {
+    let t1 = next_t!(ts,false);
+    if t1.kind!=TokenKind::Integer && t1.kind!=TokenKind::Real {
+        return Err(SvError::syntax(t1,"timescale. Expecting time value (integer or floating)".to_string()));
+    }
+    let t2 = next_t!(ts,false);
+    if t2.kind!=TokenKind::Ident {
+        return Err(SvError::syntax(t2,"timescale. Expecting time unit".to_string()));
+    }
+    match t2.value.as_ref() {
+        "fs" |"ps" |"ns" |"us" |"ms" | "s" => {},
+        _ => return Err(SvError::syntax(t2,"timescale. Expecting fs, ps, ns, ...".to_string()))
+    }
+    Ok(format!("{}{}",t1.value,t2.value))
 }

@@ -1,4 +1,4 @@
-// This file is part of sv_parser and subject to the terms of MIT Licence
+// This file is part of sv_check and subject to the terms of MIT Licence
 // Copyright (c) 2019, clams@mail.com
 
 use crate::error::{SvError};
@@ -8,6 +8,7 @@ use crate::ast::astnode::*;
 use crate::ast::common::*;
 use crate::ast::module_hdr::{parse_module_hdr};
 use crate::ast::module_body::*;
+use crate::ast::class::{parse_func,parse_task};
 
 // TODO: rework to reuse a maximum of what s already done in module body parser
 
@@ -94,7 +95,7 @@ pub fn parse_interface(ts : &mut TokenStream) -> Result<AstNode, SvError> {
                             // Semi colon or comma indicate signal declaration
                             TokenKind::SemiColon |
                             TokenKind::Comma     =>  parse_signal_decl_list(ts,&mut node)?,
-                            // Range -> can be either an unpacked array declaration or an array of instance ...
+                            // Slice -> can be either an unpacked array declaration or an array of instance ...
                             // TODO: handle case of array of instances
                             TokenKind::SquareLeft =>  {
                                 parse_signal_decl_list(ts,&mut node)?;
@@ -118,22 +119,21 @@ pub fn parse_interface(ts : &mut TokenStream) -> Result<AstNode, SvError> {
             }
             // End module -> parsing of body is done
             TokenKind::KwAssign => {
-                ts.flush(0); // Consume assign keyword (should not be present to parse it)
-                let node_assign = parse_assign_c(ts)?;
-                node.child.push(node_assign);
+                ts.rewind(1);
+                node.child.push(parse_assign_c(ts)?);
             }
             // Always keyword
             TokenKind::KwAlways  |
             TokenKind::KwAlwaysC |
             TokenKind::KwAlwaysF |
-            TokenKind::KwAlwaysL => {
-                let node_proc = parse_always(ts)?;
-                node.child.push(node_proc);
-            }
+            TokenKind::KwAlwaysL => parse_always(ts,&mut node)?,
+            TokenKind::KwInitial  => parse_initial(ts,&mut node)?,
+            TokenKind::KwFunction => parse_func(ts,&mut node, false, false)?,
+            TokenKind::KwTask     => parse_task(ts,&mut node)?,
             //
             TokenKind::Macro => parse_macro(ts,&mut node)?,
             // TokenKind::KwGenerate if cntxt==ModuleCntxt::Top => parse_module_body(ts,node,ModuleCntxt::Generate)?,
-            TokenKind::KwFor  => parse_for(ts,&mut node)?,
+            TokenKind::KwFor  => parse_for(ts,&mut node,true)?,
             TokenKind::KwIf   => {
                 ts.flush(0);
                 parse_if_else(ts,&mut node, "if".to_string(), true)?;
@@ -281,7 +281,12 @@ pub fn parse_clocking(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), S
     loop {
         t = next_t!(ts,false);
         match t.kind {
-            TokenKind::KwEndClocking => break,
+            TokenKind::KwEndClocking => {
+                if has_id {
+                    check_label(ts,&node_c.attr["name"])?;
+                }
+                break;
+            },
             // TODO: actual parsing of clocking block
             _ => {},
         }
