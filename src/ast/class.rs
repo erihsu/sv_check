@@ -620,7 +620,7 @@ pub fn parse_class_stmt(ts : &mut TokenStream, node: &mut AstNode, is_block: boo
                 if t.kind != TokenKind::ParenLeft {
                     return Err(SvError::syntax(t, format!("{} loop, expecting (", n.attr["kind"].clone() )));
                 }
-                let node_cond = parse_class_expr(ts,ExprCntxt::Arg,false)?;
+                let node_cond = parse_expr(ts,ExprCntxt::Arg,false)?;
                 ts.flush(1); // Consume right parenthesis
                 n.child.push(node_cond);
                 parse_class_stmt_or_block(ts, &mut n)?;
@@ -640,7 +640,7 @@ pub fn parse_class_stmt(ts : &mut TokenStream, node: &mut AstNode, is_block: boo
                 if t.kind != TokenKind::ParenLeft {
                     return Err(SvError::syntax(t, "do loop, expecting (".to_string() ));
                 }
-                let nc = parse_class_expr(ts,ExprCntxt::Arg,false)?;
+                let nc = parse_expr(ts,ExprCntxt::Arg,false)?;
                 ts.flush(1); // Consume right parenthesis
                 expect_t!(ts,"do loop",TokenKind::SemiColon);
                 n.child.push(nc);
@@ -808,7 +808,7 @@ pub fn parse_class_stmt(ts : &mut TokenStream, node: &mut AstNode, is_block: boo
                         expect_t!(ts,"wait",TokenKind::SemiColon);
                     }
                     TokenKind::ParenLeft => {
-                        let mut ns = parse_class_expr(ts,ExprCntxt::Arg,false)?;
+                        let mut ns = parse_expr(ts,ExprCntxt::Arg,false)?;
                         ts.flush(1); // Consume right parenthesis
                         ns.kind = AstNodeKind::Event;
                         n.child.push(ns);
@@ -830,7 +830,7 @@ pub fn parse_class_stmt(ts : &mut TokenStream, node: &mut AstNode, is_block: boo
                 if t.kind!=TokenKind::ParenLeft {
                     return Err(SvError::syntax(t,"assert statement. Expecting (".to_string()));
                 }
-                n.child.push(parse_class_expr(ts,ExprCntxt::Arg,false)?);
+                n.child.push(parse_expr(ts,ExprCntxt::Arg,false)?);
                 ts.flush(1); // Consume right parenthesis
                 t = next_t!(ts,true);
                 match t.kind {
@@ -865,7 +865,7 @@ pub fn parse_class_stmt(ts : &mut TokenStream, node: &mut AstNode, is_block: boo
                 if t.kind!=TokenKind::ParenLeft {
                     return Err(SvError::syntax(t,"casting statement. Expecting (".to_string()));
                 }
-                node.child.push(parse_class_expr(ts,ExprCntxt::Arg,false)?);
+                node.child.push(parse_expr(ts,ExprCntxt::Arg,false)?);
                 ts.flush(1); // Consume right parenthesis
                 expect_t!(ts,"casting statement",TokenKind::SemiColon);
             }
@@ -875,7 +875,7 @@ pub fn parse_class_stmt(ts : &mut TokenStream, node: &mut AstNode, is_block: boo
                 t = next_t!(ts,true);
                 if t.kind!=TokenKind::SemiColon {
                     ts.rewind(1);
-                    n.child.push(parse_class_expr(ts,ExprCntxt::Stmt,false)?);
+                    n.child.push(parse_expr(ts,ExprCntxt::Stmt,false)?);
                     ts.flush(1);
                 }
                 // println!("Return statement: token = {}\n node={}", t,n);
@@ -915,7 +915,7 @@ pub fn parse_assign_or_call(ts : &mut TokenStream, node: &mut AstNode, cntxt: Ex
                 ts.flush(1); // Consume the operand
                 n.attr.insert("kind".to_string(),t.value);
                 n.child.push(nm);
-                n.child.push(parse_class_expr(ts,cntxt.clone(),false)?);
+                n.child.push(parse_expr(ts,cntxt.clone(),false)?);
             }
             TokenKind::OpIncrDecr if !is_decl => {
                 ts.flush(1); // Consume the operand
@@ -958,7 +958,7 @@ pub fn parse_class_if_else(ts : &mut TokenStream, node: &mut AstNode, cond: &str
     let mut node_if = AstNode::new(AstNodeKind::Branch);
     node_if.attr.insert("kind".to_string(),cond.to_string());
     expect_t!(ts,"if statement",TokenKind::ParenLeft);
-    let n = parse_class_expr(ts,ExprCntxt::Arg,false)?;
+    let n = parse_expr(ts,ExprCntxt::Arg,false)?;
     ts.flush(1); // Consume right parenthesis
     node_if.child.push(n);
     parse_class_stmt_or_block(ts,&mut node_if)?;
@@ -1002,13 +1002,25 @@ pub fn parse_class_for(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), 
     // Parse init part : end on ;
     let mut node_hdr = AstNode::new(AstNodeKind::Header);
     let mut ns = AstNode::new(AstNodeKind::Declaration);
-    parse_data_type(ts, &mut ns, false, true)?;
+    let mut t = next_t!(ts,true);
+    let mut is_type = true;
+    if t.kind == TokenKind::Ident {
+        t = next_t!(ts,true);
+        is_type = t.kind != TokenKind::Dot && t.kind != TokenKind::SquareLeft ;
+    }
+    ts.rewind(0);
+    if is_type {
+        parse_data_type(ts, &mut ns, false, true)?;
+    } else {
+        parse_assign_or_call(ts, &mut ns,ExprCntxt::Stmt)?;
+    }
+
     parse_var_decl_name(ts, &mut ns)?;
     ns.attr.insert("loop".to_string(), "init".to_string());
     node_hdr.child.push(ns);
     ts.flush(0); // clear semi-colon
     // Parse test part : end on ;
-    ns = parse_class_expr(ts,ExprCntxt::Stmt,false)?;
+    ns = parse_expr(ts,ExprCntxt::Stmt,false)?;
     ns.attr.insert("loop".to_string(), "test".to_string());
     node_hdr.child.push(ns);
     ts.flush(1); // clear semi-colon
@@ -1022,7 +1034,6 @@ pub fn parse_class_for(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), 
     }
     ts.flush(0); // Clear parenthesis
     node_for.child.push(node_hdr);
-    // TODO: analyze each statement to make sure those are valid
     // Parse content of for loop
     parse_class_stmt_or_block(ts,&mut node_for)?;
     // println!("parse_class_for {}", node_for);
@@ -1047,7 +1058,7 @@ pub fn parse_class_case(ts : &mut TokenStream, node: &mut AstNode) -> Result<(),
     node_c.attr.insert("kind".to_string(),t.value);
     // Parse case expression
     expect_t!(ts,"case",TokenKind::ParenLeft);
-    node_c.child.push(parse_class_expr(ts,ExprCntxt::Arg,false)?);
+    node_c.child.push(parse_expr(ts,ExprCntxt::Arg,false)?);
     ts.flush(1); // Consume right parenthesis
     // TODO: test for Match/inside
     t = next_t!(ts,true);

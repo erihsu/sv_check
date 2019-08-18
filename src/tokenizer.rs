@@ -6,6 +6,7 @@ use crate::token::*;
 use crate::error::*;
 use crate::source::Source;
 
+use std::path::PathBuf;
 use std::collections::VecDeque;
 
 pub struct TokenStream<'a> {
@@ -14,6 +15,7 @@ pub struct TokenStream<'a> {
     last_pos : Position,
     buffer : VecDeque<Token>,
     rd_ptr : u8,
+    pub inc_files : Vec<PathBuf>,
 }
 
 /// Enum for the state machine parsing number
@@ -32,7 +34,8 @@ impl<'a> TokenStream<'a> {
             last_char : ' ',
             last_pos : Position::new() ,
             buffer   : VecDeque::new() ,
-            rd_ptr   : 0
+            rd_ptr   : 0,
+            inc_files: Vec::new()
         }
     }
 
@@ -129,11 +132,12 @@ impl<'a> TokenStream<'a> {
 
     /// Get all characters until end of string
     fn parse_string(&mut self, is_macro: bool) -> Result<Token,SvError> {
-        let mut s = if is_macro {String::from("`\"")} else {String::from("\"")};
+        let mut s = if is_macro {"`\"".to_string()} else {"".to_string()};
         let p = self.last_pos;
         while let Some(c) = self.source.get_char() {
             s.push(c);
             if c == '"' && self.last_char != '\\' {
+                if !is_macro {s.pop();}
                 break;
             }
             self.last_char = c;
@@ -747,6 +751,16 @@ impl<'a> TokenStream<'a> {
         Ok(())
     }
 
+    ///
+    pub fn add_inc(&mut self, fname: &str) {
+        let mut fname_path = PathBuf::new();
+        for s in fname.to_string().split("/") {
+            fname_path.push(s);
+        }
+        self.inc_files.push(fname_path);
+    }
+
+    // Debug function
     #[allow(dead_code)]
     pub fn display_status(&self, comment : &str) {
         let mut s = format!("{} : Last pos = {}, Buffer with {} element / ptr = {}",comment,self.last_pos, self.buffer.len(),  self.rd_ptr);

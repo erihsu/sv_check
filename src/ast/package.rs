@@ -88,10 +88,11 @@ pub fn parse_package(ts : &mut TokenStream) -> Result<AstNode, SvError> {
                 node.child.push(AstNode::new(AstNodeKind::Genvar(s)));
             }
             // Identifier -> In a package it can only be a signal declaration
-            TokenKind::Ident => parse_signal_decl_list(ts,&mut node)?,
-            TokenKind::Macro => parse_macro(ts,&mut node)?,
-            TokenKind::KwFunction => parse_func(ts, &mut node, false, false)?,
-            TokenKind::KwTask     => parse_task(ts, &mut node)?,
+            TokenKind::Ident        => parse_signal_decl_list(ts,&mut node)?,
+            TokenKind::Macro        => parse_macro(ts,&mut node)?,
+            TokenKind::KwFunction   => parse_func(ts, &mut node, false, false)?,
+            TokenKind::KwTask       => parse_task(ts, &mut node)?,
+            TokenKind::KwCovergroup => parse_covergroup(ts,&mut node)?,
             // End module -> parsing of body is done
             TokenKind::KwEndPackage => break,
             // Any un-treated token is an error

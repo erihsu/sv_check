@@ -6,7 +6,7 @@ use crate::token::{TokenKind};
 use crate::tokenizer::TokenStream;
 use crate::ast::astnode::*;
 use crate::ast::common::*;
-use crate::ast::class::{parse_func,parse_task,parse_class_stmt_or_block};
+use crate::ast::class::{parse_func,parse_task,parse_class_stmt_or_block,parse_assign_or_call};
 
 // TODO
 // - when parsing named block, ensure the name is unique
@@ -106,6 +106,7 @@ pub fn parse_module_body(ts : &mut TokenStream, node : &mut AstNode, cntxt : Mod
                             // Opening parenthesis indicates
                             // Semi colon or comma indicate signal declaration
                             TokenKind::SemiColon |
+                            TokenKind::OpEq      |
                             TokenKind::Comma     =>  parse_signal_decl_list(ts,node)?,
                             // Slice -> can be either an unpacked array declaration or an array of instance ...
                             // TODO: handle case of array of instances
@@ -166,6 +167,7 @@ pub fn parse_module_body(ts : &mut TokenStream, node : &mut AstNode, cntxt : Mod
                     check_label(ts, &n.attr["block"])?;
                 }
             }
+            TokenKind::KwCovergroup => parse_covergroup(ts,node)?,
             // End of loop depends on context
             TokenKind::KwEnd         if cntxt == ModuleCntxt::Block    => break,
             TokenKind::KwEndGenerate if cntxt == ModuleCntxt::Generate => break,
@@ -196,9 +198,8 @@ pub fn parse_assign_c(ts : &mut TokenStream) -> Result<AstNode, SvError> {
     // t = next_t!(ts,true);
     node.child.push(parse_ident_hier(ts)?);
     expect_t!(ts,"continuous assignment",TokenKind::OpEq);
-    let s = parse_expr(ts,ExprCntxt::Stmt)?;
+    node.child.push(parse_expr(ts,ExprCntxt::Stmt,false)?);
     ts.flush(0); // Parse expression let the last character in the buffer -> this was a ;
-    node.attr.insert("rhs".to_string(), s);
     // println!("[parse_assign_c] {}", node);
     Ok(node)
 }
@@ -220,7 +221,7 @@ pub fn parse_assign_bnb(ts : &mut TokenStream) -> Result<AstNode, SvError> {
         }
     }
     //
-    node.child.push(parse_class_expr(ts,ExprCntxt::Stmt,false)?);
+    node.child.push(parse_expr(ts,ExprCntxt::Stmt,false)?);
     ts.flush(0); // consume the ;
     // println!("[parse_assign_c] {}", node);
     Ok(node)
@@ -294,6 +295,9 @@ pub fn parse_always(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), SvE
     }
     // Loop on statement, if/else / case
     parse_stmt(ts,&mut n, is_block)?;
+    if is_block {
+        check_label(ts, &n.attr["block"])?;
+    }
     node.child.push(n);
     Ok(())
 }
@@ -337,7 +341,7 @@ pub fn parse_sensitivity(ts : &mut TokenStream, is_process: bool) -> Result<AstN
         // Check for iff
         t = next_t!(ts,false);
         if t.kind==TokenKind::KwIff {
-            n.child.push(parse_class_expr(ts,ExprCntxt::Sensitivity,false)?);
+            n.child.push(parse_expr(ts,ExprCntxt::Sensitivity,false)?);
             // n.child.push(parse_ident_hier(ts)?);
             t = next_t!(ts,false);
         }
@@ -420,21 +424,14 @@ pub fn parse_stmt(ts : &mut TokenStream, node: &mut AstNode, is_block: bool) -> 
 /// Parse If/Else if/Else statements
 /// Suppose first IF has been consumed
 pub fn parse_if_else(ts : &mut TokenStream, node: &mut AstNode, cond: String, is_gen: bool) -> Result<(), SvError> {
-    let mut t = next_t!(ts,false);
-    // println!("[parse_if_else] First Token = {}", t);
-    // Parse IF condition
-    if t.kind!=TokenKind::ParenLeft {
-        return Err(SvError::syntax(t,"if. Expecting (".to_string()));
-    }
+    expect_t!(ts,"if statement",TokenKind::ParenLeft);
     let mut node_if = AstNode::new(AstNodeKind::Branch);
     node_if.attr.insert("kind".to_string(),cond);
-    let s = parse_expr(ts,ExprCntxt::Arg)?;
-    // println!("[parse_if_else] Expr = {}", s);
+    node_if.child.push(parse_expr(ts,ExprCntxt::Arg,false)?);
     ts.flush(0); // No need to check last token, with this context parse expr only go out on close parenthesis
-    node_if.attr.insert("expr".to_string(), s);
     // Check for begin
     let mut is_block = false;
-    t = next_t!(ts,true);
+    let mut t = next_t!(ts,true);
     if t.kind == TokenKind::KwBegin {
         is_block = true;
         parse_label(ts,&mut node_if,"block".to_string())?;
@@ -507,10 +504,8 @@ pub fn parse_case(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), SvErr
         return Err(SvError::new(SvErrorKind::Syntax, t.pos,
                     format!("Expecting open parenthesis after if , got {} {:?}",t.value, t.kind)));
     }
-    let s = parse_expr(ts,ExprCntxt::Arg)?;
+    node_c.child.push(parse_expr(ts,ExprCntxt::Arg,false)?);
     ts.flush(0); // consume closing parenthesis
-    // println!("[parse_case] case expr {}", s.clone());
-    node_c.attr.insert("expr".to_string(),s);
     // TODO: test for Match/inside
     t = next_t!(ts,true);
     match t.kind {
@@ -581,18 +576,28 @@ pub fn parse_for(ts : &mut TokenStream, node: &mut AstNode, is_generate: bool) -
     }
     let mut node_for = AstNode::new(AstNodeKind::LoopFor);
     // Parse init part : end on ;
-    let s = parse_expr(ts,ExprCntxt::Stmt)?;
-    node_for.attr.insert("init".to_string(), s);
-    ts.flush(0); // clear semi-colon
+    let mut node_hdr = AstNode::new(AstNodeKind::Header);
+    let mut ns = AstNode::new(AstNodeKind::Declaration);
+    parse_data_type(ts, &mut ns, false, true)?;
+    parse_var_decl_name(ts, &mut ns)?;
+    ns.attr.insert("loop".to_string(), "init".to_string());
+    node_hdr.child.push(ns);
+    ts.flush(1); // clear semi-colon
     // Parse test part : end on ;
-    let s = parse_expr(ts,ExprCntxt::Stmt)?;
-    node_for.attr.insert("test".to_string(), s);
-    ts.flush(0); // clear semi-colon
+    ns = parse_expr(ts,ExprCntxt::Stmt,false)?;
+    ns.attr.insert("loop".to_string(), "test".to_string());
+    node_hdr.child.push(ns);
+    ts.flush(1); // clear semi-colon
     // Parse incr part : end on )
-    let s = parse_expr(ts,ExprCntxt::Arg)?;
-    node_for.attr.insert("incr".to_string(), s);
+    loop {
+        ns = AstNode::new(AstNodeKind::Expr);
+        parse_assign_or_call(ts,&mut ns,ExprCntxt::ArgList)?;
+        ns.attr.insert("loop".to_string(), "incr".to_string());
+        node_hdr.child.push(ns);
+        loop_args_break_cont!(ts,"for test arguments",ParenRight);
+    }
     ts.flush(0); // Clear parenthesis
-    // TODO: analyze each statement to make sure those are valid
+    node_for.child.push(node_hdr);
     // Check for begin
     let mut cntxt_body = ModuleCntxt::ForStmt;
     t = next_t!(ts,true);
