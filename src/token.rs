@@ -224,7 +224,7 @@ impl fmt::Display for TokenKind {
             TokenKind::Comment           => write!(f, "Comment"        ),
             TokenKind::Attribute         => write!(f, "Attribute"      ),
             TokenKind::SystemTask        => write!(f, "SystemTask"     ),
-            TokenKind::Str               => write!(f, "Str"            ),
+            TokenKind::Str               => write!(f, "String"         ),
             TokenKind::Integer           => write!(f, "Integer"        ),
             TokenKind::Real              => write!(f, "Real"           ),
             TokenKind::OpPlus            => write!(f, "Op:Plus"        ),

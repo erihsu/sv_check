@@ -945,7 +945,10 @@ pub fn parse_delay (ts : &mut TokenStream) -> Result<AstNode, SvError> {
             // Optional time unit
             t = next_t!(ts,true);
             match t.value.as_ref() {
-                "fs" |"ps" |"ns" |"us" |"ms" | "s" => {nv.attr.insert("value".to_string(), t.value);}
+                "fs" |"ps" |"ns" |"us" |"ms" | "s" => {
+                    nv.attr.insert("value".to_string(), t.value);
+                    ts.flush(1);
+                }
                 _ => ts.rewind(1)
             }
         }
@@ -1492,7 +1495,7 @@ pub fn parse_expr(ts : &mut TokenStream, cntxt: ExprCntxt, allow_type: bool) -> 
                 break;
             }
             //
-            TokenKind::Que => {
+            TokenKind::Que if !is_first => {
                 let node_cond = node_e;
                 node_e = AstNode::new(AstNodeKind::Branch);
                 node_e.attr.insert("kind".to_string(),"?".to_string());
