@@ -2,8 +2,8 @@
 // Copyright (c) 2019, clams@mail.com
 
 use crate::error::{SvErrorKind, SvError, };
-use crate::token::{TokenKind};
-use crate::tokenizer::TokenStream;
+use crate::lex::token::{TokenKind};
+use crate::lex::token_stream::TokenStream;
 use crate::ast::astnode::*;
 use crate::ast::common::*;
 use crate::ast::class::{parse_func,parse_task,parse_class_stmt_or_block,parse_assign_or_call};

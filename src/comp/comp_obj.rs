@@ -1,10 +1,9 @@
 // This file is part of sv_check and subject to the terms of MIT Licence
 // Copyright (c) 2019, clams@mail.com
 
-use crate::ast::Ast;
-
-// use std::{fs,path,io, mem, str, iter};
 use std::collections::{HashMap};
+
+use crate::ast::Ast;
 use crate::ast::astnode::{AstNode,AstNodeKind};
 
 #[allow(dead_code)]
@@ -19,7 +18,7 @@ pub enum ObjDef {
 
 /// Structure holding compiled information about module/class/package/...
 #[derive(Debug, Clone)]
-pub struct WorkObj {
+pub struct CompObj {
     ///
     pub name : String,
     ///
@@ -34,11 +33,11 @@ pub struct WorkObj {
 }
 
 
-impl WorkObj {
+impl CompObj {
 
     #[allow(dead_code)]
-    pub fn new(name: String) -> WorkObj {
-        WorkObj {
+    pub fn new(name: String) -> CompObj {
+        CompObj {
             name         : name,
             base_class   : None,
             definition   : HashMap::new(),
@@ -53,13 +52,13 @@ impl WorkObj {
 
     //
     #[allow(dead_code,unused_variables)]
-    pub fn from_ast(ast: Ast, lib: &mut HashMap<String, WorkObj>)  {
+    pub fn from_ast(ast: Ast, lib: &mut HashMap<String, CompObj>)  {
         for node in ast.tree.child {
             match node.kind {
                 AstNodeKind::Directive => {},
                 AstNodeKind::Interface |
                 AstNodeKind::Module => {
-                    let mut o = WorkObj::new(node.attr["name"].clone());
+                    let mut o = CompObj::new(node.attr["name"].clone());
                     // println!("Compiling {:?}", node.attr["name"]);
                     for node_m in node.child {
                         // println!(" - {:?}", node_m.kind);
@@ -73,7 +72,7 @@ impl WorkObj {
                                         }
                                         AstNodeKind::Import => {
                                             if n.attr.contains_key("dpi") {
-                                                println!("[WorkObj Skipping DPI import : {}", n);
+                                                println!("[CompObj Skipping DPI import : {}", n);
                                             } else {
                                                 for nc in n.child {
                                                     if nc.attr["name"] == "*" {
@@ -88,7 +87,7 @@ impl WorkObj {
                                             // TODO: CHeck array size
                                             o.declaration.insert(n.attr["name"].clone(),ObjDef::Signal);
                                         }
-                                        _ => {println!("[WorkObj] Header: Skipping {:?}", n.kind);}
+                                        _ => {println!("[CompObj] Header: Skipping {:?}", n.kind);}
                                     }
                                 }
                             }
@@ -100,12 +99,12 @@ impl WorkObj {
                 }
                 AstNodeKind::Class     |
                 AstNodeKind::Package   => {
-                    let mut o = WorkObj::new(node.attr["name"].clone());
+                    let mut o = CompObj::new(node.attr["name"].clone());
                     // println!("Compiling {:?}", node.attr["name"]);
                     o.parse_body(&node);
                     lib.insert(o.name.clone(),o);
                 }
-                _ => {println!("[WorkObj] Top: Skipping {:?}", node.kind);}
+                _ => {println!("[CompObj] Top: Skipping {:?}", node.kind);}
             }
         }
     }
@@ -113,13 +112,13 @@ impl WorkObj {
     pub fn parse_body(&mut self, node: &AstNode) {
         let mut has_hdr = false;
         for n in &node.child {
-            // println!("[WorkObj] next node = {}", n.kind);
+            // println!("[CompObj] next node = {}", n.kind);
             match n.kind {
                 AstNodeKind::Directive => {},
                 // Header in a body: Loop definition
                 AstNodeKind::Header => {
                     if has_hdr {
-                        println!("[WorkObj] Too much header !: {:?}", n);
+                        println!("[CompObj] Too much header !: {:?}", n);
                     } else {
                         self.tmp_decl.push(HashMap::new());
                     }
@@ -147,14 +146,14 @@ impl WorkObj {
                             AstNodeKind::Declaration => {
                                 // println!("Typedef : {}", nc);
                             },
-                            _ => println!("[WorkObj] Typedef: Skipping {}", nc.kind),
+                            _ => println!("[CompObj] Typedef: Skipping {}", nc.kind),
                         }
                     }
                     // self.declaration.insert(n.attr["name"].clone(),ObjDef::Signal);
                 }
                 AstNodeKind::Import => {
                     if n.attr.contains_key("dpi") {
-                        println!("[WorkObj Skipping DPI import : {}", n);
+                        println!("[CompObj Skipping DPI import : {}", n);
                     } else {
                         for nc in &n.child {
                             if nc.attr["name"] == "*" {
@@ -177,7 +176,7 @@ impl WorkObj {
                         match nc.kind {
                             AstNodeKind::Identifier => self.parse_ident(&nc),
                             _ => self.search_ident(&nc),
-                            // _ => {println!("[WorkObj] Assign: Skipping {}", nc.kind);}
+                            // _ => {println!("[CompObj] Assign: Skipping {}", nc.kind);}
                         }
                     }
                 }
@@ -192,7 +191,7 @@ impl WorkObj {
                 }
                 AstNodeKind::Instances => {
                     self.call.push(n.clone());
-                    // println!("[WorkObj] Instances = {}", n);
+                    // println!("[CompObj] Instances = {}", n);
                     for nc in &n.child {
                         match nc.kind {
                             AstNodeKind::Params => {
@@ -202,7 +201,7 @@ impl WorkObj {
                                 self.declaration.insert(nc.attr["name"].clone(),ObjDef::Instance);
                                 self.search_ident(&nc);
                             }
-                            _ => println!("[WorkObj] Instances: Skipping = {}", n.kind)
+                            _ => println!("[CompObj] Instances: Skipping = {}", n.kind)
                         }
                     }
                 }
@@ -247,7 +246,7 @@ impl WorkObj {
                             AstNodeKind::MethodCall => self.parse_call(&nc),
                             AstNodeKind::MacroCall => self.parse_call(&nc),
                             // _ => self.search_ident(&nc),
-                            _ => {println!("[WorkObj] Function: Skipping {:?}", nc.kind);}
+                            _ => {println!("[CompObj] Function: Skipping {:?}", nc.kind);}
                         }
                     }
                     self.tmp_decl.pop();
@@ -257,7 +256,7 @@ impl WorkObj {
                     self.add_decl(&n);
                     // TODO: add list of signal direction for the modport
                 },
-                _ => {println!("[WorkObj] Body: Skipping {}", n);}
+                _ => {println!("[CompObj] Body: Skipping {}", n);}
             }
         }
         // Remove declaration of variable done in header
@@ -295,7 +294,7 @@ impl WorkObj {
                 AstNodeKind::LoopFor    => self.parse_block(&nc),
                 AstNodeKind::MethodCall => self.parse_call(&nc),
                 AstNodeKind::MacroCall  => self.parse_call(&nc),
-                _ => {println!("[WorkObj] Block: Skipping {:?}", nc.kind);}
+                _ => {println!("[CompObj] Block: Skipping {:?}", nc.kind);}
             }
         }
         self.tmp_decl.pop();
@@ -311,7 +310,7 @@ impl WorkObj {
     pub fn add_decl(&mut self, node: &AstNode) {
         if self.declaration.contains_key(&node.attr["name"]) {
             // TODO: add to the message queue instead of printing
-            println!("[WorkObj] Redeclation of {}",node.attr["name"]);
+            println!("[CompObj] Redeclation of {}",node.attr["name"]);
         } else {
             self.declaration.insert(node.attr["name"].clone(),ObjDef::Signal);
             self.check_type(&node);
@@ -319,7 +318,7 @@ impl WorkObj {
     }
 
     pub fn search_ident(&mut self, node: &AstNode) {
-        // println!("[WorkObj] Searching: {}",node);
+        // println!("[CompObj] Searching: {}",node);
         for n in &node.child {
             match n.kind {
                 AstNodeKind::Identifier => self.parse_ident(&n),

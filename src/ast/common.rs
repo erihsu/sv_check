@@ -1,8 +1,8 @@
 // This file is part of sv_check and subject to the terms of MIT Licence
 // Copyright (c) 2019, clams@mail.com
 
-use crate::token::TokenKind;
-use crate::tokenizer::TokenStream;
+use crate::lex::token::TokenKind;
+use crate::lex::token_stream::TokenStream;
 use crate::ast::astnode::{AstNode, AstNodeKind};
 use crate::ast::class::{parse_func};
 use crate::error::{SvErrorKind, SvError};

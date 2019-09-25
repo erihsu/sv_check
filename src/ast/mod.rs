@@ -14,8 +14,8 @@ use astnode::*;
 use common::*;
 use module_hdr::*;
 use module_body::*;
-use crate::token::*;
-use crate::tokenizer::*;
+use crate::lex::token::*;
+use crate::lex::token_stream::*;
 use crate::error::*;
 
 

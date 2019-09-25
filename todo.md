@@ -8,7 +8,7 @@ Reminder of special error/warning which needs to be caught by the tool eventuall
  [ ] Port direction : check input is never assigned
  [ ] randc : check variable is not in a solve before statement
  [ ] clocking block : check all signal are part of the interface
- [ ] signal declaration : check re-declaration
+ [x] signal declaration : check re-declaration
  [ ] non-continuous assignment of a wire
  [ ] Array assignement with non matching size
 

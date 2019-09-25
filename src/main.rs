@@ -1,25 +1,24 @@
 // This file is part of sv_check and subject to the terms of MIT Licence
 // Copyright (c) 2019, clams@mail.com
 
-mod position;
-mod source;
-mod token;
-mod tokenizer;
+mod lex;
 mod ast;
 mod error;
-mod work_obj;
+mod comp;
 
 // #[macro_use]
 extern crate structopt;
 use std::path::PathBuf;
-use std::collections::{HashSet,HashMap};
+use std::collections::{HashSet};
 use std::io::BufRead;
 use structopt::StructOpt;
 use std::io::BufReader;
 use std::fs::File;
 
-use work_obj::WorkObj;
-use ast::astnode::{AstNodeKind};
+use comp::comp_lib::CompLib;
+use lex::source::Source;
+use lex::token_stream::TokenStream;
+
 
 #[derive(Debug, StructOpt)]
 #[structopt(name = "sv_check", about = "SystemVerilog Checker")]
@@ -92,9 +91,9 @@ fn main() {
             if ext == "vhd" || ext == "vhdl" {continue;}
         }
         // Build AST for all file from the source list
-        let mut src = source::Source::from_file(fname.clone())
+        let mut src = Source::from_file(fname.clone())
                     .unwrap_or_else(|_| panic!("File {:?} not found!",fname));
-        let mut ts = tokenizer::TokenStream::new(&mut src);
+        let mut ts = TokenStream::new(&mut src);
         let mut ast = ast::Ast::new();
         match ast.build(&mut ts) {
             Err(e) => println!("[Error] {:?}, {}", fname, e),
@@ -132,9 +131,9 @@ fn main() {
     // println!("{:?}", inc_files);
     for fname in inc_files {
         // Build AST for all file from the source list
-        let mut src = source::Source::from_file(fname.clone())
+        let mut src = Source::from_file(fname.clone())
                     .unwrap_or_else(|_| panic!("File {:?} not found!",fname));
-        let mut ts = tokenizer::TokenStream::new(&mut src);
+        let mut ts = TokenStream::new(&mut src);
         let mut ast = ast::Ast::new();
         match ast.build(&mut ts) {
             Err(e) => println!("[Error] {:?}, {}", fname, e),
@@ -144,47 +143,5 @@ fn main() {
     }
 
     // Analyze ASTs
-    let mut lib : HashMap<String, WorkObj> = HashMap::new();
-    for ast in ast_list {
-        WorkObj::from_ast(ast, &mut lib);
-    }
-    // println!("{:?}", lib);
-    // Linking
-    for (name,o) in &lib {
-        for (k,v) in &o.unsolved_ref {
-            let mut found = false;
-            match v {
-                AstNodeKind::Port => {
-                    for pkg in &o.import_hdr {
-                        if !lib.contains_key(pkg) {
-                            println!("Unable to find package {}", pkg);
-                        } else {
-                            found = lib[pkg].definition.contains_key(k);
-                            if found {
-                                // println!("[{}] Found ref {} in package ({})", name,k,pkg);
-                                break;
-                            }
-                        }
-                    }
-                }
-                AstNodeKind::Declaration => {
-                    for pkg in &o.import_body {
-                        if ! &lib.contains_key(pkg) {
-                            println!("Unable to find package {}", pkg);
-                        } else {
-                            found = lib[pkg].definition.contains_key(k);
-                            if found {
-                                // println!("[{}] Found ref {} in package ({})", name,k,pkg);
-                                break;
-                            }
-                        }
-                    }
-                }
-                _ => {}
-            }
-            if !found {
-                println!("[{}] Unsolved ref {} ({})", name,k,v);
-            }
-        }
-    }
+    let _lib = CompLib::new("my_lib".to_string(),ast_list);
 }

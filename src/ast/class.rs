@@ -2,8 +2,8 @@
 // Copyright (c) 2019, clams@mail.com
 
 use crate::error::{SvError};
-use crate::token::{TokenKind};
-use crate::tokenizer::TokenStream;
+use crate::lex::token::{TokenKind};
+use crate::lex::token_stream::TokenStream;
 use crate::ast::astnode::*;
 use crate::ast::common::*;
 use crate::ast::module_body::parse_sensitivity;
