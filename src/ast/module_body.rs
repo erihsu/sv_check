@@ -65,23 +65,19 @@ pub fn parse_module_body(ts : &mut TokenStream, node : &mut AstNode, cntxt : Mod
             TokenKind::KwTypedef => parse_typedef(ts,node)?,
             TokenKind::TypeGenvar => {
                 ts.flush(0);
-                let mut s = "".to_string();
                 loop {
-                    let mut nt = next_t!(ts,false);
-                    if nt.kind!=TokenKind::Ident {
-                        return Err(SvError::new(SvErrorKind::Syntax, nt.pos,
-                                format!("Unexpected {} ({:?}) after genvar, expecting identifier",nt.value, nt.kind)));
-                    }
-                    s.push_str(&nt.value);
-                    nt = next_t!(ts,false);
+                    let nt = next_t!(ts,false);
                     match nt.kind {
-                        TokenKind::Comma => s.push_str(", "),
-                        TokenKind::SemiColon => break,
-                        _ => return Err(SvError::new(SvErrorKind::Syntax, nt.pos,
-                                format!("Unexpected {} ({:?}) in genvar declaration, expecting , or ;",nt.value, nt.kind)))
+                        TokenKind::Ident => {
+                            let mut n = AstNode::new(AstNodeKind::Declaration);
+                            n.attr.insert("type".to_string(), "genvar".to_string());
+                            n.attr.insert("name".to_string(),t.value.clone());
+                            node.child.push(n);
+                            loop_args_break_cont!(ts,"genvar declaration",SemiColon);
+                        }
+                        _ =>  return Err(SvError::syntax(t,"virtual interface. Expecting identifier".to_string())),
                     }
                 }
-                node.child.push(AstNode::new(AstNodeKind::Genvar(s)));
             }
             // Identifier -> lookahead to detect if it is a signal declaration or an instantiation
             TokenKind::Ident => {
@@ -294,8 +290,7 @@ pub fn parse_bind(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), SvErr
 pub fn parse_always(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), SvError> {
     let t0 = next_t!(ts,false);
     let mut n = AstNode::new(AstNodeKind::Process);
-    let mut is_block = false;
-    let mut t = next_t!(ts,true);
+    let t = next_t!(ts,true);
     n.attr.insert("kind".to_string(),t0.value.clone());
     // println!("[parse_always] Node {}\nFirst Token {}",n, t);
     if t.kind == TokenKind::At {
@@ -310,19 +305,12 @@ pub fn parse_always(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), SvE
                 n.child.push(node_s);
             }
         }
-
-        t = next_t!(ts,true);
         // println!("[parse_always] Token post sensitivity list: {}", t);
+    } else {
+        ts.rewind(0);
     }
-    if t.kind == TokenKind::KwBegin {
-        is_block = true;
-        parse_label(ts,&mut n,"block".to_string())?;
-    }
-    // Loop on statement, if/else / case
-    parse_stmt(ts,&mut n, is_block)?;
-    if is_block {
-        check_label(ts, &n.attr["block"])?;
-    }
+    //
+    parse_stmt_or_block(ts,&mut n)?;
     node.child.push(n);
     Ok(())
 }
@@ -437,6 +425,16 @@ pub fn parse_stmt(ts : &mut TokenStream, node: &mut AstNode, is_block: bool) -> 
                 ts.flush(0);
                 break;
             },
+            TokenKind::KwBegin => {
+                ts.flush(0);
+                let mut n = AstNode::new(AstNodeKind::Block);
+                parse_label(ts,&mut n,"block".to_string())?;
+                parse_stmt(ts,&mut n, true)?;
+                if n.attr["block"]!="" {
+                    check_label(ts, &n.attr["block"])?;
+                }
+                node.child.push(n);
+            }
             _ => return Err(SvError::new(SvErrorKind::Syntax, t.pos,
                             format!("Unexpected {} ({:?}) in statement",t.value, t.kind)))
         }
@@ -603,7 +601,7 @@ pub fn parse_for(ts : &mut TokenStream, node: &mut AstNode, is_generate: bool) -
     // Parse init part : end on ;
     let mut node_hdr = AstNode::new(AstNodeKind::Header);
     let mut ns = AstNode::new(AstNodeKind::Declaration);
-    parse_data_type(ts, &mut ns, false, true)?;
+    parse_data_type(ts, &mut ns, 4)?;
     parse_var_decl_name(ts, &mut ns)?;
     ns.attr.insert("loop".to_string(), "init".to_string());
     node_hdr.child.push(ns);

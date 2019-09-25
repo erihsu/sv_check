@@ -1,7 +1,7 @@
 // This file is part of sv_check and subject to the terms of MIT Licence
 // Copyright (c) 2019, clams@mail.com
 
-mod astnode;
+pub mod astnode;
 #[macro_use]
 mod common;
 mod module_hdr;
@@ -19,7 +19,7 @@ use crate::tokenizer::*;
 use crate::error::*;
 
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Ast {
     pub tree  : AstNode,
     token_buf : Vec<Token>

@@ -55,7 +55,6 @@ pub enum ExprCntxt {
 /// Parse an import/export statement
 pub fn parse_import(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), SvError> {
     ts.rewind(1);
-    let mut s="".to_string();
     let mut n = AstNode::new(AstNodeKind::Import);
     let mut t = expect_t!(ts,"import/export",TokenKind::KwImport,TokenKind::KwExport);
     n.attr.insert("kind".to_string(),t.value);
@@ -64,21 +63,20 @@ pub fn parse_import(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), SvE
         TokenKind::Ident => {
             ts.rewind(1);
             loop {
+                let mut ni = AstNode::new(AstNodeKind::Identifier);
                 t = expect_t!(ts,"import",TokenKind::Ident);
-                s.push_str(&t.value);
+                ni.attr.insert("pkg_name".to_string(),t.value);
                 expect_t!(ts,"import",TokenKind::Scope);
-                s.push_str("::");
                 t = expect_t!(ts,"import",TokenKind::Ident,TokenKind::OpStar);
-                s.push_str(&t.value);
+                ni.attr.insert("name".to_string(),t.value);
+                n.child.push(ni);
                 t = next_t!(ts,false);
                 match t.kind {
                     TokenKind::SemiColon => break,
                     TokenKind::Comma => {},
                     _ => return Err(SvError::syntax(t, "package import. Expecting , or ;".to_string()))
                 }
-                s.push_str(", ");
             }
-            n.attr.insert("pkg".to_string(),s);
         }
         TokenKind::Str => {
             if t.value!="DPI-C" && t.value!="DPI"  {
@@ -113,13 +111,13 @@ pub fn parse_param_decl(ts : &mut TokenStream, is_body: bool) -> Result<AstNode,
     }
 
     // Optional data type
-    parse_data_type(ts,&mut node, false, true)?;
+    parse_data_type(ts,&mut node, 2)?;
     t = next_t!(ts,false);
     // Parameter name
     if t.kind != TokenKind::Ident {
         return Err(SvError::syntax(t, "param declaration, expecting identifier".to_string()));
     }
-    node.attr.insert("name".to_string(), ".*".to_string());
+    node.attr.insert("name".to_string(), t.value);
     // Optional Unpacked dimension : [x][y:z]
     t = next_t!(ts,true);
     if t.kind == TokenKind::SquareLeft {
@@ -230,7 +228,7 @@ pub fn parse_port_decl(ts : &mut TokenStream, allow_void : bool) -> Result<AstNo
         // Optional net type
         parse_net_type(ts,&mut node)?;
         // Optional data type
-        parse_data_type(ts,&mut node, allow_void, false)?;
+        parse_data_type(ts,&mut node, if allow_void {1} else {0})?;
     }
     // Port name
     t = expect_t!(ts,"port declaration",TokenKind::Ident);
@@ -285,7 +283,7 @@ pub fn parse_signal_decl(ts : &mut TokenStream, has_type: bool) -> Result<AstNod
         // Parse potential net type
         parse_net_type(ts,&mut node)?;
         // Parse data type
-        parse_data_type(ts,&mut node, false, false)?;
+        parse_data_type(ts,&mut node, 0)?;
     }
     parse_var_decl_name(ts, &mut node)?;
     Ok(node)
@@ -401,7 +399,7 @@ pub fn parse_opt_scope(ts : &mut TokenStream, node : &mut AstNode) -> Result<(),
 }
 
 /// Parse a data type
-pub fn parse_data_type(ts : &mut TokenStream, node : &mut AstNode, allow_void: bool, allow_type: bool) -> Result<(), SvError> {
+pub fn parse_data_type(ts : &mut TokenStream, node : &mut AstNode, allowed_flag: u8) -> Result<(), SvError> {
     let mut has_signing = true;
     let mut has_width   = true;
     let mut get_next    = false;
@@ -414,9 +412,10 @@ pub fn parse_data_type(ts : &mut TokenStream, node : &mut AstNode, allow_void: b
         // Integer vector type -> has signing and packed dimension
         TokenKind::KwReg         |
         TokenKind::TypeIntVector => {ts.flush(1); get_next = true; }
-        TokenKind::TypeVoid if allow_void => {ts.flush(1); get_next = true; }
-        TokenKind::KwType   if allow_type => {ts.flush(1); get_next = true; }
-        TokenKind::TypeIntAtom   => {ts.flush(1); get_next = true; has_width=false}
+        TokenKind::TypeVoid   if (allowed_flag & 1)!=0 => {ts.flush(1); get_next = true; }
+        TokenKind::KwType     if (allowed_flag & 2)!=0 => {ts.flush(1); get_next = true; }
+        TokenKind::TypeGenvar if (allowed_flag & 4)!=0 => {ts.flush(1); get_next = true; }
+        TokenKind::TypeIntAtom => {ts.flush(1); get_next = true; has_width=false}
         TokenKind::TypeReal    |
         TokenKind::TypeString  |
         TokenKind::TypeCHandle |
@@ -760,7 +759,7 @@ pub fn parse_typedef(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), Sv
         TokenKind::TypeCHandle   |
         TokenKind::TypeEvent     => {
             node_type = AstNode::new(AstNodeKind::Typedef);
-            parse_data_type(ts,&mut node_type, false, false)?;
+            parse_data_type(ts,&mut node_type, 0)?;
         }
         TokenKind::KwClass => {
             ts.flush(1);
@@ -867,7 +866,7 @@ pub fn parse_port_connection(ts : &mut TokenStream, node: &mut AstNode, is_param
 
 
 macro_rules! parse_opt_params {
-    ($ts:expr, $node:expr, $t:expr) => {{
+    ($ts:expr, $node:expr, $t:expr) => {
         if $t.kind==TokenKind::Hash {
             $ts.flush(0); // Consume the hash token
             let mut node_p = AstNode::new(AstNodeKind::Params);
@@ -875,7 +874,18 @@ macro_rules! parse_opt_params {
             $node.child.push(node_p);
             $t = next_t!($ts,true);
         }
-    }};
+    };
+    ($ts:expr, $node:expr) => {
+        let t = next_t!($ts,true);
+        if t.kind==TokenKind::Hash {
+            $ts.flush(0); // Consume the hash token
+            let mut node_p = AstNode::new(AstNodeKind::Params);
+            parse_port_connection($ts,&mut node_p,true)?;
+            $node.child.push(node_p);
+        } else {
+            $ts.rewind(1);
+        }
+    };
 }
 
 /// Parse
@@ -1118,6 +1128,7 @@ pub fn parse_macro(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), SvEr
 }
 
 
+#[allow(unused_assignments)]
 /// Parse a virtual interface member declaration
 pub fn parse_vintf(ts : &mut TokenStream, node : &mut AstNode) -> Result<(), SvError> {
     ts.rewind(0);
@@ -1137,20 +1148,21 @@ pub fn parse_vintf(ts : &mut TokenStream, node : &mut AstNode) -> Result<(), SvE
         return Err(SvError::syntax(t, "virtual interface. Expecting type identifier".to_string()));
     }
     node_i.attr.insert("type".to_string(),t.value);
-    t = next_t!(ts,false);
     // Optional parameter
-    parse_opt_params!(ts,node,t);
-    // Mandatory interface name
-    if t.kind!=TokenKind::Ident {
-        return Err(SvError::syntax(t, "virtual interface. Expecting type identifier".to_string()));
+    parse_opt_params!(ts,node_i);
+    loop {
+        t = next_t!(ts,false);
+        match t.kind {
+            TokenKind::Ident => {
+                let mut n = AstNode::new(AstNodeKind::Identifier);
+                n.attr.insert("name".to_string(),t.value);
+                node_i.child.push(n);
+                loop_args_break_cont!(ts,"virtual interface",SemiColon);
+            }
+            _ =>  return Err(SvError::syntax(t,"virtual interface. Expecting identifier".to_string())),
+        }
     }
     node.child.push(node_i);
-    ts.flush(0);
-    t = next_t!(ts,false);
-    // TODO: Handle list of virtual interface ...
-    if t.kind!=TokenKind::SemiColon {
-        return Err(SvError::syntax(t, "virtual interface. Expecting ;".to_string()));
-    }
     // println!("[parse_vintf] {}", node);
     Ok(())
 }
@@ -1787,9 +1799,7 @@ pub fn parse_func_call(ts : &mut TokenStream, node: &mut AstNode, is_param: bool
                 node_p.attr.insert("name".to_string(), "".to_string());
                 node_p.attr.insert("value".to_string(), s);
                 node_p.attr.insert("pos".to_string(), format!("{}",cnt));
-                t = next_t!(ts,true);
-                parse_opt_params!(ts,node_p,t);
-                ts.rewind(0);
+                parse_opt_params!(ts,node_p);
                 // println!("Virtual interface param : {}", node_p);
                 node.child.push(node_p);
             }

@@ -730,6 +730,9 @@ impl<'a> TokenStream<'a> {
         loop {
             match self.next() {
                 Some(Ok(t)) => {
+                    // if t.kind==tk_end && cnt_p<=0 && cnt_b<=0 && cnt_c<=0 {
+                    //     break;
+                    // }
                     match t.kind {
                         TokenKind::ParenLeft  => cnt_p += 1,
                         TokenKind::ParenRight => cnt_p -= 1,
@@ -742,6 +745,7 @@ impl<'a> TokenStream<'a> {
                     if t.kind==tk_end && cnt_p<=0 && cnt_b<=0 && cnt_c<=0 {
                         break;
                     }
+                    // println!("Skipping {} (cnt {}/{}/{})", t,cnt_p,cnt_b,cnt_c);
                 }
                 Some(Err(t)) => return Err(t),
                 None => return Err(SvError::eof())

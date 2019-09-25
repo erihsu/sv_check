@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::fmt;
 
 #[allow(dead_code)]
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Debug,Clone)]
 pub enum AstNodeKind {
     Root, // first node of a tree
     Module, Ports, Port, Params, Param,
@@ -37,7 +37,6 @@ pub enum AstNodeKind {
     New, Args, Slice, Value, Return,
     Assert,
     VIntf,
-    Genvar(String),
     Directive, MacroCall, Timescale,
     Type, Typedef, Scope,
     Struct, Union, StructInit, Concat, Replication,
@@ -45,7 +44,7 @@ pub enum AstNodeKind {
 }
 
 #[allow(dead_code)]
-#[derive(Debug)]
+#[derive(Debug,Clone)]
 pub struct AstNode {
     pub kind  : AstNodeKind,
     pub child : Vec<AstNode>,

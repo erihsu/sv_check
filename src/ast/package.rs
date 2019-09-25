@@ -71,21 +71,19 @@ pub fn parse_package(ts : &mut TokenStream) -> Result<AstNode, SvError> {
             TokenKind::KwTypedef => parse_typedef(ts,&mut node)?,
             TokenKind::TypeGenvar => {
                 ts.flush(0);
-                let mut s = "".to_string();
                 loop {
-                    let mut nt = next_t!(ts,false);
-                    if nt.kind!=TokenKind::Ident {
-                        return Err(SvError::syntax(t, "after genvar, expecting identifier".to_string()));
-                    }
-                    s.push_str(&nt.value);
-                    nt = next_t!(ts,false);
+                    let nt = next_t!(ts,false);
                     match nt.kind {
-                        TokenKind::Comma => s.push_str(", "),
-                        TokenKind::SemiColon => break,
-                        _ => return Err(SvError::syntax(t, "genvar, expecting  , or ;".to_string()))
+                        TokenKind::Ident => {
+                            let mut n = AstNode::new(AstNodeKind::Declaration);
+                            n.attr.insert("type".to_string(), "genvar".to_string());
+                            n.attr.insert("name".to_string(),t.value.clone());
+                            node.child.push(n);
+                            loop_args_break_cont!(ts,"genvar declaration",SemiColon);
+                        }
+                        _ =>  return Err(SvError::syntax(t,"virtual interface. Expecting identifier".to_string())),
                     }
                 }
-                node.child.push(AstNode::new(AstNodeKind::Genvar(s)));
             }
             // Identifier -> In a package it can only be a signal declaration
             TokenKind::Ident        => parse_signal_decl_list(ts,&mut node)?,

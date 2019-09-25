@@ -10,6 +10,7 @@ Reminder of special error/warning which needs to be caught by the tool eventuall
  [ ] clocking block : check all signal are part of the interface
  [ ] signal declaration : check re-declaration
  [ ] non-continuous assignment of a wire
+ [ ] Array assignement with non matching size
 
 # Warning to capture :
 

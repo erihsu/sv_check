@@ -7,15 +7,19 @@ mod token;
 mod tokenizer;
 mod ast;
 mod error;
+mod work_obj;
 
 // #[macro_use]
 extern crate structopt;
 use std::path::PathBuf;
-use std::collections::HashSet;
+use std::collections::{HashSet,HashMap};
 use std::io::BufRead;
 use structopt::StructOpt;
 use std::io::BufReader;
 use std::fs::File;
+
+use work_obj::WorkObj;
+use ast::astnode::{AstNodeKind};
 
 #[derive(Debug, StructOpt)]
 #[structopt(name = "sv_check", about = "SystemVerilog Checker")]
@@ -33,6 +37,7 @@ fn main() {
     let args = Cli::from_args();
     let mut filelist : HashSet<PathBuf>;
     let mut incdir : HashSet<PathBuf>;
+    let mut ast_list = Vec::new();
     filelist = HashSet::new();
     incdir = HashSet::new();
     if args.files.len() > 0 {
@@ -93,9 +98,10 @@ fn main() {
         let mut ast = ast::Ast::new();
         match ast.build(&mut ts) {
             Err(e) => println!("[Error] {:?}, {}", fname, e),
-            _ => println!("[Info] File {:?} compiled with success", fname)
+            _ => println!("[Info] File {} compiled with success", fname.display())
             // _ => println!("{}", ast.tree)
         }
+        ast_list.push(ast);
         // Handle included files
         if ts.inc_files.len() > 0 {
             let cwd = fname.parent().unwrap();
@@ -134,6 +140,51 @@ fn main() {
             Err(e) => println!("[Error] {:?}, {}", fname, e),
             _ => println!("[Info] File {:?} compiled with success", fname)
             // _ => println!("{}", ast.tree)
+        }
+    }
+
+    // Analyze ASTs
+    let mut lib : HashMap<String, WorkObj> = HashMap::new();
+    for ast in ast_list {
+        WorkObj::from_ast(ast, &mut lib);
+    }
+    // println!("{:?}", lib);
+    // Linking
+    for (name,o) in &lib {
+        for (k,v) in &o.unsolved_ref {
+            let mut found = false;
+            match v {
+                AstNodeKind::Port => {
+                    for pkg in &o.import_hdr {
+                        if !lib.contains_key(pkg) {
+                            println!("Unable to find package {}", pkg);
+                        } else {
+                            found = lib[pkg].definition.contains_key(k);
+                            if found {
+                                // println!("[{}] Found ref {} in package ({})", name,k,pkg);
+                                break;
+                            }
+                        }
+                    }
+                }
+                AstNodeKind::Declaration => {
+                    for pkg in &o.import_body {
+                        if ! &lib.contains_key(pkg) {
+                            println!("Unable to find package {}", pkg);
+                        } else {
+                            found = lib[pkg].definition.contains_key(k);
+                            if found {
+                                // println!("[{}] Found ref {} in package ({})", name,k,pkg);
+                                break;
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+            if !found {
+                println!("[{}] Unsolved ref {} ({})", name,k,v);
+            }
         }
     }
 }

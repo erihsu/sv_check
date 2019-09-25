@@ -287,7 +287,7 @@ pub fn parse_class_members(ts : &mut TokenStream, node : &mut AstNode) -> Result
         ts.flush(1);
     }
     // Parse data type
-    parse_data_type(ts, &mut node_m, false, true)?;
+    parse_data_type(ts, &mut node_m, 2)?;
     // Parse data name
     parse_var_decl_name(ts, &mut node_m)?;
     // println!("[parse_class_members] {}", node_m);
@@ -369,14 +369,14 @@ pub fn parse_func(ts : &mut TokenStream, node : &mut AstNode, is_oob : bool, is_
                 if nt.kind == TokenKind::KwNew {
                     ts.rewind(0);
                 } else {
-                    parse_data_type(ts,&mut node_f, true, false)?;
+                    parse_data_type(ts,&mut node_f, 1)?;
                 }
             } else {
-                parse_data_type(ts,&mut node_f, true, false)?;
+                parse_data_type(ts,&mut node_f, 1)?;
             }
         }
         // Expect data type
-        _ => parse_data_type(ts,&mut node_f, true, true)?
+        _ => parse_data_type(ts,&mut node_f, 3)?
     }
     // Expect function name
     t = next_t!(ts,false);
@@ -507,12 +507,19 @@ pub fn parse_task(ts : &mut TokenStream, node : &mut AstNode) -> Result<(), SvEr
     // Optional function port definition
     t = next_t!(ts,false);
     if t.kind==TokenKind::ParenLeft {
-        let mut node_ports = AstNode::new(AstNodeKind::Ports);
-        loop {
-            node_ports.child.push(parse_port_decl(ts, true)?); // TBD if we want a parse specific to function instead of allowing same I/O as a module ...
-            loop_args_break_cont!(ts,"task port",ParenRight);
+        t = next_t!(ts,true);
+        if t.kind!=TokenKind::ParenRight {
+            ts.rewind(1);
+            let mut node_ports = AstNode::new(AstNodeKind::Ports);
+            loop {
+                node_ports.child.push(parse_port_decl(ts, true)?); // TBD if we want a parse specific to function instead of allowing same I/O as a module ...
+                loop_args_break_cont!(ts,"task port declaration",ParenRight);
+            }
+            // println!("{}", node_ports);
+            node_task.child.push(node_ports);
+        } else {
+            ts.flush(1);
         }
-        node_task.child.push(node_ports);
         t = next_t!(ts,false);
     }
     // Expect ;
@@ -1010,7 +1017,7 @@ pub fn parse_class_for(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), 
     }
     ts.rewind(0);
     if is_type {
-        parse_data_type(ts, &mut ns, false, true)?;
+        parse_data_type(ts, &mut ns, 2)?;
     } else {
         parse_assign_or_call(ts, &mut ns,ExprCntxt::Stmt)?;
     }
