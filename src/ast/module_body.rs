@@ -6,7 +6,7 @@ use crate::lex::token::{TokenKind};
 use crate::lex::token_stream::TokenStream;
 use crate::ast::astnode::*;
 use crate::ast::common::*;
-use crate::ast::class::{parse_func,parse_task,parse_class_stmt_or_block,parse_assign_or_call};
+use crate::ast::class::{parse_class,parse_func,parse_task,parse_class_stmt_or_block,parse_assign_or_call};
 
 // TODO
 // - when parsing named block, ensure the name is unique
@@ -49,7 +49,9 @@ pub fn parse_module_body(ts : &mut TokenStream, node : &mut AstNode, cntxt : Mod
             TokenKind::KwNetType |
             TokenKind::KwSupply  =>  parse_signal_decl_list(ts,node)?,
             // Basetype
+            TokenKind::KwConst       |
             TokenKind::KwReg         |
+            TokenKind::KwVar         |
             TokenKind::TypeIntAtom   |
             TokenKind::TypeIntVector |
             TokenKind::TypeReal      |
@@ -60,6 +62,12 @@ pub fn parse_module_body(ts : &mut TokenStream, node : &mut AstNode, cntxt : Mod
                 let mut node_e = parse_enum(ts)?;
                 parse_ident_list(ts,&mut node_e)?;
                 node.child.push(node_e);
+            }
+            TokenKind::KwStruct |
+            TokenKind::KwUnion  => {
+                let mut node_s = parse_struct(ts)?;
+                parse_ident_list(ts,&mut node_s)?;
+                node.child.push(node_s);
             }
             TokenKind::KwTypedef => parse_typedef(ts,node)?,
             TokenKind::TypeGenvar => {
@@ -78,6 +86,7 @@ pub fn parse_module_body(ts : &mut TokenStream, node : &mut AstNode, cntxt : Mod
                     }
                 }
             }
+            TokenKind::KwClass => node.child.push(parse_class(ts)?),
             // Identifier -> lookahead to detect if it is a signal declaration or an instantiation
             TokenKind::Ident => {
                 let nt = next_t!(ts,true);
@@ -165,10 +174,11 @@ pub fn parse_module_body(ts : &mut TokenStream, node : &mut AstNode, cntxt : Mod
                 }
             }
             TokenKind::KwCovergroup => parse_covergroup(ts,node)?,
+            TokenKind::SemiColon => {ts.flush(1);}, // TODO: generate a warning
             // End of loop depends on context
-            TokenKind::KwEnd         if cntxt == ModuleCntxt::Block    => break,
-            TokenKind::KwEndGenerate if cntxt == ModuleCntxt::Generate => break,
-            TokenKind::KwEndModule   if cntxt == ModuleCntxt::Top      => break,
+            TokenKind::KwEnd         if cntxt == ModuleCntxt::Block    => {ts.flush(1); break},
+            TokenKind::KwEndGenerate if cntxt == ModuleCntxt::Generate => {ts.flush(1); break},
+            TokenKind::KwEndModule   if cntxt == ModuleCntxt::Top      => {ts.flush(1); break},
             TokenKind::Macro => parse_macro(ts,node)?,
             TokenKind::CompDir => parse_macro(ts,node)?,
             // Any un-treated token is an error
@@ -182,7 +192,7 @@ pub fn parse_module_body(ts : &mut TokenStream, node : &mut AstNode, cntxt : Mod
             break;
         }
     }
-    ts.flush(0);
+    // ts.flush(0);
     Ok(())
     // Err(SvError {kind:SvErrorKind::NotSupported, pos: t.pos, txt: "Module body".to_owned()})
 }
@@ -394,6 +404,7 @@ pub fn parse_sensitivity(ts : &mut TokenStream, is_process: bool) -> Result<AstN
 /// Parse an always block
 pub fn parse_initial(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), SvError> {
     let mut n = AstNode::new(AstNodeKind::Process);
+    ts.flush(1); // Consume the initisl keyword
     n.attr.insert("kind".to_owned(),"initial".to_owned());
     parse_class_stmt_or_block(ts,&mut n)?;
     node.child.push(n);
@@ -585,13 +596,10 @@ pub fn parse_case(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), SvErr
                 ts.flush(0); // every character until the colon should be consumed
             }
             TokenKind::KwDefault => {
+                ts.flush(1);
                 let nt = next_t!(ts,true);
-                // Check for colon after keyword default
-                if nt.kind!=TokenKind::Colon {
-                    return Err(SvError::new(SvErrorKind::Syntax, nt.pos,
-                                format!("Unexpected {} {:?} in default case item",nt.value, nt.kind)));
-                }
-                ts.flush(0);
+                // Check for optional colon after keyword default
+                if nt.kind==TokenKind::Colon {ts.flush(1);} else {ts.rewind(1);}
                 node_i.attr.insert("item".to_owned(),"default".to_owned());
             }
             TokenKind::KwEndcase => break,

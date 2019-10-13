@@ -88,9 +88,10 @@ impl Ast {
                                     loop_args_break_cont!(ts,"parameter declaration",SemiColon);
                                 }
                             }
+                            TokenKind::SemiColon => ts.flush(1),
                             // Display all un-implemented token (TEMP)
                             _ => {
-                                println!("Root ({:?}): Skipping {}",ts.source.get_filename(), t);
+                                println!("[Warning] {:?} -- Root skipping {}",ts.source.get_filename(), t);
                                 ts.flush(0);
                             }
                         }

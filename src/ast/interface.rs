@@ -60,6 +60,12 @@ pub fn parse_interface(ts : &mut TokenStream) -> Result<AstNode, SvError> {
                 parse_ident_list(ts,&mut node_e)?;
                 node_b.child.push(node_e);
             }
+            TokenKind::KwStruct |
+            TokenKind::KwUnion  => {
+                let mut node_s = parse_struct(ts)?;
+                parse_ident_list(ts,&mut node_s)?;
+                node.child.push(node_s);
+            }
             TokenKind::KwTypedef => parse_typedef(ts,&mut node_b)?,
             TokenKind::TypeGenvar => {
                 ts.flush(0);
@@ -143,6 +149,7 @@ pub fn parse_interface(ts : &mut TokenStream) -> Result<AstNode, SvError> {
             // TokenKind::KwEndGenerate if cntxt == ModuleCntxt::Generate => break,
             // End module -> parsing of body is done
             TokenKind::KwEndIntf => {
+                ts.flush(1);
                 check_label(ts, &node.attr["name"])?;
                 break;
             },
@@ -153,7 +160,7 @@ pub fn parse_interface(ts : &mut TokenStream) -> Result<AstNode, SvError> {
             }
         }
     }
-    ts.flush(0);
+    // ts.flush(0);
     node.child.push(node_b);
     Ok(node)
 }

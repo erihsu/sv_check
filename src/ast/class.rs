@@ -203,16 +203,14 @@ pub fn parse_class(ts : &mut TokenStream) -> Result<AstNode, SvError> {
             TokenKind::KwCovergroup => parse_covergroup(ts,&mut node)?,
             TokenKind::SemiColon => {ts.flush(1);}, // TODO: generate a warning
             TokenKind::KwEndClass => {
+                ts.flush(1);
                 check_label(ts,&node.attr["name"])?;
                 break;
             },
             _ => return Err(SvError::syntax(t, "class body".to_owned())),
         }
     }
-    ts.flush(0);
-    // TODO: handle endclass label
     // println!("[class] {}", node);
-
     Ok(node)
 }
 
@@ -1162,12 +1160,9 @@ pub fn parse_class_case(ts : &mut TokenStream, node: &mut AstNode) -> Result<(),
                 ts.flush(0); // every character until the colon should be consumed
             }
             TokenKind::KwDefault => {
+                ts.flush(1);
                 let nt = next_t!(ts,true);
-                // Check for colon after keyword default
-                if nt.kind!=TokenKind::Colon {
-                    return Err(SvError::syntax(t,"default case item. Expecting :".to_owned()));
-                }
-                ts.flush(0);
+                if nt.kind==TokenKind::Colon {ts.flush(1);} else {ts.rewind(1);}
                 node_i.attr.insert("item".to_owned(),"default".to_owned());
             }
             TokenKind::KwEndcase => break,

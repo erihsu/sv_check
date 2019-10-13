@@ -53,18 +53,22 @@ pub fn parse_module_hdr(ts : &mut TokenStream, node: &mut AstNode) -> Result<(),
     // Optional Port list
     if t.kind==TokenKind::ParenLeft {
         ts.flush(1);
-        let mut is_first = true;
-        loop {
-            let node_port = parse_port_decl(ts, false)?;
-            if !is_first {
-                if !node_port.attr.contains_key("name") {
-                    return Err(SvError::syntax(t, "port declaration. Extraneous , detected".to_owned()));
+        t = next_t!(ts,true);
+        if t.kind!=TokenKind::ParenRight {
+            ts.rewind(1);
+            let mut is_first = true;
+            loop {
+                let node_port = parse_port_decl(ts, false)?;
+                if !is_first {
+                    if !node_port.attr.contains_key("name") {
+                        return Err(SvError::syntax(t, "port declaration. Extraneous , detected".to_owned()));
+                    }
                 }
+                is_first = false;
+                node_h.child.push(node_port);
+                loop_args_break_cont!(ts,"port declaration",ParenRight);
             }
-            is_first = false;
-            node_h.child.push(node_port);
-            loop_args_break_cont!(ts,"port declaration",ParenRight);
-        }
+        } else {ts.flush(1);}
         t = next_t!(ts,false);
     }
     // End of header

@@ -72,6 +72,7 @@ impl CompObj {
                         match node_m.kind {
                             AstNodeKind::Header => {
                                 for n in &node_m.child {
+                                    // println!("[CompObj] {} | Header: {:?}",o.name, n);
                                     match n.kind {
                                         AstNodeKind::Port => {
                                             o.definition.insert(n.attr["name"].clone(),ObjDef::Signal);
@@ -192,6 +193,16 @@ impl CompObj {
                     for nc in &n.child {
                         match nc.kind {
                             AstNodeKind::EnumIdent  => { self.definition.insert(nc.attr["name"].clone(),ObjDef::Value);},
+                            AstNodeKind::Identifier => self.add_decl(&nc,true),
+                            _ => println!("[CompObj] {} | Typedef: Skipping {}",self.name, nc.kind),
+                        }
+                    }
+                }
+                AstNodeKind::Struct => {
+                    for nc in &n.child {
+                        match nc.kind {
+                            // TODO: add definition of the structure for the fields
+                            AstNodeKind::Declaration  => {},
                             AstNodeKind::Identifier => self.add_decl(&nc,true),
                             _ => println!("[CompObj] {} | Typedef: Skipping {}",self.name, nc.kind),
                         }

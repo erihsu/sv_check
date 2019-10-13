@@ -283,7 +283,7 @@ pub fn parse_signal_decl(ts : &mut TokenStream, has_type: bool) -> Result<AstNod
         // Parse potential net type
         parse_net_type(ts,&mut node)?;
         // Parse data type
-        parse_data_type(ts,&mut node, 0)?;
+        parse_data_type(ts,&mut node, 1)?;
     }
     parse_var_decl_name(ts, &mut node)?;
     Ok(node)
@@ -589,6 +589,7 @@ pub fn parse_ident_list(ts : &mut TokenStream, node: &mut AstNode) -> Result<(),
             TokenKind::Ident if expect_ident => {
                 let mut n = AstNode::new(AstNodeKind::Identifier);
                 n.attr.insert("name".to_owned(),t.value);
+                parse_opt_init_value(ts,&mut n)?;
                 node.child.push(n);
                 expect_ident = false;
             }
@@ -599,6 +600,16 @@ pub fn parse_ident_list(ts : &mut TokenStream, node: &mut AstNode) -> Result<(),
             _ => return Err(SvError::new(SvErrorKind::Syntax, t.pos,
                     format!("Unexpected {} ({:?}) in ident list, expecting identifier/comma/semicolon",t.value, t.kind)))
         }
+    }
+    Ok(())
+}
+
+pub fn parse_opt_init_value(ts : &mut TokenStream, node: &mut AstNode) -> Result<(),SvError> {
+    let t = next_t!(ts,true);
+    if t.kind != TokenKind::OpEq {
+        ts.rewind(1);
+    } else {
+        node.child.push(parse_expr(ts,ExprCntxt::StmtList,false)?);
     }
     Ok(())
 }
@@ -684,34 +695,46 @@ pub fn parse_struct(ts : &mut TokenStream) -> Result<AstNode,SvError> {
         TokenKind::KwStruct => node = AstNode::new(AstNodeKind::Struct),
         TokenKind::KwUnion => {
             node = AstNode::new(AstNodeKind::Union);
-            t = next_t!(ts,false);
+            t = next_t!(ts,true);
             if t.kind == TokenKind::KwTagged {
-
+                node.attr.insert("tagged".to_owned(),"".to_owned());
+                ts.flush(1);
             } else {
                 ts.rewind(1);
             }
         },
         _ => return Err(SvError::syntax(t, "struct. Expecting struct or union".to_owned()))
     }
-    t = next_t!(ts,false);
+    t = next_t!(ts,true);
     // Optional packed keyword
     if t.kind==TokenKind::KwPacked {
+        ts.flush(0);
         node.attr.insert("packed".to_owned(),"".to_owned());
-        t = next_t!(ts,false);
+        t = next_t!(ts,true);
         // Optional signing
         if t.kind==TokenKind::KwSigning {
+            ts.flush(0);
             node.attr.insert("signing".to_owned(), t.value);
-            t = next_t!(ts,false);
+            t = next_t!(ts,true);
         }
     }
-    if t.kind!=TokenKind::CurlyLeft {
-        return Err(SvError::syntax(t, "struct. Expecting {".to_owned()));
+    match t.kind {
+        TokenKind::CurlyLeft => {ts.flush(1);},
+        // Forward definition : no field defined
+        TokenKind::Ident => {
+            ts.rewind(1);
+            node.attr.insert("forward".to_owned(),"".to_owned());
+            return Ok(node);
+        },
+        _ => return Err(SvError::syntax(t, "struct. Expecting {".to_owned()))
     }
     // Loop on type declaration until closing curly brace
     loop {
         t = next_t!(ts,true);
         match t.kind {
+            TokenKind::KwReg         |
             TokenKind::Ident         |
+            TokenKind::TypeVoid      |
             TokenKind::TypeIntAtom   |
             TokenKind::TypeIntVector |
             TokenKind::TypeReal      |
@@ -752,6 +775,7 @@ pub fn parse_typedef(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), Sv
         TokenKind::KwEnum => node_type = parse_enum(ts)?,
         TokenKind::KwStruct |
         TokenKind::KwUnion  => node_type = parse_struct(ts)?,
+        TokenKind::KwReg         |
         TokenKind::Ident         |
         TokenKind::TypeIntAtom   |
         TokenKind::TypeIntVector |
@@ -979,12 +1003,19 @@ pub fn parse_delay (ts : &mut TokenStream) -> Result<AstNode, SvError> {
 pub fn parse_macro(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), SvError> {
     let mut node_m = AstNode::new(AstNodeKind::Directive);
     ts.rewind(0);
-    let mut t = next_t!(ts,true);
+    let mut t = next_t!(ts,false);
     node_m.attr.insert("name".to_owned(),t.value.clone());
     // println!("[parse_macro] First token {:?}", t);
     match t.value.as_ref() {
         // Directive with no parameters
-        "`else" | "`endif"| "`undefineall"| "`resetall"| "`celldefine"| "`endcelldefine" => ts.flush(0),
+        "`else"                |
+        "`endif"               |
+        "`undefineall"         |
+        "`resetall"            |
+        "`celldefine"          |
+        "`endcelldefine"       |
+        "`nounconnected_drive" |
+        "`end_keywords"        => {}
         // Directive with one parameter
         "`ifndef" | "`ifdef" | "`elsif" | "`undef" => {
             t = next_t!(ts,true);
@@ -993,6 +1024,18 @@ pub fn parse_macro(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), SvEr
             }
             node_m.attr.insert("param".to_owned(), t.value);
             ts.flush(0);
+        }
+        "`begin_keywords" => {
+            t = expect_t!(ts,"type",TokenKind::Str);
+            node_m.attr.insert("version".to_owned(),t.value);
+        }
+        // Expect pull0 or pull1
+        "`unconnected_drive" => {
+            t = expect_t!(ts,"type",TokenKind::KwDrive);
+            if t.value != "pull0" && t.value != "pull1" {
+                return Err(SvError::syntax(t, "Invalid unconnected drive, Expecting pull0/1 !".to_owned()));
+            }
+            node_m.attr.insert("drive".to_owned(),t.value);
         }
         // Include directive : `include <file> , `include "file" or `include `mymacro
         "`include" => {
@@ -1092,8 +1135,18 @@ pub fn parse_macro(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), SvEr
                 }
             }
         }
+        "`pragma" => {
+            t = expect_t!(ts,"type",TokenKind::Ident);
+            let line = t.pos.line;
+            node_m.attr.insert("pragma_name".to_owned(), t.value);
+            // Silently consume any token on current line
+            loop {
+                t = next_t!(ts,true);
+                if t.pos.line != line {break;}
+            }
+            ts.flush_keep(1); // Cleanup everything except last token
+        }
         "`default_nettype" => {
-
             t = next_t!(ts,true);
             if t.kind!=TokenKind::KwNetType && (t.kind!=TokenKind::Ident || t.value != "none")  {
                 return Err(SvError::syntax(t,"default_nettype. Expecting net type (wire/tri/...) or none".to_owned()));
@@ -1102,16 +1155,22 @@ pub fn parse_macro(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), SvEr
             ts.flush(0);
         }
         "`timescale" => {
-            ts.flush(1);
             node_m.attr.insert("unit".to_owned(),parse_time(ts)?);
             expect_t!(ts,"timescale",TokenKind::OpDiv);
             node_m.attr.insert("precision".to_owned(),parse_time(ts)?);
         }
+        // Line : expect number string number
+        "`line" => {
+            t = expect_t!(ts,"type",TokenKind::Integer);
+            node_m.attr.insert("line".to_owned(),t.value);
+            t = expect_t!(ts,"type",TokenKind::Str);
+            node_m.attr.insert("filename".to_owned(),t.value);
+            t = expect_t!(ts,"type",TokenKind::Integer);
+            node_m.attr.insert("level".to_owned(),t.value);
+        }
         // User define macro
         _ => {
             node_m.kind = AstNodeKind::MacroCall;
-            node_m.attr.insert("name".to_owned(),t.value);
-            ts.flush(0);
             t = next_t!(ts,true);
             if t.kind == TokenKind::ParenLeft {
                 ts.flush(0);
@@ -1385,6 +1444,14 @@ pub fn parse_expr(ts : &mut TokenStream, cntxt: ExprCntxt, allow_type: bool) -> 
                 node_e.attr.insert("value".to_owned(), t.value);
                 allow_ident = false;
                 ts.flush(1);
+            }
+            TokenKind::Integer if prev_kind==TokenKind::Integer => {
+                if t.value.starts_with('\'') {
+                    node_e.attr.insert("value".to_owned(), format!("{}{}", node_e.attr["value"],t.value));
+                    ts.flush(1);
+                } else {
+                    return Err(SvError::syntax(t, "expression".to_owned()))
+                }
             }
             // Operator with one operand
             // TokenKind::OpBang => {

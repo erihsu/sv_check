@@ -71,21 +71,24 @@ impl<'a> TokenStream<'a> {
             }
             if !c.is_alphanumeric() && c!='_' && !(s.len()==1 && second_char=='`' && first_char=='`'){
                 match c {
-                    '$' if s=="PATHPULSE" => {
+                    '$' => {
                         s.push(c);
-                        is_pathpulse = true;
-
+                        if s=="PATHPULSE" {
+                            is_pathpulse = true;
+                            break;
+                        }
                     },
                     '\'' => {
                         s.push(c);
                         is_casting = true;
+                        break;
                     }
                     _ => {
                         self.last_char = c;
                         self.last_pos = self.source.pos;
+                        break;
                     }
                 }
-                break;
             } else {
                 s.push(c);
             }
@@ -134,16 +137,33 @@ impl<'a> TokenStream<'a> {
         Ok(Token::new(k,s,p))
     }
 
+
+    /// Escaped Identifier: get all characters until whitespace
+    fn parse_esc_ident(&mut self) -> Result<Token,SvError> {
+        let mut s = "\\".to_owned();
+        let p = self.last_pos;
+        while let Some(c) = self.source.get_char() {
+            if ! c.is_whitespace() {
+                s.push(c);
+            } else { break;}
+        }
+        self.last_pos = self.source.pos;
+        self.last_char = ' ';
+        Ok(Token::new(TokenKind::Ident,s,p))
+    }
+
     /// Get all characters until end of string
     fn parse_string(&mut self, is_macro: bool) -> Result<Token,SvError> {
         let mut s = if is_macro {"`\"".to_owned()} else {"".to_owned()};
         let p = self.last_pos;
+        let mut cpp = ' ';
         while let Some(c) = self.source.get_char() {
             s.push(c);
-            if c == '"' && self.last_char != '\\' {
+            if c == '"' && (self.last_char != '\\' || cpp == '\\') {
                 if !is_macro {s.pop();}
                 break;
             }
+            cpp = self.last_char;
             self.last_char = c;
         }
         self.last_char = ' ';
@@ -649,7 +669,7 @@ impl<'a> TokenStream<'a> {
                 let nc = self.source.get_char().unwrap_or(' ');
                 match nc {
                     '\n' => Ok(Token::new(TokenKind::LineCont ,"".to_owned(),p)) ,
-                    _ => Err(SvError::new(SvErrorKind::Token,p,'\\'.to_string()))
+                    _ => return self.parse_esc_ident()
                 }
             }
             // String
@@ -720,6 +740,16 @@ impl<'a> TokenStream<'a> {
                 self.rd_ptr -= 1;
             }
         }
+    }
+
+    // Flush to keep nb element
+    pub fn flush_keep(&mut self, mut nb : u8) {
+        let l = self.buffer.len() as u8;
+        nb = l - nb;
+        for _i in 0..nb {
+            self.buffer.pop_front();
+        }
+        self.rewind(0);
     }
 
     pub fn rewind(&mut self, nb : u8) {
