@@ -1,9 +1,9 @@
 [package]
 name = "sv_check"
-version = "0.3.0"
+version = "0.4.0"
 authors = ["Clams <clams@mail.com>"]
 edition = "2018"
 license = "MIT"
 
 [dependencies]
-structopt = { version = "0.2"}
+structopt = { version = "0.3"}

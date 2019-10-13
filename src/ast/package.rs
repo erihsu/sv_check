@@ -16,16 +16,16 @@ pub fn parse_package(ts : &mut TokenStream) -> Result<AstNode, SvError> {
     // Parse package header
     let mut t = next_t!(ts,false);
     if t.kind==TokenKind::KwStatic || t.kind==TokenKind::KwAutomatic {
-        node.attr.insert("lifetime".to_string(),t.value);
+        node.attr.insert("lifetime".to_owned(),t.value);
         t = next_t!(ts,false);
     }
     if t.kind!=TokenKind::Ident {
-        return Err(SvError::syntax(t, "package header. Expecting identifier".to_string()));
+        return Err(SvError::syntax(t, "package header. Expecting identifier".to_owned()));
     }
-    node.attr.insert("name".to_string(),t.value);
+    node.attr.insert("name".to_owned(),t.value);
     t = next_t!(ts,false);
     if t.kind!=TokenKind::SemiColon {
-        return Err(SvError::syntax(t, "package header. Expecting ;".to_string()));
+        return Err(SvError::syntax(t, "package header. Expecting ;".to_owned()));
     }
     // Parse package body
     loop {
@@ -46,7 +46,7 @@ pub fn parse_package(ts : &mut TokenStream) -> Result<AstNode, SvError> {
                     match nt.kind {
                         TokenKind::Comma => {}, // Comma indicate a list -> continue
                         TokenKind::SemiColon => {break;}, // Semi colon indicate end of statement, stop the loop
-                        _ => return Err(SvError::syntax(t, "param declaration, expecting , or ;".to_string()))
+                        _ => return Err(SvError::syntax(t, "param declaration, expecting , or ;".to_owned()))
                     }
                 }
             }
@@ -64,8 +64,7 @@ pub fn parse_package(ts : &mut TokenStream) -> Result<AstNode, SvError> {
             TokenKind::TypeEvent     => parse_signal_decl_list(ts,&mut node)?,
             TokenKind::KwEnum        => {
                 let mut node_e = parse_enum(ts)?;
-                let s = parse_ident_list(ts)?;
-                node_e.attr.insert("name".to_string(),s);
+                parse_ident_list(ts,&mut node_e)?;
                 node.child.push(node_e);
             }
             TokenKind::KwTypedef => parse_typedef(ts,&mut node)?,
@@ -76,27 +75,31 @@ pub fn parse_package(ts : &mut TokenStream) -> Result<AstNode, SvError> {
                     match nt.kind {
                         TokenKind::Ident => {
                             let mut n = AstNode::new(AstNodeKind::Declaration);
-                            n.attr.insert("type".to_string(), "genvar".to_string());
-                            n.attr.insert("name".to_string(),t.value.clone());
+                            n.attr.insert("type".to_owned(), "genvar".to_owned());
+                            n.attr.insert("name".to_owned(),t.value.clone());
                             node.child.push(n);
                             loop_args_break_cont!(ts,"genvar declaration",SemiColon);
                         }
-                        _ =>  return Err(SvError::syntax(t,"virtual interface. Expecting identifier".to_string())),
+                        _ =>  return Err(SvError::syntax(t,"virtual interface. Expecting identifier".to_owned())),
                     }
                 }
             }
             // Identifier -> In a package it can only be a signal declaration
             TokenKind::Ident        => parse_signal_decl_list(ts,&mut node)?,
             TokenKind::Macro        => parse_macro(ts,&mut node)?,
+            TokenKind::CompDir      => parse_macro(ts,&mut node)?,
             TokenKind::KwFunction   => parse_func(ts, &mut node, false, false)?,
             TokenKind::KwTask       => parse_task(ts, &mut node)?,
             TokenKind::KwCovergroup => parse_covergroup(ts,&mut node)?,
             // End module -> parsing of body is done
-            TokenKind::KwEndPackage => break,
+            TokenKind::KwEndPackage => {
+                check_label(ts, &node.attr["name"])?;
+                break;
+            },
             // Any un-treated token is an error
             _ => {
                 // println!("{}", node);
-                return Err(SvError::syntax(t, "package".to_string()))
+                return Err(SvError::syntax(t, "package".to_owned()))
             }
         }
     }

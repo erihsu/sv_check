@@ -7,14 +7,20 @@ mod error;
 mod comp;
 
 // #[macro_use]
-extern crate structopt;
-use std::path::PathBuf;
-use std::collections::{HashSet};
-use std::io::BufRead;
-use structopt::StructOpt;
-use std::io::BufReader;
-use std::fs::File;
+#[allow(unused_imports)]
+use std::{
+    path::PathBuf,
+    collections::{HashSet,HashMap},
+    io::{BufReader,BufWriter, BufRead, Write},
+    fs::File,
+    process,
+};
 
+extern crate structopt;
+use structopt::StructOpt;
+use structopt::clap::{App, AppSettings};
+
+use ast::Ast;
 use comp::comp_lib::CompLib;
 use lex::source::Source;
 use lex::token_stream::TokenStream;
@@ -23,9 +29,9 @@ use lex::token_stream::TokenStream;
 #[derive(Debug, StructOpt)]
 #[structopt(name = "sv_check", about = "SystemVerilog Checker")]
 struct Cli {
-    /// source list containing the list of file to compile
-    #[structopt(short = "f", long = "filelist", default_value = "")]
-    srclist: PathBuf,
+    /// Source list containing the list of file to compile
+    #[structopt(short = "f", long = "filelist")]
+    srclist: Option<PathBuf>,
     /// List of files to compile
     #[structopt(parse(from_os_str))]
     files: Vec<PathBuf>,
@@ -37,17 +43,21 @@ fn main() {
     let mut filelist : HashSet<PathBuf>;
     let mut incdir : HashSet<PathBuf>;
     let mut ast_list = Vec::new();
+    let mut ast_inc : HashMap<String,Ast> = HashMap::new();
     filelist = HashSet::new();
     incdir = HashSet::new();
+    //
     if args.files.len() > 0 {
         for f in args.files {
             filelist.insert(f);
         }
     }
-    else  {
-        let f = File::open(args.srclist.clone())
-                    .unwrap_or_else(|_| panic!("File {:?} not found!",args.srclist));
-        let mut src_path = PathBuf::from(args.srclist);
+    // Sourcelist file -> parse it
+    else if let Some(srclist) = args.srclist  {
+
+        let f = File::open(srclist.clone())
+                    .unwrap_or_else(|_| {println!("File {:?} not found!",srclist);process::exit(1)});
+        let mut src_path = PathBuf::from(srclist);
         src_path.pop();
         let file = BufReader::new(&f);
         // TODO: use collect and filter to create the vector
@@ -81,9 +91,13 @@ fn main() {
         }
         // println!("Include dir : {:?}", incdir);
     }
+    // No file our source list provided -> display help message
+    else {
+        App::new("myprog").setting(AppSettings::ArgRequiredElseHelp);
+        return;
+    }
 
-    let mut inc_files : HashSet<PathBuf>;
-    inc_files = HashSet::new();
+    let mut inc_files : HashMap<String,PathBuf> = HashMap::new();
 
     for fname in filelist {
         // Ignore VHDL files from the source list
@@ -97,28 +111,41 @@ fn main() {
         let mut ast = ast::Ast::new();
         match ast.build(&mut ts) {
             Err(e) => println!("[Error] {:?}, {}", fname, e),
-            _ => println!("[Info] File {} compiled with success", fname.display())
-            // _ => println!("{}", ast.tree)
+            _ => {
+                // println!("[Info] File {} compiled with success", fname.display())
+                ast_list.push(ast);
+            }
         }
-        ast_list.push(ast);
+
         // Handle included files
         if ts.inc_files.len() > 0 {
             let cwd = fname.parent().unwrap();
             // println!("Current dir = {:?}, Include files : {:?}",cwd, ts.inc_files);
             for inc_name in ts.inc_files {
-                let p = cwd.join(PathBuf::from(inc_name.clone()));
+                let mut inc_path = PathBuf::new();
+                for s in inc_name.to_string().split("/") {
+                    inc_path.push(s);
+                }
+                let p = cwd.join(inc_path.clone());
+                // println!("Looking for {:?}", p);
                 if p.is_file() {
-                    inc_files.insert(p.canonicalize().unwrap());
+                    if let Ok(f_abs) = p.canonicalize() {
+                        // println!(" -> Found in current directory {:?}", f_abs);
+                        inc_files.insert(inc_name,f_abs);
+                    }
+                    // else {println!(" canonicalize failed on {:#?} !", p);}
                 } else {
                     // let mut found = false;
                     for d in &incdir {
                         let mut f_raw = d.clone();
-                        f_raw.push(inc_name.clone());
+                        f_raw.push(inc_path.clone());
                         if let Ok(f_abs) = f_raw.canonicalize() {
-                                inc_files.insert(f_abs);
-                                // found = true;
-                                break;
+                            // println!(" -> Found in {:?}", f_abs);
+                            inc_files.insert(inc_name,f_abs);
+                            // found = true;
+                            break;
                         }
+                        // else {println!("File {:?} not found", f_raw); }
                     }
                     // if !found {
                     //     println!("Unable to find {:?} in {:?}", inc_name, incdir);
@@ -128,8 +155,8 @@ fn main() {
         }
     }
 
-    // println!("{:?}", inc_files);
-    for fname in inc_files {
+    // println!("{:#?}", inc_files);
+    for (inc_name,fname) in inc_files {
         // Build AST for all file from the source list
         let mut src = Source::from_file(fname.clone())
                     .unwrap_or_else(|_| panic!("File {:?} not found!",fname));
@@ -137,11 +164,24 @@ fn main() {
         let mut ast = ast::Ast::new();
         match ast.build(&mut ts) {
             Err(e) => println!("[Error] {:?}, {}", fname, e),
-            _ => println!("[Info] File {:?} compiled with success", fname)
+            _ => {
+                // println!("[Info] File {:?} compiled with success", fname);
+                ast_inc.insert(inc_name,ast);
+            }
             // _ => println!("{}", ast.tree)
         }
     }
 
+    // Debug : save AST
+    // let fw = File::create("C:/tmp/sv_parser.log").unwrap();
+    // let mut w = BufWriter::new(&fw);
+    // write!(&mut w, "{:#?}", ast_list).unwrap();
+
     // Analyze ASTs
-    let _lib = CompLib::new("my_lib".to_string(),ast_list);
+    let _lib = CompLib::new("my_lib".to_owned(),ast_list, ast_inc);
+
+    // Debug : save Lib
+    // let fw = File::create("E:/tmp/sv_check_lib.log").unwrap();
+    // let mut w = BufWriter::new(&fw);
+    // write!(&mut w, "{:#?}", _lib).unwrap();
 }

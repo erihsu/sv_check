@@ -6,16 +6,15 @@ use crate::lex::position::Position;
 use crate::lex::token::*;
 use crate::lex::source::Source;
 
-use std::path::PathBuf;
 use std::collections::VecDeque;
 
 pub struct TokenStream<'a> {
-    source: &'a mut Source,
+    pub source: &'a mut Source,
     last_char: char,
     last_pos : Position,
     buffer : VecDeque<Token>,
     rd_ptr : u8,
-    pub inc_files : Vec<PathBuf>,
+    pub inc_files : Vec<String>,
 }
 
 /// Enum for the state machine parsing number
@@ -116,7 +115,12 @@ impl<'a> TokenStream<'a> {
                 }
                 if is_casting {TokenKind::Casting}
                 else if second_char=='`' && first_char=='`' {TokenKind::IdentInterpolated}
-                else {TokenKind::Macro}
+                else {
+                    match s.as_ref() {
+                        "`ifndef" | "`ifdef" | "`elsif" | "`else"  | "`endif" => TokenKind::CompDir,
+                        _ => TokenKind::Macro
+                    }
+                }
             }
             else if is_casting {TokenKind::Casting}
             else if let Some(k) = basetype_from_str(s.as_ref()) {k}
@@ -132,7 +136,7 @@ impl<'a> TokenStream<'a> {
 
     /// Get all characters until end of string
     fn parse_string(&mut self, is_macro: bool) -> Result<Token,SvError> {
-        let mut s = if is_macro {"`\"".to_string()} else {"".to_string()};
+        let mut s = if is_macro {"`\"".to_owned()} else {"".to_owned()};
         let p = self.last_pos;
         while let Some(c) = self.source.get_char() {
             s.push(c);
@@ -151,7 +155,6 @@ impl<'a> TokenStream<'a> {
         let mut s = String::from("/");
         let p = self.last_pos;
         while let Some(c) = self.source.get_char() {
-            self.last_char = c;
             if c == '\n'{
                 break;
             } else {
@@ -159,6 +162,7 @@ impl<'a> TokenStream<'a> {
             }
         }
         self.last_pos = self.source.pos;
+        self.last_char = ' ' ;
         Ok(Token::new(TokenKind::Comment,s,p))
     }
 
@@ -300,7 +304,7 @@ impl<'a> TokenStream<'a> {
 
     /// Return the next token from the source code
     pub fn get_next_token(&mut self) -> Result<Token,SvError> {
-        let c = self.get_first_char().ok_or(SvError::new(SvErrorKind::Null,self.last_pos,"".to_string()))?;
+        let c = self.get_first_char().ok_or(SvError::new(SvErrorKind::Null,self.last_pos,"".to_owned()))?;
         let p = self.last_pos; // Save position of this first char since it will
         self.last_char = ' ';
         // println!("[get_next_token] Character {} @ {}", c, self.source.pos );
@@ -312,68 +316,68 @@ impl<'a> TokenStream<'a> {
                     '/' => return self.parse_comment_line() ,
                     '*' => return self.parse_comment_block() ,
                     '=' => {
-                        let t = Token::new(TokenKind::OpCompAss,"/=".to_string(),p);
+                        let t = Token::new(TokenKind::OpCompAss,"/=".to_owned(),p);
                         self.source.get_char();  // Consume peeked character
                         return Ok(t)
                     }
-                    _ => return Ok(Token::new(TokenKind::OpDiv,"/".to_string(),p))
+                    _ => return Ok(Token::new(TokenKind::OpDiv,"/".to_owned(),p))
                 }
             }
             '%' => {
                 let nc = self.source.get_char().unwrap_or(' ');
                 match nc {
-                    '=' => return Ok(Token::new(TokenKind::OpCompAss ,"%=".to_string(),p)) ,
+                    '=' => return Ok(Token::new(TokenKind::OpCompAss ,"%=".to_owned(),p)) ,
                     _ => {
                         self.updt_last(nc);
-                        return Ok(Token::new(TokenKind::OpMod,"%".to_string(),p))
+                        return Ok(Token::new(TokenKind::OpMod,"%".to_owned(),p))
                     }
                 }
             }
             '+' => {
                 let nc = self.source.get_char().unwrap_or(' ');
                 match nc {
-                    '+' => return Ok(Token::new(TokenKind::OpIncrDecr,"++".to_string(),p)) ,
-                    '=' => return Ok(Token::new(TokenKind::OpCompAss ,"+=".to_string(),p)) ,
-                    ':' => return Ok(Token::new(TokenKind::OpRange   ,"+:".to_string(),p)) ,
+                    '+' => return Ok(Token::new(TokenKind::OpIncrDecr,"++".to_owned(),p)) ,
+                    '=' => return Ok(Token::new(TokenKind::OpCompAss ,"+=".to_owned(),p)) ,
+                    ':' => return Ok(Token::new(TokenKind::OpRange   ,"+:".to_owned(),p)) ,
                     _ => {
                         self.updt_last(nc);
-                        return Ok(Token::new(TokenKind::OpPlus,"+".to_string(),p))
+                        return Ok(Token::new(TokenKind::OpPlus,"+".to_owned(),p))
                     }
                 }
             }
             '-' => {
                 let nc = self.source.get_char().unwrap_or(' ');
                 match nc {
-                    '-' => return Ok(Token::new(TokenKind::OpIncrDecr,"--".to_string(),p)) ,
-                    '=' => return Ok(Token::new(TokenKind::OpCompAss ,"-=".to_string(),p)) ,
-                    ':' => return Ok(Token::new(TokenKind::OpRange   ,"-:".to_string(),p)) ,
-                    '>' => return Ok(Token::new(TokenKind::OpImpl    ,"->".to_string(),p)) ,
+                    '-' => return Ok(Token::new(TokenKind::OpIncrDecr,"--".to_owned(),p)) ,
+                    '=' => return Ok(Token::new(TokenKind::OpCompAss ,"-=".to_owned(),p)) ,
+                    ':' => return Ok(Token::new(TokenKind::OpRange   ,"-:".to_owned(),p)) ,
+                    '>' => return Ok(Token::new(TokenKind::OpImpl    ,"->".to_owned(),p)) ,
                     _ => {
                         self.updt_last(nc);
-                        return Ok(Token::new(TokenKind::OpMinus,"-".to_string(),p))
+                        return Ok(Token::new(TokenKind::OpMinus,"-".to_owned(),p))
                     }
                 }
             }
             '*' => {
                 let nc = self.source.get_char().unwrap_or(' ');
                 match nc {
-                    '*' => return Ok(Token::new(TokenKind::OpPow,"**".to_string(),p)) ,
-                    '=' => return Ok(Token::new(TokenKind::OpCompAss ,"*=".to_string(),p)) ,
-                    '>' => return Ok(Token::new(TokenKind::OpStarLT ,"*>".to_string(),p)) ,
+                    '*' => return Ok(Token::new(TokenKind::OpPow,"**".to_owned(),p)) ,
+                    '=' => return Ok(Token::new(TokenKind::OpCompAss ,"*=".to_owned(),p)) ,
+                    '>' => return Ok(Token::new(TokenKind::OpStarLT ,"*>".to_owned(),p)) ,
                     _ => {
                         self.updt_last(nc);
-                        return Ok(Token::new(TokenKind::OpStar,"*".to_string(),p))
+                        return Ok(Token::new(TokenKind::OpStar,"*".to_owned(),p))
                     }
                 }
             }
             '^' => {
                 let nc = self.source.get_char().unwrap_or(' ');
                 match nc {
-                    '~' => return Ok(Token::new(TokenKind::OpXnor    ,"^~".to_string(),p)) ,
-                    '=' => return Ok(Token::new(TokenKind::OpCompAss ,"^=".to_string(),p)) ,
+                    '~' => return Ok(Token::new(TokenKind::OpXnor    ,"^~".to_owned(),p)) ,
+                    '=' => return Ok(Token::new(TokenKind::OpCompAss ,"^=".to_owned(),p)) ,
                     _ => {
                         self.updt_last(nc);
-                        return Ok(Token::new(TokenKind::OpXor,"^".to_string(),p))
+                        return Ok(Token::new(TokenKind::OpXor,"^".to_owned(),p))
                     }
                 }
             }
@@ -385,69 +389,69 @@ impl<'a> TokenStream<'a> {
                         match nnc {
                             '&' => {
                                 self.source.get_char();  // Consume peeked character
-                                return Ok(Token::new(TokenKind::OpTimingAnd,"&&&".to_string(),p))
+                                return Ok(Token::new(TokenKind::OpTimingAnd,"&&&".to_owned(),p))
                             },
-                            _ => return Ok(Token::new(TokenKind::OpLogicAnd,"&&".to_string(),p))
+                            _ => return Ok(Token::new(TokenKind::OpLogicAnd,"&&".to_owned(),p))
                         }
                     }
-                    '=' => return Ok(Token::new(TokenKind::OpCompAss ,"&=".to_string(),p)) ,
+                    '=' => return Ok(Token::new(TokenKind::OpCompAss ,"&=".to_owned(),p)) ,
                     _ => {
                         self.updt_last(nc);
-                        return Ok(Token::new(TokenKind::OpAnd,"&".to_string(),p))
+                        return Ok(Token::new(TokenKind::OpAnd,"&".to_owned(),p))
                     }
                 }
             }
             '|' => {
                 let nc = self.source.get_char().unwrap_or(' ');
                 match nc {
-                    '|' => return Ok(Token::new(TokenKind::OpLogicOr,"||".to_string(),p)) ,
+                    '|' => return Ok(Token::new(TokenKind::OpLogicOr,"||".to_owned(),p)) ,
                     '=' => {
                         let nnc = self.source.peek_char().unwrap_or(&' ');
                         match nnc {
                             '>' => {
                                 self.source.get_char();  // Consume peeked character
-                                return Ok(Token::new(TokenKind::OpSeqRel,"|=>".to_string(),p))
+                                return Ok(Token::new(TokenKind::OpSeqRel,"|=>".to_owned(),p))
                             },
-                            _ => return Ok(Token::new(TokenKind::OpCompAss,"|=".to_string(),p))
+                            _ => return Ok(Token::new(TokenKind::OpCompAss,"|=".to_owned(),p))
                         }
                     }
                     '-' => {
                         let nnc = self.source.peek_char().unwrap_or(&' ');
                         match nnc {
-                            '>' => return Ok(Token::new(TokenKind::OpSeqRel,"|->".to_string(),p)) ,
+                            '>' => return Ok(Token::new(TokenKind::OpSeqRel,"|->".to_owned(),p)) ,
                             _ => {
                                 self.updt_last(nc);
-                                return Ok(Token::new(TokenKind::OpOr,"|".to_string(),p))
+                                return Ok(Token::new(TokenKind::OpOr,"|".to_owned(),p))
                             }
                         }
                     }
                     _ => {
                         self.updt_last(nc);
-                        return Ok(Token::new(TokenKind::OpOr,"|".to_string(),p))
+                        return Ok(Token::new(TokenKind::OpOr,"|".to_owned(),p))
                     }
                 }
             }
             '<' => {
                 let nc = self.source.get_char().unwrap_or(' ');
                 match nc {
-                    '=' => return Ok(Token::new(TokenKind::OpLTE,"<=".to_string(),p)) ,
+                    '=' => return Ok(Token::new(TokenKind::OpLTE,"<=".to_owned(),p)) ,
                     '<' => {
                         let nc = self.source.get_char().unwrap_or(' ');
                         match nc {
-                            '=' => return Ok(Token::new(TokenKind::OpCompAss,"<<=".to_string(),p)) ,
+                            '=' => return Ok(Token::new(TokenKind::OpCompAss,"<<=".to_owned(),p)) ,
                             '<' => {
                                 let nc = self.source.get_char().unwrap_or(' ');
                                 match nc {
-                                    '=' => return Ok(Token::new(TokenKind::OpCompAss,"<<<=".to_string(),p)) ,
+                                    '=' => return Ok(Token::new(TokenKind::OpCompAss,"<<<=".to_owned(),p)) ,
                                     _ => {
                                         self.updt_last(nc);
-                                        return Ok(Token::new(TokenKind::OpSShift,"<<<".to_string(),p))
+                                        return Ok(Token::new(TokenKind::OpSShift,"<<<".to_owned(),p))
                                     }
                                 }
                             }
                             _ => {
                                 self.updt_last(nc);
-                                return Ok(Token::new(TokenKind::OpSL,"<<".to_string(),p))
+                                return Ok(Token::new(TokenKind::OpSL,"<<".to_owned(),p))
                             }
                         }
                     }
@@ -456,45 +460,45 @@ impl<'a> TokenStream<'a> {
                         let nnc = self.source.peek_char().unwrap_or(&' ');
                         if nnc == &'>' {
                             self.source.get_char().unwrap(); // Consume next char
-                            return Ok(Token::new(TokenKind::OpEquiv,"<->".to_string(),p))
+                            return Ok(Token::new(TokenKind::OpEquiv,"<->".to_owned(),p))
                         } else {
                             self.updt_last(nc);
-                            return Ok(Token::new(TokenKind::OpLT,"<".to_string(),p))
+                            return Ok(Token::new(TokenKind::OpLT,"<".to_owned(),p))
                         }
                     }
                     _ => {
                         self.updt_last(nc);
-                        return Ok(Token::new(TokenKind::OpLT,"<".to_string(),p))
+                        return Ok(Token::new(TokenKind::OpLT,"<".to_owned(),p))
                     }
                 }
             }
             '>' => {
                 let nc = self.source.get_char().unwrap_or(' ');
                 match nc {
-                    '=' => return Ok(Token::new(TokenKind::OpGTE,">=".to_string(),p)) ,
+                    '=' => return Ok(Token::new(TokenKind::OpGTE,">=".to_owned(),p)) ,
                     '>' => {
                         let nc = self.source.get_char().unwrap_or(' ');
                         match nc {
-                            '=' => return Ok(Token::new(TokenKind::OpCompAss,">>=".to_string(),p)) ,
+                            '=' => return Ok(Token::new(TokenKind::OpCompAss,">>=".to_owned(),p)) ,
                             '>' => {
                                 let nc = self.source.get_char().unwrap_or(' ');
                                 match nc {
-                                    '=' => return Ok(Token::new(TokenKind::OpCompAss,">>>=".to_string(),p)) ,
+                                    '=' => return Ok(Token::new(TokenKind::OpCompAss,">>>=".to_owned(),p)) ,
                                     _ => {
                                         self.updt_last(nc);
-                                        return Ok(Token::new(TokenKind::OpSShift,">>>".to_string(),p))
+                                        return Ok(Token::new(TokenKind::OpSShift,">>>".to_owned(),p))
                                     }
                                 }
                             }
                             _ => {
                                 self.updt_last(nc);
-                                return Ok(Token::new(TokenKind::OpSR,">>".to_string(),p))
+                                return Ok(Token::new(TokenKind::OpSR,">>".to_owned(),p))
                             }
                         }
                     }
                     _ => {
                         self.updt_last(nc);
-                        return Ok(Token::new(TokenKind::OpGT,">".to_string(),p))
+                        return Ok(Token::new(TokenKind::OpGT,">".to_owned(),p))
                     }
                 }
             }
@@ -504,50 +508,50 @@ impl<'a> TokenStream<'a> {
                     '=' => {
                         let nc = self.source.get_char().unwrap_or(' ');
                         match nc {
-                            '=' => return Ok(Token::new(TokenKind::OpDiff2,"!==".to_string(),p)) ,
-                            '?' => return Ok(Token::new(TokenKind::OpDiffQue,"!=?".to_string(),p)) ,
+                            '=' => return Ok(Token::new(TokenKind::OpDiff2,"!==".to_owned(),p)) ,
+                            '?' => return Ok(Token::new(TokenKind::OpDiffQue,"!=?".to_owned(),p)) ,
                             _ => {
                                 self.updt_last(nc);
-                                return Ok(Token::new(TokenKind::OpDiff,"!=".to_string(),p))
+                                return Ok(Token::new(TokenKind::OpDiff,"!=".to_owned(),p))
                             }
                         }
                     }
                     _ => {
                         self.updt_last(nc);
-                        return Ok(Token::new(TokenKind::OpBang,"!".to_string(),p))
+                        return Ok(Token::new(TokenKind::OpBang,"!".to_owned(),p))
                     }
                 }
             }
             '=' => {
                 let nc = self.source.get_char().unwrap_or(' ');
                 match nc {
-                    '>' => return Ok(Token::new(TokenKind::OpFatArrL,"=>".to_string(),p)) ,
+                    '>' => return Ok(Token::new(TokenKind::OpFatArrL,"=>".to_owned(),p)) ,
                     '=' => {
                         let nc = self.source.get_char().unwrap_or(' ');
                         match nc {
-                            '=' => return Ok(Token::new(TokenKind::OpEq3,"===".to_string(),p)) ,
-                            '?' => return Ok(Token::new(TokenKind::OpEq2Que,"==?".to_string(),p)) ,
+                            '=' => return Ok(Token::new(TokenKind::OpEq3,"===".to_owned(),p)) ,
+                            '?' => return Ok(Token::new(TokenKind::OpEq2Que,"==?".to_owned(),p)) ,
                             _ => {
                                 self.updt_last(nc);
-                                return Ok(Token::new(TokenKind::OpEq2,"==".to_string(),p))
+                                return Ok(Token::new(TokenKind::OpEq2,"==".to_owned(),p))
                             }
                         }
                     }
                     _ => {
                         self.updt_last(nc);
-                        return Ok(Token::new(TokenKind::OpEq,"=".to_string(),p))
+                        return Ok(Token::new(TokenKind::OpEq,"=".to_owned(),p))
                     }
                 }
             }
             '~' => {
                 let nc = self.source.get_char().unwrap_or(' ');
                 match nc {
-                    '&' => return Ok(Token::new(TokenKind::OpNand ,"~&".to_string(),p)),
-                    '|' => return Ok(Token::new(TokenKind::OpNor  ,"~|".to_string(),p)),
-                    '^' => return Ok(Token::new(TokenKind::OpXnor ,"~^".to_string(),p)),
+                    '&' => return Ok(Token::new(TokenKind::OpNand ,"~&".to_owned(),p)),
+                    '|' => return Ok(Token::new(TokenKind::OpNor  ,"~|".to_owned(),p)),
+                    '^' => return Ok(Token::new(TokenKind::OpXnor ,"~^".to_owned(),p)),
                     _   => {
                         self.updt_last(nc);
-                        return Ok(Token::new(TokenKind::OpTilde,"~".to_string() ,p));
+                        return Ok(Token::new(TokenKind::OpTilde,"~".to_owned() ,p));
                     }
                 }
             }
@@ -556,25 +560,25 @@ impl<'a> TokenStream<'a> {
                 let nc = self.source.peek_char().unwrap_or(&' ');
                 match nc {
                     '*' => return self.parse_attribute() ,
-                    _ => return Ok(Token::new(TokenKind::ParenLeft  ,"(".to_string(),p)),
+                    _ => return Ok(Token::new(TokenKind::ParenLeft  ,"(".to_owned(),p)),
                 }
             }
-            ')' => return Ok(Token::new(TokenKind::ParenRight ,")".to_string(),p)),
-            '[' => return Ok(Token::new(TokenKind::SquareLeft ,"[".to_string(),p)),
-            ']' => return Ok(Token::new(TokenKind::SquareRight,"]".to_string(),p)),
-            '{' => return Ok(Token::new(TokenKind::CurlyLeft  ,"{".to_string(),p)),
-            '}' => return Ok(Token::new(TokenKind::CurlyRight ,"}".to_string(),p)),
+            ')' => return Ok(Token::new(TokenKind::ParenRight ,")".to_owned(),p)),
+            '[' => return Ok(Token::new(TokenKind::SquareLeft ,"[".to_owned(),p)),
+            ']' => return Ok(Token::new(TokenKind::SquareRight,"]".to_owned(),p)),
+            '{' => return Ok(Token::new(TokenKind::CurlyLeft  ,"{".to_owned(),p)),
+            '}' => return Ok(Token::new(TokenKind::CurlyRight ,"}".to_owned(),p)),
             // Special characters
-            ',' => return Ok(Token::new(TokenKind::Comma    ,",".to_string(),p)),
-            '?' => return Ok(Token::new(TokenKind::Que      ,"?".to_string(),p)),
-            ';' => return Ok(Token::new(TokenKind::SemiColon,";".to_string(),p)),
+            ',' => return Ok(Token::new(TokenKind::Comma    ,",".to_owned(),p)),
+            '?' => return Ok(Token::new(TokenKind::Que      ,"?".to_owned(),p)),
+            ';' => return Ok(Token::new(TokenKind::SemiColon,";".to_owned(),p)),
             '@' => {
                 let nc = self.source.get_char().unwrap_or(' ');
                 match nc {
-                    '@' => return Ok(Token::new(TokenKind::At2 ,"@@".to_string(),p)),
+                    '@' => return Ok(Token::new(TokenKind::At2 ,"@@".to_owned(),p)),
                     _ => {
                         self.updt_last(nc);
-                        return Ok(Token::new(TokenKind::At ,"@".to_string(),p))
+                        return Ok(Token::new(TokenKind::At ,"@".to_owned(),p))
                     }
                 }
             }
@@ -583,9 +587,9 @@ impl<'a> TokenStream<'a> {
                 match nc {
                     '*' => {
                         self.source.get_char().unwrap(); // Consume next char
-                        return Ok(Token::new(TokenKind::DotStar,".*".to_string(),p));
+                        return Ok(Token::new(TokenKind::DotStar,".*".to_owned(),p));
                     }
-                    _ => return Ok(Token::new(TokenKind::Dot      ,".".to_string(),p)),
+                    _ => return Ok(Token::new(TokenKind::Dot      ,".".to_owned(),p)),
                 }
 
             }
@@ -593,14 +597,14 @@ impl<'a> TokenStream<'a> {
                 let nc = self.source.peek_char().unwrap_or(&' ');
                 match nc {
                     'a'...'z' | 'A'...'Z' | '_'  => return self.parse_ident(c),
-                    _ => return Ok(Token::new(TokenKind::Dollar ,"$".to_string(),p)),
+                    _ => return Ok(Token::new(TokenKind::Dollar ,"$".to_owned(),p)),
                 }
 
             }
             '#' => {
                 let nc = self.source.get_char().unwrap_or(' ');
                 match nc {
-                    '#' => return Ok(Token::new(TokenKind::Hash2,"##".to_string(),p)),
+                    '#' => return Ok(Token::new(TokenKind::Hash2,"##".to_owned(),p)),
                     '-' | '=' => {
                         let nnc = self.source.peek_char().unwrap_or(&' ');
                         if nnc == &'#' {
@@ -608,24 +612,24 @@ impl<'a> TokenStream<'a> {
                             return Ok(Token::new(TokenKind::OpEquiv, format!("#{}#", nc),p))
                         } else {
                             self.updt_last(nc);
-                            return Ok(Token::new(TokenKind::Hash2,"##".to_string(),p))
+                            return Ok(Token::new(TokenKind::Hash2,"##".to_owned(),p))
                         }
                     }
                     _ => {
                         self.updt_last(nc);
-                        return Ok(Token::new(TokenKind::Hash,"#".to_string(),p))
+                        return Ok(Token::new(TokenKind::Hash,"#".to_owned(),p))
                     }
                 }
             }
             ':' => {
                 let nc = self.source.get_char().unwrap_or(' ');
                 match nc {
-                    ':' => return Ok(Token::new(TokenKind::Scope,"::".to_string(),p)),
-                    '/' => return Ok(Token::new(TokenKind::OpDist,":/".to_string(),p)),
-                    '=' => return Ok(Token::new(TokenKind::OpDist,":=".to_string(),p)),
+                    ':' => return Ok(Token::new(TokenKind::Scope,"::".to_owned(),p)),
+                    '/' => return Ok(Token::new(TokenKind::OpDist,":/".to_owned(),p)),
+                    '=' => return Ok(Token::new(TokenKind::OpDist,":=".to_owned(),p)),
                     _ => {
                         self.updt_last(nc);
-                        return Ok(Token::new(TokenKind::Colon,":".to_string(),p))
+                        return Ok(Token::new(TokenKind::Colon,":".to_owned(),p))
                     }
                 }
             }
@@ -635,7 +639,7 @@ impl<'a> TokenStream<'a> {
                 match nc {
                     '{' => {
                         self.source.get_char().unwrap(); // Consume next char
-                        Ok(Token::new(TokenKind::TickCurly ,"'{".to_string(),p))
+                        Ok(Token::new(TokenKind::TickCurly ,"'{".to_owned(),p))
                     },
                     'h'|'d'|'o'|'b'|'x'|'z'|'H'|'D'|'O'|'B'|'X'|'Z'|'1'|'0' => return self.parse_number(c),
                     _ => Err(SvError::new(SvErrorKind::Token,p,'\''.to_string()))
@@ -644,7 +648,7 @@ impl<'a> TokenStream<'a> {
             '\\' => {
                 let nc = self.source.get_char().unwrap_or(' ');
                 match nc {
-                    '\n' => Ok(Token::new(TokenKind::LineCont ,"".to_string(),p)) ,
+                    '\n' => Ok(Token::new(TokenKind::LineCont ,"".to_owned(),p)) ,
                     _ => Err(SvError::new(SvErrorKind::Token,p,'\\'.to_string()))
                 }
             }
@@ -695,6 +699,7 @@ impl<'a> TokenStream<'a> {
                         }
                         return Some(Ok(t));
                     } else {
+                        // println!("Comment = {:?}", t);
                         continue
                     }
                 }
@@ -726,13 +731,25 @@ impl<'a> TokenStream<'a> {
         let mut cnt_p = 0;
         let mut cnt_c = 0;
         let mut cnt_b = 0;
-        self.flush(0);
+        // self.display_status("Starting skip_until");
+        // Check buffer first
+        while self.buffer.len() > 0 {
+            if let Some(t) = self.buffer.pop_front() {
+                // println!("Buffer = {:?}", t);
+                match t.kind {
+                    TokenKind::ParenLeft  => cnt_p += 1,
+                    TokenKind::ParenRight => cnt_p -= 1,
+                    TokenKind::CurlyLeft  => cnt_c += 1,
+                    TokenKind::CurlyRight => cnt_c -= 1,
+                    TokenKind::KwBegin => cnt_b += 1,
+                    TokenKind::KwEnd   => cnt_b -= 1,
+                    _ => {}
+                }
+            }
+        }
         loop {
             match self.next() {
                 Some(Ok(t)) => {
-                    // if t.kind==tk_end && cnt_p<=0 && cnt_b<=0 && cnt_c<=0 {
-                    //     break;
-                    // }
                     match t.kind {
                         TokenKind::ParenLeft  => cnt_p += 1,
                         TokenKind::ParenRight => cnt_p -= 1,
@@ -751,17 +768,14 @@ impl<'a> TokenStream<'a> {
                 None => return Err(SvError::eof())
             };
         }
+        // println!("[skip_until] File = {:#?} new pos = {}", self.source.filename, self.source.pos);
         self.last_pos = self.source.pos;
         Ok(())
     }
 
     ///
     pub fn add_inc(&mut self, fname: &str) {
-        let mut fname_path = PathBuf::new();
-        for s in fname.to_string().split("/") {
-            fname_path.push(s);
-        }
-        self.inc_files.push(fname_path);
+        self.inc_files.push(fname.to_string());
     }
 
     // Debug function

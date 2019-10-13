@@ -28,7 +28,7 @@ impl SvError {
     }
 
     pub fn eof() -> SvError {
-        SvError {kind:SvErrorKind::Eof, pos: Position::new(), txt: "".to_string()}
+        SvError {kind:SvErrorKind::Eof, pos: Position::new(), txt: "".to_owned()}
     }
 
     pub fn syntax(t: Token, s: String) -> SvError {

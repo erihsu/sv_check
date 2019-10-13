@@ -38,3 +38,29 @@ pub struct Port {
     pub dir   : PortDir,
     pub kind  : SignalType,
 }
+
+#[derive(Debug, Clone)]
+pub struct Param {
+    pub name  : String,
+    pub kind  : SignalType,
+}
+
+#[derive(Debug, Clone)]
+pub struct DefModule {
+    pub name   : String,
+    pub params : Vec<Param>,
+    pub ports  : Vec<Port>,
+}
+
+#[derive(Debug, Clone)]
+pub struct DefFunc {
+    pub name   : String,
+    pub ports  : Vec<Port>,
+    pub ret    : SignalType,
+}
+
+#[derive(Debug, Clone)]
+pub struct DefTask {
+    pub name   : String,
+    pub ports  : Vec<Port>,
+}

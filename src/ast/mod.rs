@@ -45,6 +45,7 @@ impl Ast {
                             // TODO: actually use them to try associate comment with a node
                             TokenKind::Comment => {},
                             TokenKind::Macro => parse_macro(ts,&mut self.tree)?,
+                            TokenKind::CompDir => parse_macro(ts,&mut self.tree)?,
                             TokenKind::KwModule => {
                                 ts.flush(0);
                                 let mut node_m = AstNode::new(AstNodeKind::Module);
@@ -52,6 +53,7 @@ impl Ast {
                                 let mut node_b = AstNode::new(AstNodeKind::Body);
                                 parse_module_body(ts,&mut node_b, ModuleCntxt::Top)?;
                                 node_m.child.push(node_b);
+                                check_label(ts, &node_m.attr["name"])?;
                                 self.tree.child.push(node_m);
                             },
                             TokenKind::KwIntf => {
@@ -69,18 +71,27 @@ impl Ast {
                                 }
                             },
                             TokenKind::KwTypedef => parse_typedef(ts,&mut self.tree)?,
+                            TokenKind::KwImport  => parse_import(ts,&mut self.tree)?,
                             TokenKind::KwClass => self.tree.child.push(class::parse_class(ts)?),
                             TokenKind::KwVirtual => {
                                 let nt = next_t!(ts,true);
                                 match nt.kind {
                                     TokenKind::KwClass => self.tree.child.push(class::parse_class(ts)?),
-                                    _ => return Err(SvError::syntax(nt, "virtual declaration. Expecting class".to_string()))
+                                    _ => return Err(SvError::syntax(nt, "virtual declaration. Expecting class".to_owned()))
+                                }
+                            }
+                            TokenKind::KwLParam => {
+                                ts.rewind(1); // put back the token so that it can be read by the parse param function
+                                // potential list of param (the parse function extract only one at a time)
+                                loop {
+                                    self.tree.child.push(parse_param_decl(ts,true)?);
+                                    loop_args_break_cont!(ts,"parameter declaration",SemiColon);
                                 }
                             }
                             // Display all un-implemented token (TEMP)
                             _ => {
+                                println!("Root ({:?}): Skipping {}",ts.source.filename, t);
                                 ts.flush(0);
-                                //println!("{}", t),
                             }
                         }
                     }

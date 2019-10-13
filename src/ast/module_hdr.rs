@@ -15,17 +15,17 @@ pub fn parse_module_hdr(ts : &mut TokenStream, node: &mut AstNode) -> Result<(),
     let mut t = next_t!(ts,true);
 
     if t.kind==TokenKind::KwStatic || t.kind==TokenKind::KwAutomatic {
-        node_h.attr.insert("lifetime".to_string(),t.value);
+        node_h.attr.insert("lifetime".to_owned(),t.value);
         ts.flush(1);
         t = next_t!(ts,true);
     }
     match t.kind {
         TokenKind::Ident => {
-            node.attr.insert("name".to_string(),t.value);
+            node.attr.insert("name".to_owned(),t.value);
             ts.flush(1);
             t = next_t!(ts,true);
         },
-        _ => return Err(SvError::syntax(t, "module/interface declaration, expecting identifier or lifetime (static/automatic)".to_string()))
+        _ => return Err(SvError::syntax(t, "module/interface declaration, expecting identifier or lifetime (static/automatic)".to_owned()))
     }
     // Optional package import
     while t.kind == TokenKind::KwImport {
@@ -41,7 +41,7 @@ pub fn parse_module_hdr(ts : &mut TokenStream, node: &mut AstNode) -> Result<(),
             let node_port = parse_param_decl(ts,false)?;
             if !is_first {
                 if !node_port.attr.contains_key("name") {
-                    return Err(SvError::syntax(t, "parameter declaration. ".to_string()));
+                    return Err(SvError::syntax(t, "parameter declaration. ".to_owned()));
                 }
             }
             is_first = false;
@@ -58,7 +58,7 @@ pub fn parse_module_hdr(ts : &mut TokenStream, node: &mut AstNode) -> Result<(),
             let node_port = parse_port_decl(ts, false)?;
             if !is_first {
                 if !node_port.attr.contains_key("name") {
-                    return Err(SvError::syntax(t, "port declaration. Extraneous , detected".to_string()));
+                    return Err(SvError::syntax(t, "port declaration. Extraneous , detected".to_owned()));
                 }
             }
             is_first = false;
@@ -69,7 +69,7 @@ pub fn parse_module_hdr(ts : &mut TokenStream, node: &mut AstNode) -> Result<(),
     }
     // End of header
     if t.kind != TokenKind::SemiColon {
-        return Err(SvError::syntax(t, "port declaration. Expecting ;".to_string()));
+        return Err(SvError::syntax(t, "port declaration. Expecting ;".to_owned()));
     }
     ts.flush(1);
     node.child.push(node_h);
