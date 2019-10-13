@@ -23,7 +23,6 @@ Reminder of special error/warning which needs to be caught by the tool eventuall
  [ ] badly formed always ff : if without else, missing case entry, ...
 
 # Known Issues :
- - base class identifier not checked
  - Allows following base_class when defined as a parameter itself ...
  - Non-Ansi C port declaration triggers re-declaration error
 

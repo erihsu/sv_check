@@ -90,7 +90,7 @@ impl Ast {
                             }
                             // Display all un-implemented token (TEMP)
                             _ => {
-                                println!("Root ({:?}): Skipping {}",ts.source.filename, t);
+                                println!("Root ({:?}): Skipping {}",ts.source.get_filename(), t);
                                 ts.flush(0);
                             }
                         }

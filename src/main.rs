@@ -12,7 +12,7 @@ use std::{
     path::PathBuf,
     collections::{HashSet,HashMap},
     io::{BufReader,BufWriter, BufRead, Write},
-    fs::File,
+    fs::{File,metadata,DirEntry},
     process,
 };
 
@@ -25,16 +25,26 @@ use comp::comp_lib::CompLib;
 use lex::source::Source;
 use lex::token_stream::TokenStream;
 
+macro_rules! exit {
+    ($str:expr, $($var:expr),+) => {{
+        println!($str,($($var),+));
+        process::exit(1)
+    }};
+}
+
 
 #[derive(Debug, StructOpt)]
 #[structopt(name = "sv_check", about = "SystemVerilog Checker")]
 struct Cli {
-    /// Source list containing the list of file to compile
-    #[structopt(short = "f", long = "filelist")]
-    srclist: Option<PathBuf>,
     /// List of files to compile
     #[structopt(parse(from_os_str))]
     files: Vec<PathBuf>,
+    /// Source list containing the list of file to compile
+    #[structopt(parse(from_os_str), short = "f", long = "filelist")]
+    srclist: Option<PathBuf>,
+    /// Include directories
+    #[structopt(short = "I", long = "incdir")]
+    incdir: Vec<PathBuf>,
 }
 
 fn main() {
@@ -49,14 +59,25 @@ fn main() {
     //
     if args.files.len() > 0 {
         for f in args.files {
-            filelist.insert(f);
+            let md = metadata(&f).unwrap_or_else(|_| exit!("File {:?} not found!",f));
+            incdir.insert(f.clone());
+            if md.is_dir() {
+                let files = std::fs::read_dir(&f).unwrap_or_else(|_| exit!("Unable to read directory {:?} !",f));
+                files
+                    .filter_map(Result::ok)
+                    .filter(|d| if let Some(e) = d.path().extension() { e == "v" || e == "sv" } else {false})
+                    .for_each(|fd| {filelist.insert(fd.path());});
+
+            } else {
+                filelist.insert(f);
+            }
         }
     }
     // Sourcelist file -> parse it
     else if let Some(srclist) = args.srclist  {
 
         let f = File::open(srclist.clone())
-                    .unwrap_or_else(|_| {println!("File {:?} not found!",srclist);process::exit(1)});
+                    .unwrap_or_else(|_| exit!("File {:?} not found!",srclist));
         let mut src_path = PathBuf::from(srclist);
         src_path.pop();
         let file = BufReader::new(&f);
@@ -96,7 +117,9 @@ fn main() {
         App::new("myprog").setting(AppSettings::ArgRequiredElseHelp);
         return;
     }
-
+    for d in args.incdir {
+        incdir.insert(d);
+    }
     let mut inc_files : HashMap<String,PathBuf> = HashMap::new();
 
     for fname in filelist {
@@ -104,13 +127,14 @@ fn main() {
         if let Some(ext) = fname.extension() {
             if ext == "vhd" || ext == "vhdl" {continue;}
         }
+        //
         // Build AST for all file from the source list
         let mut src = Source::from_file(fname.clone())
-                    .unwrap_or_else(|_| panic!("File {:?} not found!",fname));
+                    .unwrap_or_else(|_| exit!("File {:?} not found!",fname));
         let mut ts = TokenStream::new(&mut src);
         let mut ast = ast::Ast::new();
         match ast.build(&mut ts) {
-            Err(e) => println!("[Error] {:?}, {}", fname, e),
+            Err(e) => println!("[Error] {:?}, {}", ts.source.get_filename(), e),
             _ => {
                 // println!("[Info] File {} compiled with success", fname.display())
                 ast_list.push(ast);
@@ -163,7 +187,7 @@ fn main() {
         let mut ts = TokenStream::new(&mut src);
         let mut ast = ast::Ast::new();
         match ast.build(&mut ts) {
-            Err(e) => println!("[Error] {:?}, {}", fname, e),
+            Err(e) => println!("[Error] {:?}, {}", ts.source.get_filename(), e),
             _ => {
                 // println!("[Info] File {:?} compiled with success", fname);
                 ast_inc.insert(inc_name,ast);

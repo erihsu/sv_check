@@ -5,6 +5,22 @@ use crate::lex::position::Position;
 
 use std::{fs,path,io, mem, str, iter};
 
+#[cfg(not(target_os = "windows"))]
+fn path_display<P: AsRef<path::Path>>(p: P) -> String {
+    p.as_ref().display().to_string()
+}
+
+#[cfg(target_os = "windows")]
+fn path_display<P: AsRef<path::Path>>(p: P) -> String {
+    const VERBATIM_PREFIX: &str = r#"\\?\"#;
+    let p = p.as_ref().display().to_string();
+    if p.starts_with(VERBATIM_PREFIX) {
+        p[VERBATIM_PREFIX.len()..].to_string()
+    } else {
+        p
+    }
+}
+
 /// Structure holding source code to parse with function to read char by char
 ///  and keeping information on current position in line/column.
 #[derive(Debug, Clone)]
@@ -39,5 +55,9 @@ impl Source {
 
     pub fn peek_char(&mut self) -> Option<&char> {
         self.chars.peek()
+    }
+
+    pub fn get_filename(&self) -> String {
+        path_display(&self.filename)
     }
 }
