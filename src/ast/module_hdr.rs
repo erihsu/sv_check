@@ -58,7 +58,7 @@ pub fn parse_module_hdr(ts : &mut TokenStream, node: &mut AstNode) -> Result<(),
             ts.rewind(1);
             let mut is_first = true;
             loop {
-                let node_port = parse_port_decl(ts, false)?;
+                let node_port = parse_port_decl(ts, false,ExprCntxt::ArgList)?;
                 if !is_first {
                     if !node_port.attr.contains_key("name") {
                         return Err(SvError::syntax(t, "port declaration. Extraneous , detected".to_owned()));

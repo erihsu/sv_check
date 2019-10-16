@@ -141,7 +141,7 @@ pub fn parse_param_decl(ts : &mut TokenStream, is_body: bool) -> Result<AstNode,
 }
 
 /// Parse a port declaration
-pub fn parse_port_decl(ts : &mut TokenStream, allow_void : bool) -> Result<AstNode, SvError> {
+pub fn parse_port_decl(ts : &mut TokenStream, allow_void : bool, cntxt: ExprCntxt) -> Result<AstNode, SvError> {
     let mut node = AstNode::new(AstNodeKind::Port);
     let mut type_found = false;
     let mut t = next_t!(ts,true);
@@ -230,24 +230,7 @@ pub fn parse_port_decl(ts : &mut TokenStream, allow_void : bool) -> Result<AstNo
         // Optional data type
         parse_data_type(ts,&mut node, if allow_void {1} else {0})?;
     }
-    // Port name
-    t = expect_t!(ts,"port declaration",TokenKind::Ident);
-    node.attr.insert("name".to_owned(), t.value);
-    // Optional Unpacked dimension : [x][y:z]
-    t = next_t!(ts,true);
-    // println!("[parse_port_decl] After port name token = {:?}", t);
-    if t.kind == TokenKind::SquareLeft {
-        ts.flush(0);
-        node.attr.insert("unpacked".to_owned(), parse_range(ts)?);
-        t = next_t!(ts,true);
-    }
-    // Optional Default value i.e. "= expr"
-    if t.kind == TokenKind::OpEq {
-        ts.flush(1);
-        node.child.push(parse_expr(ts,ExprCntxt::ArgList,false)?);
-    } else {
-        ts.rewind(1);
-    }
+    parse_var_decl_name(ts,&mut node,cntxt,false)?;
     // println!("port_decl: {:?}", node);
     // ts.display_status("port_decl");
     Ok(node)
@@ -285,16 +268,13 @@ pub fn parse_signal_decl(ts : &mut TokenStream, has_type: bool) -> Result<AstNod
         // Parse data type
         parse_data_type(ts,&mut node, 1)?;
     }
-    parse_var_decl_name(ts, &mut node)?;
+    parse_var_decl_name(ts, &mut node,ExprCntxt::StmtList,false)?;
     Ok(node)
 }
 
-pub fn parse_var_decl_name(ts : &mut TokenStream, node : &mut AstNode) -> Result<(), SvError> {
+pub fn parse_var_decl_name(ts : &mut TokenStream, node : &mut AstNode, cntxt: ExprCntxt, need_value: bool) -> Result<(), SvError> {
     // Signal name
-    let mut t = next_t!(ts,false);
-    if t.kind != TokenKind::Ident {
-        return Err(SvError::syntax(t, "signal declaration, expecting identifier".to_owned()))
-    }
+    let mut t = expect_t!(ts,"variable declaration",TokenKind::Ident);
     node.attr.insert("name".to_owned(), t.value);
     // Optional Unpacked dimension : [x][y:z]
     t = next_t!(ts,true);
@@ -306,7 +286,9 @@ pub fn parse_var_decl_name(ts : &mut TokenStream, node : &mut AstNode) -> Result
     // Optional Default value i.e. "= expr"
     if t.kind == TokenKind::OpEq {
         ts.flush(1);
-        node.child.push(parse_expr(ts,ExprCntxt::StmtList,false)?);
+        node.child.push(parse_expr(ts,cntxt,false)?);
+    } else if need_value {
+        return Err(SvError::syntax(t, "variable declaration. Expecting init value".to_owned()))
     }
     ts.rewind(0);
     Ok(())
@@ -408,6 +390,7 @@ pub fn parse_data_type(ts : &mut TokenStream, node : &mut AstNode, allowed_flag:
     let mut t = next_t!(ts,true);
     let mut s = t.value.clone();
     // println!("[parse_data_type] First Token = {}", t);
+
     // First word of a data type
     match t.kind {
         // Integer vector type -> has signing and packed dimension
@@ -601,6 +584,30 @@ pub fn parse_ident_list(ts : &mut TokenStream, node: &mut AstNode) -> Result<(),
                     format!("Unexpected {} ({:?}) in ident list, expecting identifier/comma/semicolon",t.value, t.kind)))
         }
     }
+    Ok(())
+}
+
+pub fn parse_opt_ident_list(ts : &mut TokenStream, node: &mut AstNode) -> Result<(),SvError> {
+    loop {
+        let mut t = next_t!(ts,true);
+        if t.kind != TokenKind::Comma {break;}
+        let tid = next_t!(ts,true);
+        if tid.kind != TokenKind::Ident {break;}
+        t = next_t!(ts,true);
+        // println!("[parse_opt_ident_list] tid={}, t={}", tid, t);
+        match t.kind {
+            TokenKind::Comma |
+            TokenKind::OpEq |
+            TokenKind::SemiColon => {ts.flush(2);ts.rewind(1);}
+            _ => break,
+        }
+        let mut n = AstNode::new(AstNodeKind::Identifier);
+        n.attr.insert("name".to_owned(),tid.value);
+        parse_opt_init_value(ts,&mut n)?;
+        node.child.push(n);
+    }
+    ts.rewind(0);
+    // ts.display_status("[parse_opt_ident_list] done");
     Ok(())
 }
 
@@ -1679,7 +1686,7 @@ pub fn parse_member_or_call(ts : &mut TokenStream, is_first: bool) -> Result<Ast
                 n = ns; // Might need to update some attr of ns ? Kind ?
                 n.kind = AstNodeKind::Declaration;
                 ts.rewind(1);
-                parse_var_decl_name(ts, &mut n)?;
+                parse_var_decl_name(ts, &mut n,ExprCntxt::StmtList,false)?;
                 loop {
                     t = next_t!(ts,true);
                     // println!("[parse_member_or_call] Next token : {}", t);
@@ -1689,7 +1696,7 @@ pub fn parse_member_or_call(ts : &mut TokenStream, is_first: bool) -> Result<Ast
                         _ => return Err(SvError::syntax(t, "signal declaration, expecting , or ;".to_owned()))
                     }
                     let mut node_m = AstNode::new(AstNodeKind::Declaration);
-                    parse_var_decl_name(ts, &mut node_m)?;
+                    parse_var_decl_name(ts, &mut node_m,ExprCntxt::StmtList,false)?;
                     n.child.push(node_m);
                 }
                 ts.rewind(0);
