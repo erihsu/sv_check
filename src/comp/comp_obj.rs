@@ -5,6 +5,7 @@ use std::collections::{HashMap};
 
 use crate::ast::Ast;
 use crate::ast::astnode::{AstNode,AstNodeKind};
+use crate::comp::prototype::*;
 
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
@@ -13,7 +14,7 @@ pub enum ObjDef {
     Instance,
     Class(CompObj),
     Value,
-    Function,
+    Method(DefMethod),
     Type,
 }
 
@@ -51,6 +52,8 @@ impl CompObj {
 
     //
     #[allow(dead_code,unused_variables)]
+    // TODO: check performances when taking ownership of the AST:
+    //       need copy in includes but avoid copy in all other cases ...
     pub fn from_ast(ast: &Ast, ast_inc: & HashMap<String,Ast>, mut lib: &mut HashMap<String, CompObj>)  {
         for node in &ast.tree.child {
             match node.kind {
@@ -209,11 +212,14 @@ impl CompObj {
                     }
                 }
                 AstNodeKind::Import => {
+                    // println!("{:?}", n);
                     if n.attr.contains_key("dpi") {
-                        if n.child.len() == 1 {
-                            self.parse_method_decl(&n.child[0]);
-                        } else {
-                            println!("[CompObj Skipping DPI import : {:?}", n);
+                        if n.attr["kind"]=="import" {
+                            if n.child.len() == 1 {
+                                self.parse_method_decl(&n.child[0]);
+                            } else {
+                                println!("[CompObj Skipping DPI import : {:?}", n);
+                            }
                         }
                     } else {
                         for nc in &n.child {
@@ -272,61 +278,9 @@ impl CompObj {
                 AstNodeKind::Branch  |
                 AstNodeKind::LoopFor => self.parse_body(&n,ast_inc),
                 AstNodeKind::Operation => self.search_ident(&n),
-                // TODO: check how it works with import/export ?
                 AstNodeKind::Clocking => self.search_ident(&n),
                 AstNodeKind::Task |
-                AstNodeKind::Function => {
-                    // println!("[Function] {}", n);
-                    self.parse_method_decl(&n);
-                    self.tmp_decl.push(HashMap::new());
-                    // The function name is also a variable using the return type
-                    if n.kind == AstNodeKind::Function {
-                        self.tmp_decl.last_mut().unwrap().insert(n.attr["name"].clone(),ObjDef::Signal);
-                    }
-                    for nc in &n.child {
-                        // println!("[Function] {}", nc);
-                        match nc.kind {
-                            AstNodeKind::Ports => {
-                                for np in &nc.child {
-                                    // println!("Ports child {}", np);
-                                    // TODO: update definition of the function to include port name and type
-                                    self.tmp_decl.last_mut().unwrap().insert(np.attr["name"].clone(),ObjDef::Signal);
-                                    self.check_type(&np,false);
-                                }
-                            }
-                            // Check return type
-                            AstNodeKind::Type  => self.check_type(&nc,false),
-                            // Variable definition
-                            AstNodeKind::Declaration => {
-                                self.tmp_decl.last_mut().unwrap().insert(nc.attr["name"].clone(),ObjDef::Signal);
-                                self.check_type(&nc,false);
-                            }
-                            AstNodeKind::Assign => self.search_ident(&nc),
-                            AstNodeKind::Branch => self.parse_block(&nc),
-                            AstNodeKind::Case       => self.parse_block(&nc),
-                            AstNodeKind::CaseItem   => self.parse_block(&nc),
-                            AstNodeKind::Identifier => self.parse_ident(&nc),
-                            AstNodeKind::Event      => self.parse_ident(&nc),
-                            AstNodeKind::Fork       => {
-                                for ncc in &nc.child {
-                                    self.parse_block(&ncc);
-                                }
-                            }
-                            AstNodeKind::Loop       |
-                            AstNodeKind::LoopFor    |
-                            AstNodeKind::Block      => self.parse_block(&nc),
-                            AstNodeKind::SystemTask => self.check_system_task(&nc),
-                            AstNodeKind::MethodCall => self.parse_call(&nc),
-                            AstNodeKind::MacroCall => self.parse_call(&nc),
-                            AstNodeKind::Wait   => self.parse_block(&nc),
-                            AstNodeKind::Assert => self.parse_block(&nc),
-                            AstNodeKind::Return => self.search_ident(&nc),
-                            // _ => self.search_ident(&nc),
-                            _ => {println!("[CompObj] {} | Function: Skipping {:?}",self.name, nc.kind);}
-                        }
-                    }
-                    self.tmp_decl.pop();
-                }
+                AstNodeKind::Function => self.parse_method_decl(&n),
                 AstNodeKind::MacroCall => self.parse_call(&n),
                 AstNodeKind::Modport => {
                     self.add_decl(&n,true);
@@ -413,9 +367,67 @@ impl CompObj {
     }
 
     pub fn parse_method_decl(&mut self, node: &AstNode) {
-        // TODO: add prototype
+        let mut d = DefMethod::new(node.attr["name"].clone(),node.kind==AstNodeKind::Task);
         // Make distinction between function and task
-        self.definition.insert(node.attr["name"].clone(),ObjDef::Function);
+        //
+        self.tmp_decl.push(HashMap::new());
+        // The function name is also a variable using the return type
+        if node.kind == AstNodeKind::Function {
+            self.tmp_decl.last_mut().unwrap().insert(node.attr["name"].clone(),ObjDef::Signal);
+        }
+        let mut prev_dir = PortDir::Input; // Default port direction to input
+        for nc in &node.child {
+            // println!("[Function] {}", nc);
+            match nc.kind {
+                AstNodeKind::Ports => {
+                    for np in &nc.child {
+                        // println!("Ports child {:?}", np.attr);
+                        self.tmp_decl.last_mut().unwrap().insert(np.attr["name"].clone(),ObjDef::Signal);
+                        self.check_type(&np,false);
+                        // Update definition of the function to include port name and type
+                        let p = Port::new(np,prev_dir);
+                        prev_dir = p.dir.clone();
+                        d.ports.push(p);
+                    }
+                }
+                // Check return type
+                AstNodeKind::Type  => {
+                    // println!("[CompObj] {} | Function {} return {:?}", self.name, d.name, nc.attr);
+                    d.ret = Some(SignalType::from(nc));
+                    self.check_type(&nc,false);
+                }
+                // Variable definition
+                AstNodeKind::Declaration => {
+                    self.tmp_decl.last_mut().unwrap().insert(nc.attr["name"].clone(),ObjDef::Signal);
+                    self.check_type(&nc,false);
+                }
+                AstNodeKind::Assign => self.search_ident(&nc),
+                AstNodeKind::Branch => self.parse_block(&nc),
+                AstNodeKind::Case       => self.parse_block(&nc),
+                AstNodeKind::CaseItem   => self.parse_block(&nc),
+                AstNodeKind::Identifier => self.parse_ident(&nc),
+                AstNodeKind::Event      => self.parse_ident(&nc),
+                AstNodeKind::Fork       => {
+                    for ncc in &nc.child {
+                        self.parse_block(&ncc);
+                    }
+                }
+                AstNodeKind::Loop       |
+                AstNodeKind::LoopFor    |
+                AstNodeKind::Block      => self.parse_block(&nc),
+                AstNodeKind::SystemTask => self.check_system_task(&nc),
+                AstNodeKind::MethodCall => self.parse_call(&nc),
+                AstNodeKind::MacroCall => self.parse_call(&nc),
+                AstNodeKind::Wait   => self.parse_block(&nc),
+                AstNodeKind::Assert => self.parse_block(&nc),
+                AstNodeKind::Return => self.search_ident(&nc),
+                // _ => self.search_ident(&nc),
+                _ => {println!("[CompObj] {} | Function: Skipping {:?}",self.name, nc.kind);}
+            }
+        }
+        self.tmp_decl.pop();
+        // print!("[CompObj] {} | {}",self.name , d);
+        self.definition.insert(node.attr["name"].clone(),ObjDef::Method(d));
     }
 
     pub fn parse_call(&mut self, node: &AstNode) {
