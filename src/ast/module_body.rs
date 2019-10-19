@@ -231,7 +231,7 @@ pub fn parse_assign_c(ts : &mut TokenStream) -> Result<AstNode, SvError> {
     if t.kind==TokenKind::ParenLeft {
         ts.flush(1);
         t = expect_t!(ts,"drive strength",TokenKind::KwDrive);
-        let drive_is_0 = t.value.ends_with("0");
+        let drive_is_0 = t.value.ends_with('0');
         if drive_is_0 {
             node.attr.insert("strength0".to_owned(),t.value);
         } else {
@@ -240,12 +240,12 @@ pub fn parse_assign_c(ts : &mut TokenStream) -> Result<AstNode, SvError> {
         expect_t!(ts,"drive strength",TokenKind::Comma);
         t = expect_t!(ts,"drive strength",TokenKind::KwDrive);
         if drive_is_0 {
-            if t.value.ends_with("0") {
+            if t.value.ends_with('0') {
                 return Err(SvError::syntax(t, "drive strength. Expecting drive strength 1".to_owned()))
             }
             node.attr.insert("strength1".to_owned(),t.value);
         } else {
-            if t.value.ends_with("1") {
+            if t.value.ends_with('1') {
                 return Err(SvError::syntax(t, "drive strength. Expecting drive strength 0".to_owned()))
             }
             node.attr.insert("strength0".to_owned(),t.value);

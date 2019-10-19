@@ -20,7 +20,7 @@ impl CompLib {
     // Create a library containing definition of all object compiled
     // Try to fix any missing reference, analyze hierarchical access, ...
     pub fn new(name: String, ast_list: Vec<Ast>, ast_inc: HashMap<String,Ast>) -> CompLib {
-        let mut lib = CompLib {name:name, objects:HashMap::new()};
+        let mut lib = CompLib {name, objects:HashMap::new()};
         let mut missing_scope : HashSet<String> = HashSet::new();
         // Create a top object for type/localparam definition without scope
         lib.objects.insert("!".to_owned(),CompObj::new("!".to_owned()));
@@ -42,17 +42,19 @@ impl CompLib {
             // Add current scope to the import
             import_body.push(name.clone());
             // Check definition
-            for (_,v) in &o.definition {
+            for v in o.definition.values() {
                 match v {
                     ObjDef::Class(def) => {
                         // println!("[{}] Should check unresolved in {:?}", name,def);
                         lib.fix_unref(def,&mut missing_scope,&mut import_hdr,&mut import_body);
                     }
+                    // Check instance paramters
+                    ObjDef::Instance => {}
                     _ => {}
                 }
             }
         }
-        return lib;
+        lib
     }
 
     pub fn get_import_obj(&self, imports: &mut Vec<String>, name: &str, missing: &mut HashSet<String>) -> Option<&ObjDef> {
@@ -73,30 +75,28 @@ impl CompLib {
         None
     }
 
-    pub fn find_obj<'a>(&'a self, obj_top:&'a CompObj, name:&'a String, node: &'a AstNode, missing: &'a mut HashSet<String>,imports: &'a mut Vec<String>) -> Option<&'a ObjDef> {
+    pub fn find_obj<'a>(&'a self, obj_top:&'a CompObj, name:&str, node: &'a AstNode, missing: &'a mut HashSet<String>,imports: &'a mut Vec<String>) -> Option<&'a ObjDef> {
         // CHeck if scoped
-        if !node.child.is_empty() {
-            if node.child[0].kind == AstNodeKind::Scope {
-                let scope_name = &node.child[0].attr["name"];
-                // Check if already flagged as missing
-                if missing.contains(scope_name) {return None;}
-                // Check if the scope is a package
-                if self.objects.contains_key(scope_name) {
-                    return self.objects[scope_name].definition.get(name);
-                }
-                // Try to find the scope as part of classes in imported packages
-                else if let Some(ObjDef::Class(c)) = self.get_import_obj(imports,scope_name,missing) {
-                    return c.definition.get(name);
-                }
-                // Scoped not found -> Flag it to avoid future useless search
-                else {
-                    println!("[{}] Unable to find scope {}", obj_top.name, scope_name);
-                    missing.insert(scope_name.clone());
-                    return None
-                }
-                // println!("[{}] Unsolved ref {}::{} ", obj_top.name, scope_name, name);
-                // return None;
+        if !node.child.is_empty() && node.child[0].kind == AstNodeKind::Scope {
+            let scope_name = &node.child[0].attr["name"];
+            // Check if already flagged as missing
+            if missing.contains(scope_name) {return None;}
+            // Check if the scope is a package
+            if self.objects.contains_key(scope_name) {
+                return self.objects[scope_name].definition.get(name);
             }
+            // Try to find the scope as part of classes in imported packages
+            else if let Some(ObjDef::Class(c)) = self.get_import_obj(imports,scope_name,missing) {
+                return c.definition.get(name);
+            }
+            // Scoped not found -> Flag it to avoid future useless search
+            else {
+                println!("[{}] Unable to find scope {}", obj_top.name, scope_name);
+                missing.insert(scope_name.clone());
+                return None
+            }
+            // println!("[{}] Unsolved ref {}::{} ", obj_top.name, scope_name, name);
+            // return None;
         }
         // Check in current context
         if obj_top.definition.contains_key(name) {
@@ -300,47 +300,47 @@ fn get_uvm_lib() -> CompObj {
     o_comp.definition.insert("type_name".to_owned(),ObjDef::Type);
     o_comp.definition.insert("get_full_name".to_owned(),ObjDef::Type);
     o_comp.definition.insert("m_current_phase".to_owned(),ObjDef::Type);
-    o.definition.insert("uvm_component".to_owned(),ObjDef::Class(o_comp));
+    o.definition.insert("uvm_component".to_owned(),ObjDef::Class(Box::new(o_comp)));
     let mut o_drv = CompObj::new("uvm_driver".to_owned());
     o_drv.base_class = Some("uvm_component".to_owned());
     o_drv.definition.insert("req".to_owned(),ObjDef::Type);
     o_drv.definition.insert("rsp".to_owned(),ObjDef::Type);
     o_drv.definition.insert("seq_item_port".to_owned(),ObjDef::Type);
-    o.definition.insert("uvm_driver".to_owned(),ObjDef::Class(o_drv));
+    o.definition.insert("uvm_driver".to_owned(),ObjDef::Class(Box::new(o_drv)));
     let mut o_mon = CompObj::new("uvm_monitor".to_owned());
     o_mon.base_class = Some("uvm_component".to_owned());
-    o.definition.insert("uvm_monitor".to_owned(),ObjDef::Class(o_mon));
+    o.definition.insert("uvm_monitor".to_owned(),ObjDef::Class(Box::new(o_mon)));
     let mut o_sqr = CompObj::new("uvm_sequencer".to_owned());
     o_sqr.base_class = Some("uvm_component".to_owned());
-    o.definition.insert("uvm_sequencer".to_owned(),ObjDef::Class(o_sqr));
+    o.definition.insert("uvm_sequencer".to_owned(),ObjDef::Class(Box::new(o_sqr)));
     let mut o_seq = CompObj::new("uvm_sequence".to_owned());
     o_seq.definition.insert("req".to_owned(),ObjDef::Type);
     o_seq.definition.insert("rsp".to_owned(),ObjDef::Type);
     o_seq.definition.insert("m_parent_sequence".to_owned(),ObjDef::Type); // Part of uvm_sequence item
     o_seq.definition.insert("m_sequencer".to_owned(),ObjDef::Type);
     o_seq.definition.insert("p_sequencer".to_owned(),ObjDef::Type);
-    o.definition.insert("uvm_sequence".to_owned(),ObjDef::Class(o_seq));
+    o.definition.insert("uvm_sequence".to_owned(),ObjDef::Class(Box::new(o_seq)));
     let mut o_agt = CompObj::new("uvm_agent".to_owned());
     o_agt.base_class = Some("uvm_component".to_owned());
     o_agt.definition.insert("is_active".to_owned(),ObjDef::Type);
-    o.definition.insert("uvm_agent".to_owned(),ObjDef::Class(o_agt));
+    o.definition.insert("uvm_agent".to_owned(),ObjDef::Class(Box::new(o_agt)));
     let mut o_regb = CompObj::new("uvm_reg_block".to_owned());
     o_regb.definition.insert("default_map".to_owned(),ObjDef::Type);
-    o.definition.insert("uvm_reg_block".to_owned(),ObjDef::Class(o_regb));
+    o.definition.insert("uvm_reg_block".to_owned(),ObjDef::Class(Box::new(o_regb)));
     let mut o_regp = CompObj::new("uvm_reg_predictor".to_owned());
     o_regp.definition.insert("bus_in".to_owned(),ObjDef::Type);
     o_regp.definition.insert("map".to_owned(),ObjDef::Type);
     o_regp.definition.insert("adapter".to_owned(),ObjDef::Type);
     o_regp.definition.insert("reg_ap".to_owned(),ObjDef::Type);
-    o.definition.insert("uvm_reg_predictor".to_owned(),ObjDef::Class(o_regp));
+    o.definition.insert("uvm_reg_predictor".to_owned(),ObjDef::Class(Box::new(o_regp)));
     let mut o_regs = CompObj::new("uvm_reg_sequence".to_owned());
     o_regs.base_class = Some("uvm_sequence".to_owned());
     o_regs.definition.insert("m_verbosity".to_owned(),ObjDef::Type); // Not true, but just to avoid error until we know how to follow properly the inheritance tree
-    o.definition.insert("uvm_reg_sequence".to_owned(),ObjDef::Class(o_regs));
+    o.definition.insert("uvm_reg_sequence".to_owned(),ObjDef::Class(Box::new(o_regs)));
     let mut o_cdb = CompObj::new("uvm_config_db".to_owned());
     o_cdb.definition.insert("get".to_owned(),ObjDef::Method(DefMethod::new("get".to_string(),false)));
     o_cdb.definition.insert("set".to_owned(),ObjDef::Method(DefMethod::new("set".to_string(),false)));
-    o.definition.insert("uvm_config_db".to_owned(),ObjDef::Class(o_cdb));
+    o.definition.insert("uvm_config_db".to_owned(),ObjDef::Class(Box::new(o_cdb)));
 
-    return o;
+    o
 }

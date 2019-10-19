@@ -561,7 +561,7 @@ pub fn parse_ident_hier(ts : &mut TokenStream) -> Result<AstNode, SvError> {
     }
     // println!("[parse_ident_hier] {}", node);
     // ts.display_status("parse_ident_hier: done");
-    return Ok(node);
+    Ok(node)
 }
 
 pub fn parse_ident_list(ts : &mut TokenStream, node: &mut AstNode) -> Result<(),SvError> {
@@ -787,7 +787,7 @@ pub fn parse_typedef(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), Sv
     match t.kind {
         TokenKind::KwEnum => {
             node_type = parse_enum(ts,true)?;
-            if node_type.child.len() == 0 {
+            if node_type.child.is_empty() {
                 return Ok(());
             }
         }
@@ -955,11 +955,11 @@ pub fn parse_label(ts : &mut TokenStream, node: &mut AstNode, attr_name: String)
             return Err(SvError::syntax(t, "block name".to_owned()))
         }
         node.attr.insert(attr_name, t.value);
-        return Ok(true)
+        Ok(true)
     } else {
         ts.rewind(1);
         node.attr.insert(attr_name, "".to_owned());
-        return Ok(false);
+        Ok(false)
     }
 }
 
@@ -1921,7 +1921,7 @@ pub fn parse_func_call(ts : &mut TokenStream, node: &mut AstNode, is_param: bool
         }
         loop_args_break_cont!(ts,"argument list",ParenRight);
     }
-    if nps.child.len()>0 {
+    if !nps.child.is_empty() {
         node.child.push(nps);
     }
     // ts.display_status("parse_func_call");

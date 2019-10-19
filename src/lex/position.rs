@@ -17,8 +17,8 @@ impl Position {
         Position {line:1, col: 0}
     }
     /// Increment the current position
-    pub fn incr(&mut self, c: &char) {
-        if *c == '\n' {
+    pub fn incr(&mut self, c: char) {
+        if c == '\n' {
             self.line += 1;
             self.col = 0;
         } else {

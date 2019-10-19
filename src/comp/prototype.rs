@@ -16,13 +16,13 @@ pub enum PortDir {
     Modport(String),
 }
 
-pub fn str_to_dir(s: &String) -> PortDir {
-    match s.as_ref() {
+pub fn str_to_dir(s: &str) -> PortDir {
+    match s {
         "input" =>  PortDir::Input,
         "output" =>  PortDir::Output,
         "inout" =>  PortDir::Inout,
         "ref" =>  PortDir::Ref,
-        _ => PortDir::Modport(s.clone()),
+        _ => PortDir::Modport(s.to_string()),
     }
 }
 
@@ -54,7 +54,7 @@ pub struct SignalType {
 impl SignalType {
     pub fn new(name: String) -> SignalType {
         SignalType {
-            name : name,
+            name,
             scope : None,
             packed : None,
             unpacked : None,
@@ -63,6 +63,7 @@ impl SignalType {
     }
 }
 
+#[allow(clippy::option_map_unit_fn)]
 impl From<&AstNode> for SignalType {
     fn from(node: &AstNode) -> Self {
         let mut st = SignalType::new(node.attr.get("type").unwrap_or(&"".to_owned()).to_owned());
@@ -148,23 +149,23 @@ pub struct DefMethod {
 impl DefMethod {
     pub fn new(name: String, is_task: bool) -> DefMethod {
         DefMethod {
-            name:name,
+            name,
             ports:Vec::new(),
             ret:None,
-            is_task:is_task
+            is_task
         }
     }
 }
 
 impl fmt::Display for DefMethod {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{} {}{}\n",
+        writeln!(f, "{} {}{}",
             if self.is_task {"Task"} else {"Function"},
             self.name,
             if let Some(s) = &self.ret {format!(" -> {}", s)} else {"".to_owned()},
         )?;
         for p in &self.ports {
-            write!(f,"\t{}\n",p)?;
+            writeln!(f,"\t{}",p)?;
         }
         Ok(())
     }
@@ -181,15 +182,15 @@ pub struct DefMacro {
 
 impl DefMacro {
     pub fn new(name: String) -> DefMacro {
-        DefMacro {name:name, ports:Vec::new()}
+        DefMacro {name, ports:Vec::new()}
     }
 }
 
 impl fmt::Display for DefMacro {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Macro {}\n",self.name)?;
+        writeln!(f, "Macro {}",self.name)?;
         for p in &self.ports {
-            write!(f,"\t{}\n",p)?;
+            writeln!(f,"\t{}",p)?;
         }
         Ok(())
     }

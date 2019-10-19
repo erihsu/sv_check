@@ -39,10 +39,8 @@ pub fn parse_module_hdr(ts : &mut TokenStream, node: &mut AstNode) -> Result<(),
         let mut is_first = true;
         loop {
             let node_port = parse_param_decl(ts,false)?;
-            if !is_first {
-                if !node_port.attr.contains_key("name") {
-                    return Err(SvError::syntax(t, "parameter declaration. ".to_owned()));
-                }
+            if !is_first && !node_port.attr.contains_key("name") {
+                return Err(SvError::syntax(t, "parameter declaration. ".to_owned()));
             }
             is_first = false;
             node_h.child.push(node_port);
@@ -59,10 +57,8 @@ pub fn parse_module_hdr(ts : &mut TokenStream, node: &mut AstNode) -> Result<(),
             let mut is_first = true;
             loop {
                 let node_port = parse_port_decl(ts, false,ExprCntxt::ArgList)?;
-                if !is_first {
-                    if !node_port.attr.contains_key("name") {
-                        return Err(SvError::syntax(t, "port declaration. Extraneous , detected".to_owned()));
-                    }
+                if !is_first && !node_port.attr.contains_key("name") {
+                    return Err(SvError::syntax(t, "port declaration. Extraneous , detected".to_owned()));
                 }
                 is_first = false;
                 node_h.child.push(node_port);

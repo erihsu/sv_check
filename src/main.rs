@@ -57,7 +57,7 @@ fn main() {
     filelist = HashSet::new();
     incdir = HashSet::new();
     //
-    if args.files.len() > 0 {
+    if !args.files.is_empty() {
         for f in args.files {
             let md = metadata(&f).unwrap_or_else(|_| exit!("File {:?} not found!",f));
             incdir.insert(f.clone());
@@ -78,14 +78,14 @@ fn main() {
 
         let f = File::open(srclist.clone())
                     .unwrap_or_else(|_| exit!("File {:?} not found!",srclist));
-        let mut src_path = PathBuf::from(srclist);
+        let mut src_path = srclist;
         src_path.pop();
         let file = BufReader::new(&f);
         // TODO: use collect and filter to create the vector
         //       and also handle -f and --inc cases
         for (_num, line) in file.lines().enumerate() {
             if let Ok(l) = line {
-                if l.len()==0 || l.starts_with("#") {
+                if l.len()==0 || l.starts_with('#') {
                     continue;
                 }
                 let mut p = src_path.clone();
@@ -142,12 +142,12 @@ fn main() {
         }
 
         // Handle included files
-        if ts.inc_files.len() > 0 {
+        if !ts.inc_files.is_empty() {
             let cwd = fname.parent().unwrap();
             // println!("Current dir = {:?}, Include files : {:?}",cwd, ts.inc_files);
             for inc_name in ts.inc_files {
                 let mut inc_path = PathBuf::new();
-                for s in inc_name.to_string().split("/") {
+                for s in inc_name.to_string().split('/') {
                     inc_path.push(s);
                 }
                 let p = cwd.join(inc_path.clone());

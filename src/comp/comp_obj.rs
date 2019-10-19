@@ -12,7 +12,7 @@ use crate::comp::prototype::*;
 pub enum ObjDef {
     Signal,
     Instance,
-    Class(CompObj),
+    Class(Box<CompObj>),
     Value,
     Method(DefMethod),
     Macro(DefMacro),
@@ -40,7 +40,7 @@ impl CompObj {
     #[allow(dead_code)]
     pub fn new(name: String) -> CompObj {
         CompObj {
-            name        : name,
+            name,
             base_class  : None,
             definition  : HashMap::new(),
             tmp_decl    : Vec::new(),
@@ -60,12 +60,11 @@ impl CompObj {
             // println!("Compiling Node {:?} ({:?}", node.kind, node.attr);
             match node.kind {
                 AstNodeKind::Directive => {
-                    node.attr.get("include").map(
-                        |i| ast_inc.get(i).map_or_else(
+                    if let Some(i) = node.attr.get("include") {
+                        ast_inc.get(i).map_or_else(
                             || if i!="uvm_macros.svh" {println!("Include {} not found", i)},
-                            |a| CompObj::from_ast(a, &ast_inc, &mut lib)
-                        )
-                    );
+                            |a| CompObj::from_ast(a, &ast_inc, &mut lib));
+                    }
                 },
                 AstNodeKind::MacroCall => {},
                 AstNodeKind::Interface |
@@ -174,7 +173,7 @@ impl CompObj {
                     // println!("Compiling {:?}", n.attr);
                     let mut o = CompObj::new(n.attr["name"].clone());
                     o.parse_body(&n,ast_inc);
-                    self.definition.insert(n.attr["name"].clone(),ObjDef::Class(o));
+                    self.definition.insert(n.attr["name"].clone(),ObjDef::Class(Box::new(o)));
                 }
                 // Header in a body: Loop definition
                 AstNodeKind::Header => {
@@ -246,10 +245,8 @@ impl CompObj {
                 }
                 AstNodeKind::Declaration => {
                     self.add_decl(&n,true);
-                    if n.child.len() > 0 {
-                        if n.child[0].kind != AstNodeKind::Scope {
-                            self.search_ident(&n);
-                        }
+                    if !n.child.is_empty() && n.child[0].kind != AstNodeKind::Scope {
+                        self.search_ident(&n);
                     }
                 }
                 AstNodeKind::VIntf => {
@@ -326,7 +323,7 @@ impl CompObj {
         if node.attr.get("kind").unwrap_or(&"".to_owned()) == "foreach" {
             let mut nc = &node.child[0]; // Foreach loop always have at least one child
             loop {
-                if nc.kind == AstNodeKind::Slice || nc.child.len() == 0 {
+                if nc.kind == AstNodeKind::Slice || nc.child.is_empty() {
                     break;
                 }
                 nc = &nc.child[0];
@@ -506,7 +503,7 @@ impl CompObj {
     pub fn parse_ident(&mut self, node: &AstNode) {
         match node.attr["name"].as_ref() {
             "super" => {/*TODO: automatically add child to a list of undeclared to be cheked later */},
-            "this" => if node.child.len()>0 {
+            "this" => if !node.child.is_empty() {
                 let nc = &node.child[0];
                 match nc.kind {
                     AstNodeKind::MethodCall => self.parse_call(&nc),
@@ -516,21 +513,17 @@ impl CompObj {
                 }
             }
             _ => {
-                if self.name != node.attr["name"] {
-                    if !self.definition.contains_key(&node.attr["name"]) {
-                        let mut found = false;
-                        for d in &self.tmp_decl {
-                            if d.contains_key(&node.attr["name"]) {
-                                found = true;
-                                break;
-                            }
+                if self.name != node.attr["name"] && !self.definition.contains_key(&node.attr["name"]) {
+                    let mut found = false;
+                    for d in &self.tmp_decl {
+                        if d.contains_key(&node.attr["name"]) {
+                            found = true;
+                            break;
                         }
-                        if !found {
-                            if !self.unref.contains_key(&node.attr["name"]) {
-                                // println!("Unknown identifer {}", node.attr["name"]);
-                                self.unref.insert(node.attr["name"].clone(),node.clone());
-                            }
-                        }
+                    }
+                    if !found && !self.unref.contains_key(&node.attr["name"]) {
+                        // println!("Unknown identifer {}", node.attr["name"]);
+                        self.unref.insert(node.attr["name"].clone(),node.clone());
                     }
                 }
             }
@@ -569,13 +562,11 @@ impl CompObj {
             }
             // Non default SystemVerilog type ? -> check if it was defined
             _ => {
-                if !self.definition.contains_key(&node.attr["type"]) {
-                    if !self.unref.contains_key(&node.attr["type"]) {
-                        // println!("Unknown type {}", node);
-                        let mut n = node.clone();
-                        if is_hdr {n.kind = AstNodeKind::Header;}
-                        self.unref.insert(node.attr["type"].clone(),n);
-                    }
+                if !self.definition.contains_key(&node.attr["type"]) && !self.unref.contains_key(&node.attr["type"]) {
+                    // println!("Unknown type {}", node);
+                    let mut n = node.clone();
+                    if is_hdr {n.kind = AstNodeKind::Header;}
+                    self.unref.insert(node.attr["type"].clone(),n);
                 }
             }
         }

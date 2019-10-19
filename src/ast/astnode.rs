@@ -70,7 +70,7 @@ impl AstNode {
             s.push('\n');
             s.push_str(&c.to_string_lvl(lvl+1));
         }
-        return s;
+        s
     }
 }
 

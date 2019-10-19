@@ -895,7 +895,7 @@ pub fn parse_class_stmt(ts : &mut TokenStream, node: &mut AstNode, is_block: boo
             }
             TokenKind::Casting => {
                 ts.flush(1); // Consume
-                if t.value!="void'".to_owned() {
+                if t.value!="void'" {
                     return Err(SvError::syntax(t,"casting statement. Expecting void".to_owned()));
                 }
                 t = next_t!(ts,false);

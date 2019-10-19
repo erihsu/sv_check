@@ -48,7 +48,7 @@ impl Source {
 
     pub fn get_char(&mut self) -> Option<char> {
         let c = self.chars.next()?;
-        self.pos.incr(&c);
+        self.pos.incr(c);
         // println!("Parse_ident: char={} at {:?}", c,self.pos );
         Some(c)
     }
