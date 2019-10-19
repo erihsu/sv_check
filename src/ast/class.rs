@@ -65,10 +65,13 @@ pub fn parse_class(ts : &mut TokenStream) -> Result<AstNode, SvError> {
     }
     // Optional extends
     if t.kind==TokenKind::KwImplements {
-        let mut node_e = AstNode::new(AstNodeKind::Implements);
-        parse_class_type(ts, &mut node_e,true)?;
-        node.child.push(node_e);
-        t = next_t!(ts,false);
+        loop {
+            let mut node_e = AstNode::new(AstNodeKind::Implements);
+            parse_class_type(ts, &mut node_e,true)?;
+            node.child.push(node_e);
+            loop_args_break_cont!(ts,"implements declaration",SemiColon);
+        }
+        t.kind = TokenKind::SemiColon; // Just to ensure next check is fine
     }
     // Check the declaration ends with a ;
     if t.kind!=TokenKind::SemiColon {
@@ -103,7 +106,8 @@ pub fn parse_class(ts : &mut TokenStream) -> Result<AstNode, SvError> {
             // Typedef
             TokenKind::KwTypedef => parse_typedef(ts,&mut node)?,
             // A class can be defined inside a class
-            TokenKind::KwClass => node.child.push(parse_class(ts)?),
+            TokenKind::KwClass  => node.child.push(parse_class(ts)?),
+            TokenKind::KwImport => parse_import(ts,&mut node)?,
             // Local/protected/static : can be members or method -> continue parsing
             TokenKind::KwLocal     |
             TokenKind::KwProtected => {
@@ -222,31 +226,20 @@ pub fn parse_class(ts : &mut TokenStream) -> Result<AstNode, SvError> {
 
 /// Parse a data type
 pub fn parse_class_type(ts : &mut TokenStream, node : &mut AstNode, is_intf : bool) -> Result<(), SvError> {
-    let t = next_t!(ts,false);
-    if t.kind!=TokenKind::Ident {
-        return Err(SvError::syntax(t, "param declaration. Expecting (".to_owned()));
-    }
-    // Check for scope
-    let mut nt = next_t!(ts,true);
-    if nt.kind==TokenKind::Scope {
-        nt = next_t!(ts,true);
-        if nt.kind != TokenKind::Ident {
-            return Err(SvError::syntax(t, "class type. Expecting identifier".to_owned()));
-        }
-        node.attr.insert("name".to_owned(),format!("{}::{}",t.value,nt.value));
-        ts.flush(0);
-        nt = next_t!(ts,true);
-    } else {
-        node.attr.insert("name".to_owned(),t.value);
-    }
+    parse_opt_scope(ts,node)?;
+    let t = expect_t!(ts,"data type",TokenKind::Ident);
+    node.attr.insert("type".to_owned(),t.value);
     // Check for param
-    parse_opt_params!(ts,node,nt);
+    parse_opt_params!(ts,node);
     // Check arguments
-    if nt.kind==TokenKind::ParenLeft && !is_intf {
-        ts.rewind(0);
-        let mut node_p = AstNode::new(AstNodeKind::Ports);
-        parse_func_call(ts,&mut node_p, false)?;
-        node.child.push(node_p);
+    if !is_intf {
+        let nt = next_t!(ts,true);
+        if nt.kind==TokenKind::ParenLeft {
+            ts.rewind(0);
+            let mut node_p = AstNode::new(AstNodeKind::Ports);
+            parse_func_call(ts,&mut node_p, false)?;
+            node.child.push(node_p);
+        }
     }
     // Put back token we read
     ts.rewind(0);

@@ -37,7 +37,7 @@ pub enum AstNodeKind {
     New, Args, Slice, Value, Return,
     Assert,
     VIntf,
-    Directive, MacroCall, Timescale,
+    Directive, Define, MacroCall, Timescale,
     Type, Typedef, Scope,
     Struct, Union, StructInit, Concat, Replication,
     Enum, EnumIdent,

@@ -170,3 +170,27 @@ impl fmt::Display for DefMethod {
     }
 }
 
+
+// ------------------
+// Function definition
+#[derive(Debug, Clone)]
+pub struct DefMacro {
+    pub name   : String,
+    pub ports  : Vec<String>
+}
+
+impl DefMacro {
+    pub fn new(name: String) -> DefMacro {
+        DefMacro {name:name, ports:Vec::new()}
+    }
+}
+
+impl fmt::Display for DefMacro {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Macro {}\n",self.name)?;
+        for p in &self.ports {
+            write!(f,"\t{}\n",p)?;
+        }
+        Ok(())
+    }
+}

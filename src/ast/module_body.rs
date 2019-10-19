@@ -62,8 +62,29 @@ pub fn parse_module_body(ts : &mut TokenStream, node : &mut AstNode, cntxt : Mod
             TokenKind::TypeString    |
             TokenKind::TypeCHandle   |
             TokenKind::TypeEvent     => parse_signal_decl_list(ts,node)?,
+            TokenKind::KwInterconnect => {
+                let mut node_d = AstNode::new(AstNodeKind::Declaration);
+                ts.flush(1);
+                let mut nt = next_t!(ts,false);
+                if nt.kind == TokenKind::KwSigning {
+                    node_d.attr.insert("signing".to_owned(), nt.value);
+                    nt = next_t!(ts,false);
+                }
+                if nt.kind == TokenKind::SquareLeft {
+                    node_d.attr.insert("packed".to_owned(), parse_range(ts)?);
+                }
+                parse_var_decl_name(ts, &mut node_d,ExprCntxt::StmtList,false)?;
+                // allow list of interconnect
+                loop {
+                    loop_args_break_cont!(ts,"interconnect declaration",SemiColon);
+                    let mut node_l = AstNode::new(AstNodeKind::Declaration);
+                    parse_var_decl_name(ts, &mut node_l,ExprCntxt::StmtList,false)?;
+                    node_d.child.push(node_l);
+                }
+                node.child.push(node_d);
+            }
             TokenKind::KwEnum        => {
-                let mut node_e = parse_enum(ts)?;
+                let mut node_e = parse_enum(ts,false)?;
                 parse_ident_list(ts,&mut node_e)?;
                 node.child.push(node_e);
             }

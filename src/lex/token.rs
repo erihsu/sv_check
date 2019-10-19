@@ -21,7 +21,7 @@ pub enum TokenKind {
     KwClass, KwEndClass, KwVirtual, KwPure, KwExtends, KwImplements, KwLocal, KwProtected, KwExtern, KwContext,
     KwFunction, KwEndFunction, KwTask, KwEndTask, KwRand, KwNew, KwConst, KwSuper, KwThis, KwNull,
     KwReturn, KwBreak, KwContinue, KwFork, KwJoin, KwDisable, KwWait, KwWaitOrder,
-    KwAssert, KwCover,
+    KwAssert, KwCover, KwInterconnect,
     KwConstraint, KwWith, KwCovergroup,
     Keyword,    // Reserved SystemVerilog keyword
     // Base Type
@@ -210,6 +210,7 @@ impl fmt::Display for TokenKind {
             TokenKind::KwConstraint      => write!(f, "Kw:constraint"  ),
             TokenKind::KwWith            => write!(f, "Kw:with"        ),
             TokenKind::KwCovergroup      => write!(f, "Kw:covergroup"  ),
+            TokenKind::KwInterconnect    => write!(f, "Kw:interconnect"),
             TokenKind::TypeIntAtom       => write!(f, "Type:IntAtom"   ),
             TokenKind::TypeIntVector     => write!(f, "Type:IntVector" ),
             TokenKind::TypeReal          => write!(f, "Type:Real"      ),
@@ -406,7 +407,7 @@ pub fn keyword_from_str(w: &str) -> Option<TokenKind> {
         "input"               => Some(TokenKind::KwInput    ),
         "inside"              => Some(TokenKind::KwInside   ),
         "instance"            => Some(TokenKind::Keyword    ),
-        "interconnect"        => Some(TokenKind::Keyword    ),
+        "interconnect"        => Some(TokenKind::KwInterconnect),
         "interface"           => Some(TokenKind::KwIntf     ),
         "intersect"           => Some(TokenKind::Keyword    ),
         "join"                => Some(TokenKind::KwJoin     ),

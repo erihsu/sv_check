@@ -56,7 +56,7 @@ pub fn parse_interface(ts : &mut TokenStream) -> Result<AstNode, SvError> {
             TokenKind::TypeCHandle   |
             TokenKind::TypeEvent     => parse_signal_decl_list(ts,&mut node_b)?,
             TokenKind::KwEnum        => {
-                let mut node_e = parse_enum(ts)?;
+                let mut node_e = parse_enum(ts,false)?;
                 parse_ident_list(ts,&mut node_e)?;
                 node_b.child.push(node_e);
             }
@@ -257,7 +257,7 @@ pub fn parse_clocking(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), S
     let mut t = next_t!(ts,false);
     let has_id = t.kind!=TokenKind::KwDefault;
     let need_event = t.kind==TokenKind::KwClocking;
-    if t.kind== TokenKind::KwDefault || t.kind== TokenKind::KwDefault {
+    if t.kind== TokenKind::KwDefault || t.kind== TokenKind::KwGlobal {
         node_c.attr.insert("scope".to_owned(), t.value);
         t = next_t!(ts,false);
     }

@@ -7,6 +7,7 @@ use crate::ast::Ast;
 use crate::ast::astnode::{AstNode,AstNodeKind};
 
 use crate::comp::comp_obj::{CompObj,ObjDef};
+use crate::comp::prototype::{DefMethod,DefMacro};
 
 #[derive(Debug, Clone)]
 pub struct CompLib {
@@ -36,15 +37,16 @@ impl CompLib {
             let mut import_body = o.import_body.clone();
             // import_body.extend(&import_hdr);
             import_body.append(&mut import_hdr.clone());
-            lib.fix_unref(name,o,&mut missing_scope,&mut import_hdr,&mut import_body);
+            lib.fix_unref(o,&mut missing_scope,&mut import_hdr,&mut import_body);
+            lib.check_call(o,&mut missing_scope,&mut import_body);
             // Add current scope to the import
             import_body.push(name.clone());
             // Check definition
-            for (k,v) in &o.definition {
+            for (_,v) in &o.definition {
                 match v {
                     ObjDef::Class(def) => {
                         // println!("[{}] Should check unresolved in {:?}", name,def);
-                        lib.fix_unref(k,def,&mut missing_scope,&mut import_hdr,&mut import_body);
+                        lib.fix_unref(def,&mut missing_scope,&mut import_hdr,&mut import_body);
                     }
                     _ => {}
                 }
@@ -53,7 +55,7 @@ impl CompLib {
         return lib;
     }
 
-    pub fn find_obj(&self, imports: &mut Vec<String>, name: &str, missing: &mut HashSet<String>) -> Option<&ObjDef> {
+    pub fn get_import_obj(&self, imports: &mut Vec<String>, name: &str, missing: &mut HashSet<String>) -> Option<&ObjDef> {
         for pkg in imports {
             // println!("[{}] Searching {} in {}  ",self.name,name,pkg);
             if missing.contains(pkg) {continue;}
@@ -71,41 +73,45 @@ impl CompLib {
         None
     }
 
-    pub fn find_scoped(&self, obj_name:&String, name:&String, node: &AstNode, missing: &mut HashSet<String>,imports: &mut Vec<String>) -> bool {
-        let scope_name = &node.attr["name"];
-        let mut found = false;
-        // Check if already flagged as missing
-        if missing.contains(scope_name) {return false;}
-        // Check if the scope is a package
-        if self.objects.contains_key(scope_name) {
-            found = self.objects[scope_name].definition.contains_key(name);
+    pub fn find_obj<'a>(&'a self, obj_top:&'a CompObj, name:&'a String, node: &'a AstNode, missing: &'a mut HashSet<String>,imports: &'a mut Vec<String>) -> Option<&'a ObjDef> {
+        // CHeck if scoped
+        if !node.child.is_empty() {
+            if node.child[0].kind == AstNodeKind::Scope {
+                let scope_name = &node.child[0].attr["name"];
+                // Check if already flagged as missing
+                if missing.contains(scope_name) {return None;}
+                // Check if the scope is a package
+                if self.objects.contains_key(scope_name) {
+                    return self.objects[scope_name].definition.get(name);
+                }
+                // Try to find the scope as part of classes in imported packages
+                else if let Some(ObjDef::Class(c)) = self.get_import_obj(imports,scope_name,missing) {
+                    return c.definition.get(name);
+                }
+                // Scoped not found -> Flag it to avoid future useless search
+                else {
+                    println!("[{}] Unable to find scope {}", obj_top.name, scope_name);
+                    missing.insert(scope_name.clone());
+                    return None
+                }
+                // println!("[{}] Unsolved ref {}::{} ", obj_top.name, scope_name, name);
+                // return None;
+            }
         }
-        // Try to find the scope as part of classes in imported packages
-        else if let Some(ObjDef::Class(c)) = self.find_obj(imports,scope_name,missing) {
-            found = c.definition.contains_key(name);
+        // Check in current context
+        if obj_top.definition.contains_key(name) {
+            return obj_top.definition.get(name);
         }
-        // Scoped not found -> Flag it to avoid future useless search
-        else {
-            println!("[{}] Unable to find scope {}", obj_name, scope_name);
-            missing.insert(scope_name.clone());
-        }
-        if !found {println!("[{}] Unsolved ref {}::{} ", obj_name, scope_name, name);}
-        return found;
+        // Not scoped : checked amongst imported package
+        self.get_import_obj(imports,&name,missing)
     }
 
-    pub fn fix_unref(&self, obj_name:&String, o: &CompObj,missing_scope: &mut HashSet<String>,import_hdr: &mut Vec<String>,import_body:&mut Vec<String>) {
+    pub fn fix_unref(&self, o: &CompObj,missing_scope: &mut HashSet<String>,import_hdr: &mut Vec<String>,import_body:&mut Vec<String>) {
         for (name,node) in &o.unref {
             let mut found = false;
             match node.kind {
                 AstNodeKind::Header => {
-                    // Check if scoped or if we need to search amongst all import
-                    if node.child.len() > 0 {
-                        if node.child[0].kind == AstNodeKind::Scope {
-                            self.find_scoped(obj_name,name,&node.child[0],missing_scope,import_hdr);
-                            continue;
-                        }
-                    }
-                    if let Some(_) = self.find_obj(import_hdr,&name,missing_scope) {
+                    if self.find_obj(&o,name,&node,missing_scope,import_hdr).is_some() {
                         continue;
                     }
                 }
@@ -114,17 +120,11 @@ impl CompLib {
                 AstNodeKind::Declaration |
                 AstNodeKind::Identifier  |
                 AstNodeKind::Type        => {
-                    if node.child.len() > 0 {
-                        if node.child[0].kind == AstNodeKind::Scope {
-                            self.find_scoped(obj_name,name,&node.child[0],missing_scope,import_body);
-                            continue;
-                        }
-                    }
-                    if let Some(_) = self.find_obj(import_body,&name,missing_scope) {
+                    if self.find_obj(&o,name,&node,missing_scope,import_body).is_some() {
                         continue;
                     }
                 }
-                _ => {println!("[{}] Skipping {}",obj_name,node);}
+                _ => {println!("[{}] CompLib | Skipping {}",o.name,node);}
             }
             // Check in base class
             let mut tmp = o;
@@ -132,18 +132,70 @@ impl CompLib {
             while !found && has_base {
                 has_base = false;
                 if let Some(base) = &tmp.base_class {
-                    // println!("[{}] Searching for {}. Base class of {:?} is {}", obj_name,name,tmp.name,base);
-                    if let Some(ObjDef::Class(bc)) = self.find_obj(import_body,&base,missing_scope) {
+                    // println!("[{}] Searching for {}. Base class of {:?} is {}", o.name,name,tmp.name,base);
+                    if let Some(ObjDef::Class(bc)) = self.get_import_obj(import_body,&base,missing_scope) {
                         has_base = true;
                         found = bc.definition.contains_key(name);
                         tmp = bc;
-                        // if found {println!("[{}] Found {} in {}", obj_name,name,bc.name);}
+                        // if found {println!("[{}] Found {} in {}", o.name,name,bc.name);}
                     }
                 }
             }
             //
             if !found {
-                println!("[{}] Unsolved ref {} ({})", obj_name, name, node.kind);
+                println!("[{}] Unsolved ref {} ({})", o.name, name, node.kind);
+            }
+        }
+    }
+
+    // Check call to function/task/instance/...
+    pub fn check_call(&self, o: &CompObj,missing_scope: &mut HashSet<String>,imports: &mut Vec<String>) {
+        for c in &o.call {
+            match c.kind {
+                AstNodeKind::MethodCall => {
+                    if let Some(name) = c.attr.get("name") {
+                        if let Some(obj) = self.find_obj(&o,name,&c,missing_scope,imports) {
+                            if let ObjDef::Method(_) = obj {
+                                // println!("[{}] Found def for {} with {} ports", o.name, d.name, d.ports.len());
+                            } else {
+                                println!("[{}] {} is not a method : {:?}", o.name, name, obj);
+                            }
+                        } else {
+                            println!("[{}] Unsolved call to {} ({})", o.name, name, c.kind);
+                        }
+                    }
+                    else {
+                        println!("[{}] check_call | No name in {}", o.name, c);
+                    }
+                }
+                AstNodeKind::MacroCall => {
+                    if let Some(name) = c.attr.get("name") {
+                        if let Some(obj) = self.find_obj(&o,name,&c,missing_scope,imports) {
+                            if let ObjDef::Macro(_) = obj {
+                                // println!("[{}] Found def for {} with {} ports", o.name, d.name, d.ports.len());
+                            } else {
+                                println!("[{}] {} is not a macro : {:?}", o.name, name, obj);
+                            }
+                        } else {
+                            println!("[{}] Unsolved call to macro {} ({})", o.name, name, c.kind);
+                        }
+                    }
+                    else {
+                        println!("[{}] check_call | No name in {}", o.name, c);
+                    }
+                }
+                AstNodeKind::Instances => {
+                    if let Some(t) = c.attr.get("type") {
+                        if let Some(_) = self.objects.get(t) {
+
+                        } else {
+                            println!("[{}] Unsolved instance of {}", o.name, t);
+                        }
+                    } else {
+                        println!("[{}] check_call | Instance with no type !\n {}", o.name, c);
+                    }
+                }
+                _ => println!("[{}] check_call | Skipping {}", o.name, c.kind)
             }
         }
     }
@@ -217,6 +269,13 @@ fn get_uvm_lib() -> CompObj {
     o.definition.insert("uvm_table_printer".to_owned(),ObjDef::Type);
     o.definition.insert("uvm_top".to_owned(),ObjDef::Type);
     o.definition.insert("uvm_test".to_owned(),ObjDef::Type);
+    // Function / Macro
+    o.definition.insert("`uvm_fatal".to_owned(),ObjDef::Macro(DefMacro::new("`uvm_fatal".to_string())));
+    o.definition.insert("uvm_report_fatal".to_owned(),ObjDef::Method(DefMethod::new("uvm_report_fatal".to_string(),false)));
+    o.definition.insert("uvm_report_error".to_owned(),ObjDef::Method(DefMethod::new("uvm_report_error".to_string(),false)));
+    o.definition.insert("uvm_report_warning".to_owned(),ObjDef::Method(DefMethod::new("uvm_report_warning".to_string(),false)));
+    o.definition.insert("uvm_report_info".to_owned(),ObjDef::Method(DefMethod::new("uvm_report_info".to_string(),false)));
+    o.definition.insert("run_test".to_owned(),ObjDef::Method(DefMethod::new("run_test".to_string(),false)));
     // Enum
     o.definition.insert("UVM_NONE".to_owned(),ObjDef::Value);
     o.definition.insert("UVM_FULL".to_owned(),ObjDef::Value);
@@ -278,6 +337,10 @@ fn get_uvm_lib() -> CompObj {
     o_regs.base_class = Some("uvm_sequence".to_owned());
     o_regs.definition.insert("m_verbosity".to_owned(),ObjDef::Type); // Not true, but just to avoid error until we know how to follow properly the inheritance tree
     o.definition.insert("uvm_reg_sequence".to_owned(),ObjDef::Class(o_regs));
+    let mut o_cdb = CompObj::new("uvm_config_db".to_owned());
+    o_cdb.definition.insert("get".to_owned(),ObjDef::Method(DefMethod::new("get".to_string(),false)));
+    o_cdb.definition.insert("set".to_owned(),ObjDef::Method(DefMethod::new("set".to_string(),false)));
+    o.definition.insert("uvm_config_db".to_owned(),ObjDef::Class(o_cdb));
 
     return o;
 }

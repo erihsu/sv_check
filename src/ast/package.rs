@@ -63,7 +63,7 @@ pub fn parse_package(ts : &mut TokenStream) -> Result<AstNode, SvError> {
             TokenKind::TypeCHandle   |
             TokenKind::TypeEvent     => parse_signal_decl_list(ts,&mut node)?,
             TokenKind::KwEnum        => {
-                let mut node_e = parse_enum(ts)?;
+                let mut node_e = parse_enum(ts,false)?;
                 parse_ident_list(ts,&mut node_e)?;
                 node.child.push(node_e);
             }

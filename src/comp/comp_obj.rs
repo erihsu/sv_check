@@ -15,6 +15,7 @@ pub enum ObjDef {
     Class(CompObj),
     Value,
     Method(DefMethod),
+    Macro(DefMacro),
     Type,
 }
 
@@ -56,6 +57,7 @@ impl CompObj {
     //       need copy in includes but avoid copy in all other cases ...
     pub fn from_ast(ast: &Ast, ast_inc: & HashMap<String,Ast>, mut lib: &mut HashMap<String, CompObj>)  {
         for node in &ast.tree.child {
+            // println!("Compiling Node {:?} ({:?}", node.kind, node.attr);
             match node.kind {
                 AstNodeKind::Directive => {
                     node.attr.get("include").map(
@@ -115,6 +117,16 @@ impl CompObj {
                     o.parse_body(&node,ast_inc);
                     lib.insert(o.name.clone(),o);
                 }
+                AstNodeKind::Define => {
+                    if !node.child.is_empty() {
+                        // println!("[CompObj] Compiling define {}", node);
+                        let mut d = DefMacro::new(format!("`{}",node.attr["name"]));
+                        for p in &node.child {
+                            d.ports.push(p.attr["name"].clone());
+                        }
+                        lib.get_mut("!").unwrap().definition.insert(d.name.clone(),ObjDef::Macro(d));
+                    }
+                }
                 // Handle special case of type/localparams/define done out of context
                 AstNodeKind::Param => {
                     lib.get_mut("!").unwrap().definition.insert(node.attr["name"].clone(),ObjDef::Signal);
@@ -141,10 +153,11 @@ impl CompObj {
                         }
                     }
                 }
+                AstNodeKind::Implements |
                 AstNodeKind::Extends => {
                     // TODO: extract parameter if any !
-                    self.parse_ident(n);
-                    self.base_class = Some(n.attr["name"].clone());
+                    self.check_type(&n,false);
+                    self.base_class = Some(n.attr["type"].clone());
                 }
                 //
                 AstNodeKind::Directive => {
@@ -281,13 +294,23 @@ impl CompObj {
                 AstNodeKind::Clocking => self.search_ident(&n),
                 AstNodeKind::Task |
                 AstNodeKind::Function => self.parse_method_decl(&n),
+                AstNodeKind::Define => {
+                    if !n.child.is_empty() {
+                        // println!("[CompObj] {} | Compiling define {}", self.name, n);
+                        let mut d = DefMacro::new(format!("`{}",n.attr["name"]));
+                        for p in &n.child {
+                            d.ports.push(p.attr["name"].clone());
+                        }
+                         self.definition.insert(d.name.clone(),ObjDef::Macro(d));
+                    }
+                }
                 AstNodeKind::MacroCall => self.parse_call(&n),
                 AstNodeKind::Modport => {
                     self.add_decl(&n,true);
                     // TODO: add list of signal direction for the modport
                 },
                 AstNodeKind::Identifier => self.parse_ident(&n),
-                _ => {println!("[CompObj] {} | Body: Skipping {}",self.name, n);}
+                _ => {println!("[CompObj] {} | Body: Skipping {}",self.name, n.kind);}
             }
         }
         // Remove definition of variable done in header
