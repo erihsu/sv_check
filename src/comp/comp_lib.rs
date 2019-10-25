@@ -47,6 +47,7 @@ impl CompLib {
                     ObjDef::Class(def) => {
                         // println!("[{}] Should check unresolved in {:?}", name,def);
                         lib.fix_unref(def,&mut missing_scope,&mut import_hdr,&mut import_body);
+                        lib.check_call(def,&mut missing_scope,&mut import_body);
                     }
                     // Check instance paramters
                     ObjDef::Instance => {}
@@ -76,7 +77,7 @@ impl CompLib {
     }
 
     pub fn find_obj<'a>(&'a self, obj_top:&'a CompObj, name:&str, node: &'a AstNode, missing: &'a mut HashSet<String>,imports: &'a mut Vec<String>) -> Option<&'a ObjDef> {
-        // CHeck if scoped
+        // Check if scoped
         if !node.child.is_empty() && node.child[0].kind == AstNodeKind::Scope {
             let scope_name = &node.child[0].attr["name"];
             // Check if already flagged as missing
@@ -102,13 +103,24 @@ impl CompLib {
         if obj_top.definition.contains_key(name) {
             return obj_top.definition.get(name);
         }
+        // Check in base class
+        let mut o = obj_top;
+        while let Some(base) = &o.base_class {
+            if let Some(ObjDef::Class(bc)) = self.get_import_obj(imports,&base,missing) {
+                // println!("[{}] Searching {} in {}", obj_top.name, name, bc.name);
+                if bc.definition.contains_key(name) {
+                    // if found {println!("[{}] Found {} in {}", obj_top.name,name,bc.name);}
+                    return bc.definition.get(name)
+                }
+                o = bc;
+            } else {break;}
+        }
         // Not scoped : checked amongst imported package
         self.get_import_obj(imports,&name,missing)
     }
 
     pub fn fix_unref(&self, o: &CompObj,missing_scope: &mut HashSet<String>,import_hdr: &mut Vec<String>,import_body:&mut Vec<String>) {
         for (name,node) in &o.unref {
-            let mut found = false;
             match node.kind {
                 AstNodeKind::Header => {
                     if self.find_obj(&o,name,&node,missing_scope,import_hdr).is_some() {
@@ -126,25 +138,8 @@ impl CompLib {
                 }
                 _ => {println!("[{}] CompLib | Skipping {}",o.name,node);}
             }
-            // Check in base class
-            let mut tmp = o;
-            let mut has_base = true;
-            while !found && has_base {
-                has_base = false;
-                if let Some(base) = &tmp.base_class {
-                    // println!("[{}] Searching for {}. Base class of {:?} is {}", o.name,name,tmp.name,base);
-                    if let Some(ObjDef::Class(bc)) = self.get_import_obj(import_body,&base,missing_scope) {
-                        has_base = true;
-                        found = bc.definition.contains_key(name);
-                        tmp = bc;
-                        // if found {println!("[{}] Found {} in {}", o.name,name,bc.name);}
-                    }
-                }
-            }
-            //
-            if !found {
-                println!("[{}] Unsolved ref {} ({})", o.name, name, node.kind);
-            }
+            // If we reached this point it means the reference was not found anywhere
+            println!("[{}] Unsolved ref {} ({})", o.name, name, node.kind);
         }
     }
 
@@ -154,6 +149,9 @@ impl CompLib {
             match c.kind {
                 AstNodeKind::MethodCall => {
                     if let Some(name) = c.attr.get("name") {
+                        if name=="randomize" || name=="srandom" {
+                            continue;
+                        }
                         if let Some(obj) = self.find_obj(&o,name,&c,missing_scope,imports) {
                             if let ObjDef::Method(_) = obj {
                                 // println!("[{}] Found def for {} with {} ports", o.name, d.name, d.ports.len());
@@ -220,6 +218,7 @@ impl CompLib {
         o.definition.insert("WAITING".to_owned(),ObjDef::Value);
         o.definition.insert("SUSPENDED".to_owned(),ObjDef::Value);
         o.definition.insert("KILLED".to_owned(),ObjDef::Value);
+        o.definition.insert("self".to_owned(),ObjDef::Method(DefMethod::new("self".to_string(),false)));
         self.objects.insert("process".to_owned(),o);
     }
 
@@ -231,17 +230,13 @@ fn get_uvm_lib() -> CompObj {
     let mut o = CompObj::new("uvm_pkg".to_owned());
     // Class
     o.definition.insert("uvm_phase".to_owned(),ObjDef::Type);
-    o.definition.insert("uvm_sequence_item".to_owned(),ObjDef::Type);
     o.definition.insert("uvm_verbosity".to_owned(),ObjDef::Type);
     o.definition.insert("uvm_analysis_export".to_owned(),ObjDef::Type);
     o.definition.insert("uvm_analysis_port".to_owned(),ObjDef::Type);
     o.definition.insert("uvm_comparer".to_owned(),ObjDef::Type);
-    o.definition.insert("uvm_factory".to_owned(),ObjDef::Type);
     o.definition.insert("uvm_object".to_owned(),ObjDef::Type);
     o.definition.insert("uvm_object_wrapper".to_owned(),ObjDef::Type);
     o.definition.insert("uvm_objection".to_owned(),ObjDef::Type);
-    o.definition.insert("uvm_reg".to_owned(),ObjDef::Type);
-    o.definition.insert("uvm_reg_block".to_owned(),ObjDef::Type);
     o.definition.insert("uvm_reg_bus_op".to_owned(),ObjDef::Type);
     o.definition.insert("uvm_reg_data_t".to_owned(),ObjDef::Type);
     o.definition.insert("uvm_reg_field".to_owned(),ObjDef::Type);
@@ -253,7 +248,6 @@ fn get_uvm_lib() -> CompObj {
     o.definition.insert("uvm_analysis_port".to_owned(),ObjDef::Type);
     o.definition.insert("uvm_coverage_model_e".to_owned(),ObjDef::Type);
     o.definition.insert("uvm_default_comparer".to_owned(),ObjDef::Type);
-    o.definition.insert("uvm_env".to_owned(),ObjDef::Type);
     o.definition.insert("uvm_event".to_owned(),ObjDef::Type);
     o.definition.insert("uvm_object".to_owned(),ObjDef::Type);
     o.definition.insert("uvm_object_wrapper".to_owned(),ObjDef::Type);
@@ -265,12 +259,22 @@ fn get_uvm_lib() -> CompObj {
     o.definition.insert("uvm_reg_data_t".to_owned(),ObjDef::Type);
     o.definition.insert("uvm_reg_item".to_owned(),ObjDef::Type);
     o.definition.insert("uvm_reg_map".to_owned(),ObjDef::Type);
-    o.definition.insert("uvm_report_server".to_owned(),ObjDef::Type);
     o.definition.insert("uvm_table_printer".to_owned(),ObjDef::Type);
     o.definition.insert("uvm_top".to_owned(),ObjDef::Type);
-    o.definition.insert("uvm_test".to_owned(),ObjDef::Type);
     // Function / Macro
+    o.definition.insert("`uvm_info".to_owned(),ObjDef::Macro(DefMacro::new("`uvm_info".to_string())));
+    o.definition.insert("`uvm_warning".to_owned(),ObjDef::Macro(DefMacro::new("`uvm_warning".to_string())));
+    o.definition.insert("`uvm_error".to_owned(),ObjDef::Macro(DefMacro::new("`uvm_error".to_string())));
     o.definition.insert("`uvm_fatal".to_owned(),ObjDef::Macro(DefMacro::new("`uvm_fatal".to_string())));
+    o.definition.insert("`uvm_component_utils".to_owned(),ObjDef::Macro(DefMacro::new("`uvm_component_utils".to_string())));
+    o.definition.insert("`uvm_object_utils".to_owned(),ObjDef::Macro(DefMacro::new("`uvm_object_utils".to_string())));
+    o.definition.insert("`uvm_object_param_utils".to_owned(),ObjDef::Macro(DefMacro::new("`uvm_object_param_utils".to_string())));
+    o.definition.insert("`uvm_create".to_owned(),ObjDef::Macro(DefMacro::new("`uvm_create".to_string())));
+    o.definition.insert("`uvm_send".to_owned(),ObjDef::Macro(DefMacro::new("`uvm_send".to_string())));
+    o.definition.insert("`uvm_declare_p_sequencer".to_owned(),ObjDef::Macro(DefMacro::new("`uvm_declare_p_sequencer".to_string())));
+    o.definition.insert("`uvm_component_utils_begin".to_owned(),ObjDef::Macro(DefMacro::new("`uvm_component_utils_begin".to_string())));
+    o.definition.insert("`uvm_field_enum".to_owned(),ObjDef::Macro(DefMacro::new("`uvm_field_enum".to_string())));
+    o.definition.insert("`uvm_component_utils_end".to_owned(),ObjDef::Macro(DefMacro::new("`uvm_component_utils_end".to_string())));
     o.definition.insert("uvm_report_fatal".to_owned(),ObjDef::Method(DefMethod::new("uvm_report_fatal".to_string(),false)));
     o.definition.insert("uvm_report_error".to_owned(),ObjDef::Method(DefMethod::new("uvm_report_error".to_string(),false)));
     o.definition.insert("uvm_report_warning".to_owned(),ObjDef::Method(DefMethod::new("uvm_report_warning".to_string(),false)));
@@ -295,52 +299,90 @@ fn get_uvm_lib() -> CompObj {
     o.definition.insert("UVM_LITTLE_ENDIAN".to_owned(),ObjDef::Value);
     o.definition.insert("UVM_NO_COVERAGE".to_owned(),ObjDef::Value);
     //
-    let mut o_comp = CompObj::new("uvm_component".to_owned());
-    o_comp.definition.insert("m_name".to_owned(),ObjDef::Type);
-    o_comp.definition.insert("type_name".to_owned(),ObjDef::Type);
-    o_comp.definition.insert("get_full_name".to_owned(),ObjDef::Type);
-    o_comp.definition.insert("m_current_phase".to_owned(),ObjDef::Type);
-    o.definition.insert("uvm_component".to_owned(),ObjDef::Class(Box::new(o_comp)));
-    let mut o_drv = CompObj::new("uvm_driver".to_owned());
-    o_drv.base_class = Some("uvm_component".to_owned());
-    o_drv.definition.insert("req".to_owned(),ObjDef::Type);
-    o_drv.definition.insert("rsp".to_owned(),ObjDef::Type);
-    o_drv.definition.insert("seq_item_port".to_owned(),ObjDef::Type);
-    o.definition.insert("uvm_driver".to_owned(),ObjDef::Class(Box::new(o_drv)));
-    let mut o_mon = CompObj::new("uvm_monitor".to_owned());
-    o_mon.base_class = Some("uvm_component".to_owned());
-    o.definition.insert("uvm_monitor".to_owned(),ObjDef::Class(Box::new(o_mon)));
-    let mut o_sqr = CompObj::new("uvm_sequencer".to_owned());
-    o_sqr.base_class = Some("uvm_component".to_owned());
-    o.definition.insert("uvm_sequencer".to_owned(),ObjDef::Class(Box::new(o_sqr)));
-    let mut o_seq = CompObj::new("uvm_sequence".to_owned());
-    o_seq.definition.insert("req".to_owned(),ObjDef::Type);
-    o_seq.definition.insert("rsp".to_owned(),ObjDef::Type);
-    o_seq.definition.insert("m_parent_sequence".to_owned(),ObjDef::Type); // Part of uvm_sequence item
-    o_seq.definition.insert("m_sequencer".to_owned(),ObjDef::Type);
-    o_seq.definition.insert("p_sequencer".to_owned(),ObjDef::Type);
-    o.definition.insert("uvm_sequence".to_owned(),ObjDef::Class(Box::new(o_seq)));
-    let mut o_agt = CompObj::new("uvm_agent".to_owned());
-    o_agt.base_class = Some("uvm_component".to_owned());
-    o_agt.definition.insert("is_active".to_owned(),ObjDef::Type);
-    o.definition.insert("uvm_agent".to_owned(),ObjDef::Class(Box::new(o_agt)));
-    let mut o_regb = CompObj::new("uvm_reg_block".to_owned());
-    o_regb.definition.insert("default_map".to_owned(),ObjDef::Type);
-    o.definition.insert("uvm_reg_block".to_owned(),ObjDef::Class(Box::new(o_regb)));
-    let mut o_regp = CompObj::new("uvm_reg_predictor".to_owned());
-    o_regp.definition.insert("bus_in".to_owned(),ObjDef::Type);
-    o_regp.definition.insert("map".to_owned(),ObjDef::Type);
-    o_regp.definition.insert("adapter".to_owned(),ObjDef::Type);
-    o_regp.definition.insert("reg_ap".to_owned(),ObjDef::Type);
-    o.definition.insert("uvm_reg_predictor".to_owned(),ObjDef::Class(Box::new(o_regp)));
-    let mut o_regs = CompObj::new("uvm_reg_sequence".to_owned());
-    o_regs.base_class = Some("uvm_sequence".to_owned());
-    o_regs.definition.insert("m_verbosity".to_owned(),ObjDef::Type); // Not true, but just to avoid error until we know how to follow properly the inheritance tree
-    o.definition.insert("uvm_reg_sequence".to_owned(),ObjDef::Class(Box::new(o_regs)));
-    let mut o_cdb = CompObj::new("uvm_config_db".to_owned());
-    o_cdb.definition.insert("get".to_owned(),ObjDef::Method(DefMethod::new("get".to_string(),false)));
-    o_cdb.definition.insert("set".to_owned(),ObjDef::Method(DefMethod::new("set".to_string(),false)));
-    o.definition.insert("uvm_config_db".to_owned(),ObjDef::Class(Box::new(o_cdb)));
+    let mut o_ = CompObj::new("uvm_component".to_owned());
+    o_.definition.insert("m_name".to_owned(),ObjDef::Type);
+    o_.definition.insert("type_name".to_owned(),ObjDef::Type);
+    o_.definition.insert("m_current_phase".to_owned(),ObjDef::Type);
+    o_.definition.insert("get_parent".to_owned(),ObjDef::Method(DefMethod::new("get_parent".to_string(),false)));
+    o_.definition.insert("get_full_name".to_owned(),ObjDef::Method(DefMethod::new("get_full_name".to_string(),false)));
+    o_.definition.insert("get_name".to_owned(),ObjDef::Method(DefMethod::new("get_name".to_string(),false)));
+    o_.definition.insert("get_type_name".to_owned(),ObjDef::Method(DefMethod::new("get_type_name".to_string(),false)));
+    o_.definition.insert("create_component".to_owned(),ObjDef::Method(DefMethod::new("create_component".to_string(),false)));
+    o_.definition.insert("create_object".to_owned(),ObjDef::Method(DefMethod::new("create_object".to_string(),false)));
+    o_.definition.insert("set_inst_override".to_owned(),ObjDef::Method(DefMethod::new("set_inst_override".to_string(),false)));
+    o_.definition.insert("get_report_verbosity_level".to_owned(),ObjDef::Method(DefMethod::new("get_report_verbosity_level".to_string(),false)));
+    o.definition.insert("uvm_component".to_owned(),ObjDef::Class(Box::new(o_)));
+    o_ = CompObj::new("uvm_test".to_owned());
+    o_.base_class = Some("uvm_component".to_owned());
+    o.definition.insert("uvm_test".to_owned(),ObjDef::Class(Box::new(o_)));
+    o_ = CompObj::new("uvm_env".to_owned());
+    o_.base_class = Some("uvm_component".to_owned());
+    o.definition.insert("uvm_env".to_owned(),ObjDef::Class(Box::new(o_)));
+    o_ = CompObj::new("uvm_driver".to_owned());
+    o_.base_class = Some("uvm_component".to_owned());
+    o_.definition.insert("req".to_owned(),ObjDef::Type);
+    o_.definition.insert("rsp".to_owned(),ObjDef::Type);
+    o_.definition.insert("seq_item_port".to_owned(),ObjDef::Type);
+    o.definition.insert("uvm_driver".to_owned(),ObjDef::Class(Box::new(o_)));
+    o_ = CompObj::new("uvm_monitor".to_owned());
+    o_.base_class = Some("uvm_component".to_owned());
+    o.definition.insert("uvm_monitor".to_owned(),ObjDef::Class(Box::new(o_)));
+    o_ = CompObj::new("uvm_sequencer".to_owned());
+    o_.base_class = Some("uvm_component".to_owned());
+    o.definition.insert("uvm_sequencer".to_owned(),ObjDef::Class(Box::new(o_)));
+    o_ = CompObj::new("uvm_sequence".to_owned());
+    o_.base_class = Some("uvm_sequence_item".to_owned());
+    o_.definition.insert("req".to_owned(),ObjDef::Type);
+    o_.definition.insert("rsp".to_owned(),ObjDef::Type);
+    o_.definition.insert("get_response".to_owned(),ObjDef::Method(DefMethod::new("get_response".to_string(),false)));
+    o.definition.insert("uvm_sequence".to_owned(),ObjDef::Class(Box::new(o_)));
+    o_ = CompObj::new("uvm_sequence_item".to_owned());
+    o_.definition.insert("m_parent_sequence".to_owned(),ObjDef::Type); // Part of uvm_sequence item
+    o_.definition.insert("m_sequencer".to_owned(),ObjDef::Type);
+    o_.definition.insert("p_sequencer".to_owned(),ObjDef::Type);
+    o_.definition.insert("get_starting_phase".to_owned(),ObjDef::Method(DefMethod::new("get_starting_phase".to_string(),false)));
+    o_.definition.insert("start".to_owned(),ObjDef::Method(DefMethod::new("start".to_string(),false)));
+    o_.definition.insert("get_sequencer".to_owned(),ObjDef::Method(DefMethod::new("get_sequencer".to_string(),false)));
+    o_.definition.insert("get_full_name".to_owned(),ObjDef::Method(DefMethod::new("get_full_name".to_string(),false)));
+    o_.definition.insert("get_sequence_id".to_owned(),ObjDef::Method(DefMethod::new("get_sequence_id".to_string(),false)));
+    o.definition.insert("uvm_sequence_item".to_owned(),ObjDef::Class(Box::new(o_)));
+    o_ = CompObj::new("uvm_agent".to_owned());
+    o_.base_class = Some("uvm_component".to_owned());
+    o_.definition.insert("is_active".to_owned(),ObjDef::Type);
+    o.definition.insert("uvm_agent".to_owned(),ObjDef::Class(Box::new(o_)));
+    o_ = CompObj::new("uvm_reg_block".to_owned());
+    o_.definition.insert("default_map".to_owned(),ObjDef::Type);
+    o_.definition.insert("configure".to_owned(),ObjDef::Method(DefMethod::new("configure".to_string(),false)));
+    o_.definition.insert("find_block".to_owned(),ObjDef::Method(DefMethod::new("find_block".to_string(),false)));
+    o_.definition.insert("lock_model".to_owned(),ObjDef::Method(DefMethod::new("lock_model".to_string(),false)));
+    o_.definition.insert("reset".to_owned(),ObjDef::Method(DefMethod::new("reset".to_string(),false)));
+    o.definition.insert("uvm_reg_block".to_owned(),ObjDef::Class(Box::new(o_)));
+    o_ = CompObj::new("uvm_reg_predictor".to_owned());
+    o_.definition.insert("bus_in".to_owned(),ObjDef::Type);
+    o_.definition.insert("map".to_owned(),ObjDef::Type);
+    o_.definition.insert("adapter".to_owned(),ObjDef::Type);
+    o_.definition.insert("reg_ap".to_owned(),ObjDef::Type);
+    o_.definition.insert("get_full_name".to_owned(),ObjDef::Method(DefMethod::new("get_full_name".to_string(),false)));
+    o.definition.insert("uvm_reg_predictor".to_owned(),ObjDef::Class(Box::new(o_)));
+    o_ = CompObj::new("uvm_reg_sequence".to_owned());
+    o_.base_class = Some("uvm_sequence".to_owned());
+    o_.definition.insert("m_verbosity".to_owned(),ObjDef::Type); // Not true, but just to avoid error until we know how to follow properly the inheritance tree
+    o_.definition.insert("write_reg".to_owned(),ObjDef::Method(DefMethod::new("write_reg".to_string(),false)));
+    o_.definition.insert("read_reg".to_owned(),ObjDef::Method(DefMethod::new("read_reg".to_string(),false)));
+    o.definition.insert("uvm_reg_sequence".to_owned(),ObjDef::Class(Box::new(o_)));
+    o_ = CompObj::new("uvm_config_db".to_owned());
+    o_.definition.insert("get".to_owned(),ObjDef::Method(DefMethod::new("get".to_string(),false)));
+    o_.definition.insert("set".to_owned(),ObjDef::Method(DefMethod::new("set".to_string(),false)));
+    o.definition.insert("uvm_config_db".to_owned(),ObjDef::Class(Box::new(o_)));
+    o_ = CompObj::new("uvm_report_server".to_owned());
+    o_.definition.insert("get_server".to_owned(),ObjDef::Method(DefMethod::new("get_server".to_string(),false)));
+    o.definition.insert("uvm_report_server".to_owned(),ObjDef::Class(Box::new(o_)));
+    o_ = CompObj::new("uvm_factory".to_owned());
+    o_.definition.insert("get".to_owned(),ObjDef::Method(DefMethod::new("get".to_string(),false)));
+    o.definition.insert("uvm_factory".to_owned(),ObjDef::Class(Box::new(o_)));
+    o_ = CompObj::new("uvm_reg".to_owned());
+    o_.definition.insert("include_coverage".to_owned(),ObjDef::Method(DefMethod::new("include_coverage".to_string(),false)));
+    o.definition.insert("uvm_reg".to_owned(),ObjDef::Class(Box::new(o_)));
 
     o
 }
