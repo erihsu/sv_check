@@ -96,25 +96,31 @@ pub struct Port {
     pub name  : String,
     pub dir   : PortDir,
     pub kind  : SignalType,
+    pub default : Option<String>,
 }
 
 impl Port {
     pub fn new(node: &AstNode, prev_dir: PortDir) -> Port {
+        let n = node.child.iter()
+                    .find(|nc| nc.kind!=AstNodeKind::Scope)
+                    .map(|x| format!("{}", x.kind));
         Port{
             name: node.attr["name"].clone(),
             dir : node.attr.get("dir").map_or_else(|| prev_dir.clone(),|d| str_to_dir(d)),
-            kind: SignalType::from(node)
+            kind: SignalType::from(node),
+            default: n
         }
     }
 }
 
 impl fmt::Display for Port {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{} {} {}{}",
+        write!(f, "{} {} {}{}{}",
             self.dir,
             self.kind,
             self.name,
             if let Some(s) = &self.kind.unpacked {format!(" {}", s)} else {"".to_owned()},
+            if let Some(s) = &self.default {format!(" = {}", s)} else {"".to_owned()},
         )
     }
 }

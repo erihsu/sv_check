@@ -7,7 +7,7 @@ use crate::ast::Ast;
 use crate::ast::astnode::{AstNode,AstNodeKind};
 
 use crate::comp::comp_obj::{CompObj,ObjDef};
-use crate::comp::prototype::{DefMethod,DefMacro};
+use crate::comp::prototype::{DefMethod,DefMacro,Port,PortDir,SignalType};
 
 #[derive(Debug, Clone)]
 pub struct CompLib {
@@ -78,17 +78,44 @@ impl CompLib {
 
     pub fn find_obj<'a>(&'a self, obj_top:&'a CompObj, name:&str, node: &'a AstNode, missing: &'a mut HashSet<String>,imports: &'a mut Vec<String>) -> Option<&'a ObjDef> {
         // Check if scoped
-        if !node.child.is_empty() && node.child[0].kind == AstNodeKind::Scope {
+        if node.has_scope() {
             let scope_name = &node.child[0].attr["name"];
             // Check if already flagged as missing
             if missing.contains(scope_name) {return None;}
             // Check if the scope is a package
             if self.objects.contains_key(scope_name) {
-                return self.objects[scope_name].definition.get(name);
+                if node.child[0].has_scope() {
+                    if let Some(ObjDef::Class(cc)) = self.objects[scope_name].definition.get(&node.child[0].child[0].attr["name"]) {
+                        return cc.definition.get(name);
+                    } else {
+                        println!("[{}] Unable to find sub-class {}::{}", obj_top.name, scope_name,node.child[0].child[0].attr["name"]);
+                        return None;
+                    }
+                } else {
+                    return self.objects[scope_name].definition.get(name);
+                }
             }
             // Try to find the scope as part of classes in imported packages
             else if let Some(ObjDef::Class(c)) = self.get_import_obj(imports,scope_name,missing) {
-                return c.definition.get(name);
+                if node.child[0].has_scope() {
+                    if let Some(ObjDef::Class(cc)) = c.definition.get(&node.child[0].child[0].attr["name"]) {
+                        return cc.definition.get(name);
+                    } else {
+                        // Hack until macro expansion is working properly
+                        if node.child[0].child[0].attr["name"] == "type_id" {
+                            if let Some(ObjDef::Class(cc)) = self.objects["uvm_pkg"].definition.get("uvm_reg_field") {
+                                if let Some(ObjDef::Class(ccc)) = cc.definition.get("type_id") {
+                                    return ccc.definition.get(name);
+                                }
+                            }
+                        } else {
+                            println!("[{}] Unable to find sub-class {}::{}", obj_top.name, scope_name,node.child[0].child[0].attr["name"]);
+                            return None;
+                        }
+                    }
+                } else {
+                    return c.definition.get(name);
+                }
             }
             // Scoped not found -> Flag it to avoid future useless search
             else {
@@ -109,7 +136,7 @@ impl CompLib {
             if let Some(ObjDef::Class(bc)) = self.get_import_obj(imports,&base,missing) {
                 // println!("[{}] Searching {} in {}", obj_top.name, name, bc.name);
                 if bc.definition.contains_key(name) {
-                    // if found {println!("[{}] Found {} in {}", obj_top.name,name,bc.name);}
+                    // println!("[{}] Found {} in {}", obj_top.name,name,bc.name);
                     return bc.definition.get(name)
                 }
                 o = bc;
@@ -153,8 +180,41 @@ impl CompLib {
                             continue;
                         }
                         if let Some(obj) = self.find_obj(&o,name,&c,missing_scope,imports) {
-                            if let ObjDef::Method(_) = obj {
-                                // println!("[{}] Found def for {} with {} ports", o.name, d.name, d.ports.len());
+                            if let ObjDef::Method(d) = obj {
+                                let mut dps = d.ports.clone();
+                                for n in &c.child {
+                                    match n.kind {
+                                        AstNodeKind::Ports => {
+                                            // println!("[{}] Call to Port {:?}", o.name, d.name);
+                                            for p in &n.child {
+                                                if dps.len() == 0 {
+                                                    println!("[{}] Too many arguments in call to {}: {:?} ({:?})", o.name, d.name, dps,p);
+                                                    break;
+                                                }
+                                                // When unamed, port are taken in order
+                                                if p.attr["name"] == "" {
+                                                    dps.remove(0);
+                                                } else {
+                                                    if let Some(i) = dps.iter().position(|x| x.name == p.attr["name"]) {
+                                                        // println!("[{}] Calling {} with argument name {} found at index {} of {}", o.name, d.name, p.attr["name"], i, dps.iter().fold(String::new(), |acc, x| format!("{}{},", acc,x)));
+                                                        dps.remove(i);
+                                                    }
+                                                    else {
+                                                        println!("[{}] Calling {} with unknown argument name {} in {}", o.name, d.name, p.attr["name"], dps.iter().fold(String::new(), |acc, x| format!("{}{},", acc,x)));
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        _ => {} // Ignore all other node
+                                    }
+                                }
+                                if dps.len() > 0 {
+                                    // Check if remaining ports are optional or not
+                                    let ma :Vec<_> = dps.iter().filter(|p| p.default.is_none()).collect();
+                                    if ma.len() > 0 {
+                                        println!("[{}] Missing {} arguments in call to {}: {}", o.name, dps.len(), d.name, ma.iter().fold(String::new(), |acc, x| format!("{}{},", acc,x)));
+                                    }
+                                }
                             } else {
                                 println!("[{}] {} is not a method : {:?}", o.name, name, obj);
                             }
@@ -218,7 +278,7 @@ impl CompLib {
         o.definition.insert("WAITING".to_owned(),ObjDef::Value);
         o.definition.insert("SUSPENDED".to_owned(),ObjDef::Value);
         o.definition.insert("KILLED".to_owned(),ObjDef::Value);
-        o.definition.insert("self".to_owned(),ObjDef::Method(DefMethod::new("self".to_string(),false)));
+        o.definition.insert("self".to_owned(),ObjDef::Method(DefMethod::new("self".to_owned(),false)));
         self.objects.insert("process".to_owned(),o);
     }
 
@@ -249,7 +309,6 @@ fn get_uvm_lib() -> CompObj {
     o.definition.insert("uvm_coverage_model_e".to_owned(),ObjDef::Type);
     o.definition.insert("uvm_default_comparer".to_owned(),ObjDef::Type);
     o.definition.insert("uvm_event".to_owned(),ObjDef::Type);
-    o.definition.insert("uvm_object".to_owned(),ObjDef::Type);
     o.definition.insert("uvm_object_wrapper".to_owned(),ObjDef::Type);
     o.definition.insert("uvm_objection".to_owned(),ObjDef::Type);
     o.definition.insert("uvm_printer".to_owned(),ObjDef::Type);
@@ -262,24 +321,33 @@ fn get_uvm_lib() -> CompObj {
     o.definition.insert("uvm_table_printer".to_owned(),ObjDef::Type);
     o.definition.insert("uvm_top".to_owned(),ObjDef::Type);
     // Function / Macro
-    o.definition.insert("`uvm_info".to_owned(),ObjDef::Macro(DefMacro::new("`uvm_info".to_string())));
-    o.definition.insert("`uvm_warning".to_owned(),ObjDef::Macro(DefMacro::new("`uvm_warning".to_string())));
-    o.definition.insert("`uvm_error".to_owned(),ObjDef::Macro(DefMacro::new("`uvm_error".to_string())));
-    o.definition.insert("`uvm_fatal".to_owned(),ObjDef::Macro(DefMacro::new("`uvm_fatal".to_string())));
-    o.definition.insert("`uvm_component_utils".to_owned(),ObjDef::Macro(DefMacro::new("`uvm_component_utils".to_string())));
-    o.definition.insert("`uvm_object_utils".to_owned(),ObjDef::Macro(DefMacro::new("`uvm_object_utils".to_string())));
-    o.definition.insert("`uvm_object_param_utils".to_owned(),ObjDef::Macro(DefMacro::new("`uvm_object_param_utils".to_string())));
-    o.definition.insert("`uvm_create".to_owned(),ObjDef::Macro(DefMacro::new("`uvm_create".to_string())));
-    o.definition.insert("`uvm_send".to_owned(),ObjDef::Macro(DefMacro::new("`uvm_send".to_string())));
-    o.definition.insert("`uvm_declare_p_sequencer".to_owned(),ObjDef::Macro(DefMacro::new("`uvm_declare_p_sequencer".to_string())));
-    o.definition.insert("`uvm_component_utils_begin".to_owned(),ObjDef::Macro(DefMacro::new("`uvm_component_utils_begin".to_string())));
-    o.definition.insert("`uvm_field_enum".to_owned(),ObjDef::Macro(DefMacro::new("`uvm_field_enum".to_string())));
-    o.definition.insert("`uvm_component_utils_end".to_owned(),ObjDef::Macro(DefMacro::new("`uvm_component_utils_end".to_string())));
-    o.definition.insert("uvm_report_fatal".to_owned(),ObjDef::Method(DefMethod::new("uvm_report_fatal".to_string(),false)));
-    o.definition.insert("uvm_report_error".to_owned(),ObjDef::Method(DefMethod::new("uvm_report_error".to_string(),false)));
-    o.definition.insert("uvm_report_warning".to_owned(),ObjDef::Method(DefMethod::new("uvm_report_warning".to_string(),false)));
-    o.definition.insert("uvm_report_info".to_owned(),ObjDef::Method(DefMethod::new("uvm_report_info".to_string(),false)));
-    o.definition.insert("run_test".to_owned(),ObjDef::Method(DefMethod::new("run_test".to_string(),false)));
+    o.definition.insert("`uvm_info".to_owned(),ObjDef::Macro(DefMacro::new("`uvm_info".to_owned())));
+    o.definition.insert("`uvm_warning".to_owned(),ObjDef::Macro(DefMacro::new("`uvm_warning".to_owned())));
+    o.definition.insert("`uvm_error".to_owned(),ObjDef::Macro(DefMacro::new("`uvm_error".to_owned())));
+    o.definition.insert("`uvm_fatal".to_owned(),ObjDef::Macro(DefMacro::new("`uvm_fatal".to_owned())));
+    o.definition.insert("`uvm_component_utils".to_owned(),ObjDef::Macro(DefMacro::new("`uvm_component_utils".to_owned())));
+    o.definition.insert("`uvm_object_utils".to_owned(),ObjDef::Macro(DefMacro::new("`uvm_object_utils".to_owned())));
+    o.definition.insert("`uvm_object_param_utils".to_owned(),ObjDef::Macro(DefMacro::new("`uvm_object_param_utils".to_owned())));
+    o.definition.insert("`uvm_create".to_owned(),ObjDef::Macro(DefMacro::new("`uvm_create".to_owned())));
+    o.definition.insert("`uvm_create_on".to_owned(),ObjDef::Macro(DefMacro::new("`uvm_create_on".to_owned())));
+    o.definition.insert("`uvm_send".to_owned(),ObjDef::Macro(DefMacro::new("`uvm_send".to_owned())));
+    o.definition.insert("`uvm_declare_p_sequencer".to_owned(),ObjDef::Macro(DefMacro::new("`uvm_declare_p_sequencer".to_owned())));
+    o.definition.insert("`uvm_component_utils_begin".to_owned(),ObjDef::Macro(DefMacro::new("`uvm_component_utils_begin".to_owned())));
+    o.definition.insert("`uvm_field_enum".to_owned(),ObjDef::Macro(DefMacro::new("`uvm_field_enum".to_owned())));
+    o.definition.insert("`uvm_component_utils_end".to_owned(),ObjDef::Macro(DefMacro::new("`uvm_component_utils_end".to_owned())));
+    let mut m = DefMethod::new("uvm_report_fatal".to_owned(),false);
+    m.ports.push(Port{name:"id".to_owned(),dir:PortDir::Input,kind:SignalType::new("string".to_owned()),default: None});
+    m.ports.push(Port{name:"message".to_owned(),dir:PortDir::Input,kind:SignalType::new("string".to_owned()),default: None});
+    m.ports.push(Port{name:"verbosity".to_owned(),dir:PortDir::Input,kind:SignalType::new("int".to_owned()),default: Some("UVM_NONE".to_owned())});
+    m.ports.push(Port{name:"file".to_owned(),dir:PortDir::Input,kind:SignalType::new("string".to_owned()),default: Some("".to_owned())});
+    m.ports.push(Port{name:"line".to_owned(),dir:PortDir::Input,kind:SignalType::new("int".to_owned()),default: Some("".to_owned())});
+    o.definition.insert("uvm_report_fatal".to_owned(),ObjDef::Method(m.clone()));
+    o.definition.insert("uvm_report_error".to_owned(),ObjDef::Method(m.clone()));
+    o.definition.insert("uvm_report_warning".to_owned(),ObjDef::Method(m.clone()));
+    o.definition.insert("uvm_report_info".to_owned(),ObjDef::Method(m));
+    m = DefMethod::new("run_test".to_owned(),false);
+    m.ports.push(Port{name:"test_name".to_owned(),dir:PortDir::Input,kind:SignalType::new("string".to_owned()),default: Some("".to_owned())});
+    o.definition.insert("run_test".to_owned(),ObjDef::Method(m));
     // Enum
     o.definition.insert("UVM_NONE".to_owned(),ObjDef::Value);
     o.definition.insert("UVM_FULL".to_owned(),ObjDef::Value);
@@ -303,14 +371,24 @@ fn get_uvm_lib() -> CompObj {
     o_.definition.insert("m_name".to_owned(),ObjDef::Type);
     o_.definition.insert("type_name".to_owned(),ObjDef::Type);
     o_.definition.insert("m_current_phase".to_owned(),ObjDef::Type);
-    o_.definition.insert("get_parent".to_owned(),ObjDef::Method(DefMethod::new("get_parent".to_string(),false)));
-    o_.definition.insert("get_full_name".to_owned(),ObjDef::Method(DefMethod::new("get_full_name".to_string(),false)));
-    o_.definition.insert("get_name".to_owned(),ObjDef::Method(DefMethod::new("get_name".to_string(),false)));
-    o_.definition.insert("get_type_name".to_owned(),ObjDef::Method(DefMethod::new("get_type_name".to_string(),false)));
-    o_.definition.insert("create_component".to_owned(),ObjDef::Method(DefMethod::new("create_component".to_string(),false)));
-    o_.definition.insert("create_object".to_owned(),ObjDef::Method(DefMethod::new("create_object".to_string(),false)));
-    o_.definition.insert("set_inst_override".to_owned(),ObjDef::Method(DefMethod::new("set_inst_override".to_string(),false)));
-    o_.definition.insert("get_report_verbosity_level".to_owned(),ObjDef::Method(DefMethod::new("get_report_verbosity_level".to_string(),false)));
+    o_.definition.insert("get_parent".to_owned(),ObjDef::Method(DefMethod::new("get_parent".to_owned(),false)));
+    o_.definition.insert("get_full_name".to_owned(),ObjDef::Method(DefMethod::new("get_full_name".to_owned(),false)));
+    o_.definition.insert("get_name".to_owned(),ObjDef::Method(DefMethod::new("get_name".to_owned(),false)));
+    o_.definition.insert("get_type_name".to_owned(),ObjDef::Method(DefMethod::new("get_type_name".to_owned(),false)));
+    m = DefMethod::new("create_component".to_owned(),false);
+    m.ports.push(Port{name:"requested_type_name".to_owned(),dir:PortDir::Input,kind:SignalType::new("string".to_owned()),default: None});
+    m.ports.push(Port{name:"name".to_owned(),dir:PortDir::Input,kind:SignalType::new("string".to_owned()),default: None});
+    o_.definition.insert("create_component".to_owned(),ObjDef::Method(m));
+    m = DefMethod::new("create_object".to_owned(),false);
+    m.ports.push(Port{name:"requested_type_name".to_owned(),dir:PortDir::Input,kind:SignalType::new("string".to_owned()),default: None});
+    m.ports.push(Port{name:"name".to_owned(),dir:PortDir::Input,kind:SignalType::new("string".to_owned()),default: Some("".to_owned())});
+    o_.definition.insert("create_object".to_owned(),ObjDef::Method(m));
+    m = DefMethod::new("set_inst_override".to_owned(),false);
+    m.ports.push(Port{name:"relative_inst_path".to_owned(),dir:PortDir::Input,kind:SignalType::new("string".to_owned()),default: None});
+    m.ports.push(Port{name:"original_type_name".to_owned(),dir:PortDir::Input,kind:SignalType::new("string".to_owned()),default: None});
+    m.ports.push(Port{name:"override_type_name".to_owned(),dir:PortDir::Input,kind:SignalType::new("string".to_owned()),default: None});
+    o_.definition.insert("set_inst_override".to_owned(),ObjDef::Method(m));
+    o_.definition.insert("get_report_verbosity_level".to_owned(),ObjDef::Method(DefMethod::new("get_report_verbosity_level".to_owned(),false)));
     o.definition.insert("uvm_component".to_owned(),ObjDef::Class(Box::new(o_)));
     o_ = CompObj::new("uvm_test".to_owned());
     o_.base_class = Some("uvm_component".to_owned());
@@ -334,55 +412,115 @@ fn get_uvm_lib() -> CompObj {
     o_.base_class = Some("uvm_sequence_item".to_owned());
     o_.definition.insert("req".to_owned(),ObjDef::Type);
     o_.definition.insert("rsp".to_owned(),ObjDef::Type);
-    o_.definition.insert("get_response".to_owned(),ObjDef::Method(DefMethod::new("get_response".to_string(),false)));
+    m = DefMethod::new("get_response".to_owned(),false);
+    m.ports.push(Port{name:"response".to_owned(),dir:PortDir::Input,kind:SignalType::new("RSP".to_owned()),default: None});
+    m.ports.push(Port{name:"transaction_id".to_owned(),dir:PortDir::Input,kind:SignalType::new("int".to_owned()),default: Some("-1".to_owned())});
+    o_.definition.insert("get_response".to_owned(),ObjDef::Method(m));
     o.definition.insert("uvm_sequence".to_owned(),ObjDef::Class(Box::new(o_)));
     o_ = CompObj::new("uvm_sequence_item".to_owned());
     o_.definition.insert("m_parent_sequence".to_owned(),ObjDef::Type); // Part of uvm_sequence item
     o_.definition.insert("m_sequencer".to_owned(),ObjDef::Type);
     o_.definition.insert("p_sequencer".to_owned(),ObjDef::Type);
-    o_.definition.insert("get_starting_phase".to_owned(),ObjDef::Method(DefMethod::new("get_starting_phase".to_string(),false)));
-    o_.definition.insert("start".to_owned(),ObjDef::Method(DefMethod::new("start".to_string(),false)));
-    o_.definition.insert("get_sequencer".to_owned(),ObjDef::Method(DefMethod::new("get_sequencer".to_string(),false)));
-    o_.definition.insert("get_full_name".to_owned(),ObjDef::Method(DefMethod::new("get_full_name".to_string(),false)));
-    o_.definition.insert("get_sequence_id".to_owned(),ObjDef::Method(DefMethod::new("get_sequence_id".to_string(),false)));
+    o_.definition.insert("get_starting_phase".to_owned(),ObjDef::Method(DefMethod::new("get_starting_phase".to_owned(),false)));
+    m = DefMethod::new("start".to_owned(),false);
+    m.ports.push(Port{name:"sequencer".to_owned(),dir:PortDir::Input,kind:SignalType::new("uvm_sequencer_base".to_owned()),default: None});
+    m.ports.push(Port{name:"parent_sequence".to_owned(),dir:PortDir::Input,kind:SignalType::new("uvm_sequence_base".to_owned()),default: Some("null".to_owned())});
+    m.ports.push(Port{name:"this_priority".to_owned(),dir:PortDir::Input,kind:SignalType::new("int".to_owned()),default: Some("-1".to_owned())});
+    m.ports.push(Port{name:"call_pre_post".to_owned(),dir:PortDir::Input,kind:SignalType::new("bit".to_owned()),default: Some("1".to_owned())});
+    o_.definition.insert("start".to_owned(),ObjDef::Method(m));
+    o_.definition.insert("get_sequencer".to_owned(),ObjDef::Method(DefMethod::new("get_sequencer".to_owned(),false)));
+    o_.definition.insert("get_full_name".to_owned(),ObjDef::Method(DefMethod::new("get_full_name".to_owned(),false)));
+    o_.definition.insert("get_sequence_id".to_owned(),ObjDef::Method(DefMethod::new("get_sequence_id".to_owned(),false)));
     o.definition.insert("uvm_sequence_item".to_owned(),ObjDef::Class(Box::new(o_)));
     o_ = CompObj::new("uvm_agent".to_owned());
     o_.base_class = Some("uvm_component".to_owned());
     o_.definition.insert("is_active".to_owned(),ObjDef::Type);
     o.definition.insert("uvm_agent".to_owned(),ObjDef::Class(Box::new(o_)));
     o_ = CompObj::new("uvm_reg_block".to_owned());
+    o_.base_class = Some("uvm_component".to_owned());
     o_.definition.insert("default_map".to_owned(),ObjDef::Type);
-    o_.definition.insert("configure".to_owned(),ObjDef::Method(DefMethod::new("configure".to_string(),false)));
-    o_.definition.insert("find_block".to_owned(),ObjDef::Method(DefMethod::new("find_block".to_string(),false)));
-    o_.definition.insert("lock_model".to_owned(),ObjDef::Method(DefMethod::new("lock_model".to_string(),false)));
-    o_.definition.insert("reset".to_owned(),ObjDef::Method(DefMethod::new("reset".to_string(),false)));
+    o_.definition.insert("create_map".to_owned(),ObjDef::Method(DefMethod::new("configure".to_owned(),false)));
+    o_.definition.insert("configure".to_owned(),ObjDef::Method(DefMethod::new("configure".to_owned(),false)));
+    m = DefMethod::new("find_block".to_owned(),false);
+    m.ports.push(Port{name:"name".to_owned(),dir:PortDir::Input,kind:SignalType::new("string".to_owned()),default: None});
+    m.ports.push(Port{name:"root".to_owned(),dir:PortDir::Input,kind:SignalType::new("uvm_reg_block".to_owned()),default: Some("null".to_owned())});
+    m.ports.push(Port{name:"accessor".to_owned(),dir:PortDir::Input,kind:SignalType::new("uvm_object".to_owned()),default: Some("null".to_owned())});
+    o_.definition.insert("find_block".to_owned(),ObjDef::Method(m));
+    o_.definition.insert("lock_model".to_owned(),ObjDef::Method(DefMethod::new("lock_model".to_owned(),false)));
+    o_.definition.insert("reset".to_owned(),ObjDef::Method(DefMethod::new("reset".to_owned(),false)));
     o.definition.insert("uvm_reg_block".to_owned(),ObjDef::Class(Box::new(o_)));
     o_ = CompObj::new("uvm_reg_predictor".to_owned());
+    o_.base_class = Some("uvm_component".to_owned());
     o_.definition.insert("bus_in".to_owned(),ObjDef::Type);
     o_.definition.insert("map".to_owned(),ObjDef::Type);
     o_.definition.insert("adapter".to_owned(),ObjDef::Type);
     o_.definition.insert("reg_ap".to_owned(),ObjDef::Type);
-    o_.definition.insert("get_full_name".to_owned(),ObjDef::Method(DefMethod::new("get_full_name".to_string(),false)));
+    o_.definition.insert("get_full_name".to_owned(),ObjDef::Method(DefMethod::new("get_full_name".to_owned(),false)));
     o.definition.insert("uvm_reg_predictor".to_owned(),ObjDef::Class(Box::new(o_)));
     o_ = CompObj::new("uvm_reg_sequence".to_owned());
     o_.base_class = Some("uvm_sequence".to_owned());
     o_.definition.insert("m_verbosity".to_owned(),ObjDef::Type); // Not true, but just to avoid error until we know how to follow properly the inheritance tree
-    o_.definition.insert("write_reg".to_owned(),ObjDef::Method(DefMethod::new("write_reg".to_string(),false)));
-    o_.definition.insert("read_reg".to_owned(),ObjDef::Method(DefMethod::new("read_reg".to_string(),false)));
+    m = DefMethod::new("write_reg".to_owned(),false);
+    m.ports.push(Port{name:"rg".to_owned(),dir:PortDir::Input,kind:SignalType::new("uvm_reg".to_owned()),default: None});
+    m.ports.push(Port{name:"status".to_owned(),dir:PortDir::Output,kind:SignalType::new("uvm_status_e".to_owned()),default: None});
+    m.ports.push(Port{name:"value".to_owned(),dir:PortDir::Input,kind:SignalType::new("uvm_reg_data_t".to_owned()),default: None});
+    m.ports.push(Port{name:"path".to_owned(),dir:PortDir::Input,kind:SignalType::new("uvm_path_e".to_owned()),default: Some("UVM_DEFAULT_PATH".to_owned())});
+    m.ports.push(Port{name:"map".to_owned(),dir:PortDir::Input,kind:SignalType::new("uvm_reg_map".to_owned()),default: Some("null".to_owned())});
+    m.ports.push(Port{name:"prior".to_owned(),dir:PortDir::Input,kind:SignalType::new("int".to_owned()),default: Some("-1".to_owned())});
+    m.ports.push(Port{name:"extension".to_owned(),dir:PortDir::Input,kind:SignalType::new("uvm_object".to_owned()),default: Some("null".to_owned())});
+    m.ports.push(Port{name:"fname".to_owned(),dir:PortDir::Input,kind:SignalType::new("string".to_owned()),default: Some("".to_owned())});
+    m.ports.push(Port{name:"lineno".to_owned(),dir:PortDir::Input,kind:SignalType::new("int".to_owned()),default: Some("0".to_owned())});
+    o_.definition.insert("write_reg".to_owned(),ObjDef::Method(m));
+    m = DefMethod::new("read_reg".to_owned(),false);
+    m.ports.push(Port{name:"rg".to_owned(),dir:PortDir::Input,kind:SignalType::new("uvm_reg".to_owned()),default: None});
+    m.ports.push(Port{name:"status".to_owned(),dir:PortDir::Output,kind:SignalType::new("uvm_status_e".to_owned()),default: None});
+    m.ports.push(Port{name:"value".to_owned(),dir:PortDir::Output,kind:SignalType::new("uvm_reg_data_t".to_owned()),default: None});
+    m.ports.push(Port{name:"path".to_owned(),dir:PortDir::Input,kind:SignalType::new("uvm_path_e".to_owned()),default: Some("UVM_DEFAULT_PATH".to_owned())});
+    m.ports.push(Port{name:"map".to_owned(),dir:PortDir::Input,kind:SignalType::new("uvm_reg_map".to_owned()),default: Some("null".to_owned())});
+    m.ports.push(Port{name:"prior".to_owned(),dir:PortDir::Input,kind:SignalType::new("int".to_owned()),default: Some("-1".to_owned())});
+    m.ports.push(Port{name:"extension".to_owned(),dir:PortDir::Input,kind:SignalType::new("uvm_object".to_owned()),default: Some("null".to_owned())});
+    m.ports.push(Port{name:"fname".to_owned(),dir:PortDir::Input,kind:SignalType::new("string".to_owned()),default: Some("".to_owned())});
+    m.ports.push(Port{name:"lineno".to_owned(),dir:PortDir::Input,kind:SignalType::new("int".to_owned()),default: Some("0".to_owned())});
+    o_.definition.insert("read_reg".to_owned(),ObjDef::Method(m));
     o.definition.insert("uvm_reg_sequence".to_owned(),ObjDef::Class(Box::new(o_)));
     o_ = CompObj::new("uvm_config_db".to_owned());
-    o_.definition.insert("get".to_owned(),ObjDef::Method(DefMethod::new("get".to_string(),false)));
-    o_.definition.insert("set".to_owned(),ObjDef::Method(DefMethod::new("set".to_string(),false)));
+    let mut m = DefMethod::new("get".to_owned(),false);
+    m.ports.push(Port{name:"cntxt".to_owned(),dir:PortDir::Input,kind:SignalType::new("uvm_component".to_owned()),default: None});
+    m.ports.push(Port{name:"inst_name".to_owned(),dir:PortDir::Input,kind:SignalType::new("string".to_owned()),default: None});
+    m.ports.push(Port{name:"field_name".to_owned(),dir:PortDir::Input,kind:SignalType::new("string".to_owned()),default: None});
+    m.ports.push(Port{name:"value".to_owned(),dir:PortDir::Inout,kind:SignalType::new("T".to_owned()),default: None});
+    o_.definition.insert("get".to_owned(),ObjDef::Method(m));
+    m = DefMethod::new("set".to_owned(),false);
+    m.ports.push(Port{name:"cntxt".to_owned(),dir:PortDir::Input,kind:SignalType::new("uvm_component".to_owned()),default: None});
+    m.ports.push(Port{name:"inst_name".to_owned(),dir:PortDir::Input,kind:SignalType::new("string".to_owned()),default: None});
+    m.ports.push(Port{name:"field_name".to_owned(),dir:PortDir::Input,kind:SignalType::new("string".to_owned()),default: None});
+    m.ports.push(Port{name:"value".to_owned(),dir:PortDir::Input,kind:SignalType::new("T".to_owned()),default: None});
+    o_.definition.insert("set".to_owned(),ObjDef::Method(m));
     o.definition.insert("uvm_config_db".to_owned(),ObjDef::Class(Box::new(o_)));
     o_ = CompObj::new("uvm_report_server".to_owned());
-    o_.definition.insert("get_server".to_owned(),ObjDef::Method(DefMethod::new("get_server".to_string(),false)));
+    o_.definition.insert("get_server".to_owned(),ObjDef::Method(DefMethod::new("get_server".to_owned(),false)));
     o.definition.insert("uvm_report_server".to_owned(),ObjDef::Class(Box::new(o_)));
     o_ = CompObj::new("uvm_factory".to_owned());
-    o_.definition.insert("get".to_owned(),ObjDef::Method(DefMethod::new("get".to_string(),false)));
+    o_.definition.insert("get".to_owned(),ObjDef::Method(DefMethod::new("get".to_owned(),false)));
     o.definition.insert("uvm_factory".to_owned(),ObjDef::Class(Box::new(o_)));
     o_ = CompObj::new("uvm_reg".to_owned());
-    o_.definition.insert("include_coverage".to_owned(),ObjDef::Method(DefMethod::new("include_coverage".to_string(),false)));
+    o_.base_class = Some("uvm_component".to_owned());
+    m = DefMethod::new("include_coverage".to_owned(),false);
+    m.ports.push(Port{name:"scope".to_owned(),dir:PortDir::Input,kind:SignalType::new("string".to_owned()),default: None});
+    m.ports.push(Port{name:"models".to_owned(),dir:PortDir::Input,kind:SignalType::new("uvm_reg_cvr_t".to_owned()),default: None});
+    m.ports.push(Port{name:"accessor".to_owned(),dir:PortDir::Input,kind:SignalType::new("uvm_object".to_owned()),default: Some("null".to_owned())});
+    o_.definition.insert("include_coverage".to_owned(),ObjDef::Method(m));
     o.definition.insert("uvm_reg".to_owned(),ObjDef::Class(Box::new(o_)));
+    o_ = CompObj::new("uvm_reg_field".to_owned());
+    o_.base_class = Some("uvm_component".to_owned());
+    let mut ot = CompObj::new("type_id".to_owned());
+    m = DefMethod::new("create".to_owned(),false);
+    m.ports.push(Port{name:"name".to_owned(),dir:PortDir::Input,kind:SignalType::new("string".to_owned()),default: None});
+    m.ports.push(Port{name:"parent".to_owned(),dir:PortDir::Input,kind:SignalType::new("uvm_component".to_owned()),default: Some("null".to_owned())});
+    m.ports.push(Port{name:"contxt".to_owned(),dir:PortDir::Input,kind:SignalType::new("string".to_owned()),default: Some("".to_owned())});
+    ot.definition.insert("create".to_owned(),ObjDef::Method(m));
+    o_.definition.insert("type_id".to_owned(),ObjDef::Class(Box::new(ot)));
+    o.definition.insert("uvm_reg_field".to_owned(),ObjDef::Class(Box::new(o_)));
 
     o
 }

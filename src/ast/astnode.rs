@@ -72,6 +72,10 @@ impl AstNode {
         }
         s
     }
+
+    pub fn has_scope(&self) -> bool {
+        !self.child.is_empty() && self.child[0].kind == AstNodeKind::Scope
+    }
 }
 
 
