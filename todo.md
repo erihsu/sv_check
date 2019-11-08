@@ -9,6 +9,7 @@ Reminder of special error/warning which needs to be caught by the tool eventuall
  [ ] randc : check variable is not in a solve before statement
  [ ] clocking block : check all signal are part of the interface
  [x] signal declaration : check re-declaration
+ [ ] label/instance name re-declaration
  [ ] non-continuous assignment of a wire
  [ ] Array assignement with non matching size
  [ ] Check hierachical access

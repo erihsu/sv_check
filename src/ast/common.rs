@@ -876,8 +876,9 @@ pub fn parse_port_connection(ts : &mut TokenStream, node: &mut AstNode, is_param
             TokenKind::DotStar if allow_dot_star => {
                 ts.flush(0); // Consume the (
                 allow_dot_star = false;
-                node.child.push(AstNode::new(AstNodeKind::Port));
-                node.attr.insert("name".to_owned(), ".*".to_owned());
+                let mut node_p = AstNode::new( if is_param {AstNodeKind::Param} else {AstNodeKind::Port});
+                node_p.attr.insert("name".to_owned(), t.value);
+                node.child.push(node_p);
             },
             TokenKind::ParenRight if is_first => break,
             //

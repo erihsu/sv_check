@@ -32,6 +32,7 @@ impl CompLib {
         lib.objects.insert("uvm_pkg".to_owned(),get_uvm_lib());
         // Linking
         for (name,o) in &lib.objects {
+            // println!("[{}] Linking ...", name);
             let mut import_hdr = o.import_hdr.clone();
             import_hdr.push("!".to_owned());
             let mut import_body = o.import_body.clone();
@@ -243,9 +244,100 @@ impl CompLib {
                     }
                 }
                 AstNodeKind::Instances => {
+                    // println!("[{}] Checking instance of {:?}", o.name,c.attr);
                     if let Some(t) = c.attr.get("type") {
-                        if let Some(_) = self.objects.get(t) {
+                        if let Some(obj) = self.objects.get(t) {
+                            if let Some(ObjDef::Module(d)) = obj.definition.get("!") {
+                                let mut dps = d.ports.clone();
+                                let mut params = d.params.clone();
+                                for n in &c.child {
+                                    match n.kind {
+                                        AstNodeKind::Instance => {
+                                            for nc in &n.child {
+                                                match nc.kind {
+                                                    AstNodeKind::Port => {
+                                                        // println!("[{}] Instance {} of {}, port {:?}", o.name, n.attr["name"],c.attr["type"],nc.attr);
+                                                        if dps.len() == 0 {
+                                                            println!("[{}] Too many arguments in call to {}: {:?}", o.name, d.name, nc);
+                                                            break;
+                                                        }
+                                                        match nc.attr["name"].as_ref() {
+                                                            // When unamed, port are taken in order
+                                                            "" => {dps.remove(0);}
+                                                            // Implicit connection
+                                                            ".*" => {
+                                                                // Checked that signal with same name of ports are defined
+                                                                for p in &dps {
+                                                                    if o.definition.contains_key(&p.name) {
+                                                                        // Type checking
+                                                                    } else {
+                                                                        println!("[{}] Missing signal for implicit connection to {} in {}", o.name, p, n.attr["name"])
+                                                                    }
 
+                                                                }
+                                                                dps.clear();
+                                                            }
+                                                            // Nameed connection
+                                                            _ => {
+                                                                if let Some(i) = dps.iter().position(|x| x.name == nc.attr["name"]) {
+                                                                    // println!("[{}] Calling {} with argument name {} found at index {} of {}", o.name, d.name, nc.attr["name"], i, dps.iter().fold(String::new(), |acc, x| format!("{}{},", acc,x)));
+                                                                    dps.remove(i);
+                                                                }
+                                                                else {
+                                                                    println!("[{}] Calling {} with unknown argument name {} in {}", o.name, d.name, nc.attr["name"], dps.iter().fold(String::new(), |acc, x| format!("{}{},", acc,x)));
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                    _ => println!("[{}] Instance {} of {}, skipping {}", o.name, n.attr["name"],c.attr["type"],nc.kind)
+                                                    // _ => {} // Ignore all other node
+                                                }
+                                            }
+                                        }
+                                        AstNodeKind::Params => {
+                                            for nc in &n.child {
+                                                match nc.kind {
+                                                    AstNodeKind::Param => {
+                                                        // println!("[{}] Instance of {:?}, param {:?}", o.name, c.attr["type"],nc.attr);
+                                                        if params.len() == 0 {
+                                                            println!("[{}] Too many arguments in parameters of {}: ({:?})", o.name, d.name, nc);
+                                                            break;
+                                                        }
+                                                        match nc.attr["name"].as_ref() {
+                                                            // When unamed, port are taken in order
+                                                            "" => {params.remove(0);}
+                                                            // Nameed connection
+                                                            _ => {
+                                                                if let Some(i) = params.iter().position(|x| x.name == nc.attr["name"]) {
+                                                                    // println!("[{}] Calling {} with argument name {} found at index {} of {}", o.name, d.name, nc.attr["name"], i, params.iter().fold(String::new(), |acc, x| format!("{}{},", acc,x)));
+                                                                    params.remove(i);
+                                                                }
+                                                                else {
+                                                                    println!("[{}] Calling {} with unknown parameter name {} in {}", o.name, d.name, nc.attr["name"], params.iter().fold(String::new(), |acc, x| format!("{}{:?},", acc,x)));
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                    _ => println!("[{}] Instance of {:?}, skipping {:?}", o.name, c.attr["type"],nc.kind)
+                                                    // _ => {} // Ignore all other node
+                                                }
+                                            }
+                                            // TODO: check parameters as well
+                                        }
+                                        _ => println!("[{}] Instances of {}, skipping {}", o.name, c.attr["type"],n.kind)
+                                        // _ => {} // Ignore all other node
+                                    }
+                                }
+                                if dps.len() > 0 {
+                                    // Check if remaining ports are optional or not
+                                    let ma :Vec<_> = dps.iter().filter(|p| p.default.is_none()).collect();
+                                    if ma.len() > 0 {
+                                        println!("[{}] Missing {} arguments in call to {}: {}", o.name, dps.len(), d.name, ma.iter().fold(String::new(), |acc, x| format!("{}{},", acc,x)));
+                                    }
+                                }
+                            } else {
+                                println!("[{}] Unable to get module definition for {} in {:?}", o.name, t,obj.definition);
+                            }
                         } else {
                             println!("[{}] Unsolved instance of {}", o.name, t);
                         }
@@ -439,8 +531,17 @@ fn get_uvm_lib() -> CompObj {
     o_ = CompObj::new("uvm_reg_block".to_owned());
     o_.base_class = Some("uvm_component".to_owned());
     o_.definition.insert("default_map".to_owned(),ObjDef::Type);
-    o_.definition.insert("create_map".to_owned(),ObjDef::Method(DefMethod::new("configure".to_owned(),false)));
-    o_.definition.insert("configure".to_owned(),ObjDef::Method(DefMethod::new("configure".to_owned(),false)));
+    m = DefMethod::new("create_map".to_owned(),false);
+    m.ports.push(Port{name:"name".to_owned(),dir:PortDir::Input,kind:SignalType::new("string".to_owned()),default: None});
+    m.ports.push(Port{name:"base_addr".to_owned(),dir:PortDir::Input,kind:SignalType::new("uvm_reg_addr_t".to_owned()),default: None});
+    m.ports.push(Port{name:"n_bytes".to_owned(),dir:PortDir::Input,kind:SignalType::new("int unsigned".to_owned()),default: None});
+    m.ports.push(Port{name:"endian".to_owned(),dir:PortDir::Input,kind:SignalType::new("uvm_endianness_e".to_owned()),default: None});
+    m.ports.push(Port{name:"byte_addressing".to_owned(),dir:PortDir::Input,kind:SignalType::new("bit".to_owned()),default: Some("1".to_owned())});
+    o_.definition.insert("create_map".to_owned(),ObjDef::Method(m));
+    m = DefMethod::new("configure".to_owned(),false);
+    m.ports.push(Port{name:"parent".to_owned(),dir:PortDir::Input,kind:SignalType::new("uvm_reg_block".to_owned()),default: Some("null".to_owned())});
+    m.ports.push(Port{name:"hdl_path".to_owned(),dir:PortDir::Input,kind:SignalType::new("string".to_owned()),default: Some("".to_owned())});
+    o_.definition.insert("configure".to_owned(),ObjDef::Method(m));
     m = DefMethod::new("find_block".to_owned(),false);
     m.ports.push(Port{name:"name".to_owned(),dir:PortDir::Input,kind:SignalType::new("string".to_owned()),default: None});
     m.ports.push(Port{name:"root".to_owned(),dir:PortDir::Input,kind:SignalType::new("uvm_reg_block".to_owned()),default: Some("null".to_owned())});

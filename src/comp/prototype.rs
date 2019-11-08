@@ -133,6 +133,15 @@ pub struct Param {
     pub kind  : SignalType,
 }
 
+impl Param {
+    pub fn new(node: &AstNode) -> Param {
+        Param{
+            name: node.attr["name"].clone(),
+            kind: SignalType::from(node)
+        }
+    }
+}
+
 // ------------------
 // Module definition
 #[derive(Debug, Clone)]
@@ -140,6 +149,16 @@ pub struct DefModule {
     pub name   : String,
     pub params : Vec<Param>,
     pub ports  : Vec<Port>,
+}
+
+impl DefModule {
+    pub fn new(name: String) -> DefModule {
+        DefModule {
+            name,
+            params:Vec::new(),
+            ports :Vec::new(),
+        }
+    }
 }
 
 // ------------------

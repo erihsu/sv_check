@@ -14,7 +14,9 @@ pub enum ObjDef {
     Instance,
     Class(Box<CompObj>),
     Value,
+    Port(Port),
     Method(DefMethod),
+    Module(DefModule), //
     Macro(DefMacro),
     Type,
 }
@@ -70,6 +72,8 @@ impl CompObj {
                 AstNodeKind::Interface |
                 AstNodeKind::Module => {
                     let mut o = CompObj::new(node.attr["name"].clone());
+                    let mut prev_dir = PortDir::Input; // Default port direction to input
+                    let mut mdef = DefModule::new(node.attr["name"].clone());
                     // println!("Compiling {:?}", node.attr["name"]);
                     for node_m in &node.child {
                         // println!(" - {:?}", node_m.kind);
@@ -81,6 +85,9 @@ impl CompObj {
                                         AstNodeKind::Port => {
                                             o.definition.insert(n.attr["name"].clone(),ObjDef::Signal);
                                             o.check_type(&n,true);
+                                            let p = Port::new(n,prev_dir);
+                                            prev_dir = p.dir.clone();
+                                            mdef.ports.push(p);
                                         }
                                         AstNodeKind::Import => {
                                             if n.attr.contains_key("dpi") {
@@ -98,6 +105,7 @@ impl CompObj {
                                         AstNodeKind::Param => {
                                             // TODO: CHeck array size
                                             o.definition.insert(n.attr["name"].clone(),ObjDef::Signal);
+                                            mdef.params.push(Param::new(n));
                                         }
                                         _ => {println!("[CompObj] {} | Header: Skipping {:?}",o.name, n.kind);}
                                     }
@@ -106,6 +114,8 @@ impl CompObj {
                             _ => o.parse_body(&node_m,ast_inc)
                         }
                     }
+                    // temporary stuff: the defModule prototype should be put in a different object
+                    o.definition.insert("!".to_owned(),ObjDef::Module(mdef));
                     // println!("[ObjWork] {:?}", o);
                     lib.insert(o.name.clone(),o);
                 }
