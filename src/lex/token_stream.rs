@@ -240,19 +240,35 @@ impl<'a> TokenStream<'a> {
                 // x/z allowed for integer number only
                 'x'|'X'|'z'|'Z' => {
                     if base != NumBase::Binary && base != NumBase::Hexa && fsm!=NumParseState::Int && &s!="'" {
-                        return Err(SvError::new(SvErrorKind::Token,p,s));
+                        return Err(SvError::new(SvErrorKind::Token,self.source.pos,s));
                     }
                     has_xz = true;
                 }
                 // Base specifier
                 '\'' => {
                     if fsm != NumParseState::Start || has_xz {
-                        return Err(SvError::new(SvErrorKind::Token,p,s));
+                        return Err(SvError::new(SvErrorKind::Token,self.source.pos,s));
                     }
                     fsm = NumParseState::Base;
                 },
                 // s following a number can be the time unit
                 's' if fsm != NumParseState::Base => {
+                    // Check for 1step keyword
+                    if s == "1" {
+                        let nc = self.source.peek_char().unwrap_or(&' ');
+                        if nc == &'t' {
+                            self.source.get_char(); // consume t, and check the next two char are e and p
+                            if self.source.get_char().unwrap_or(' ') != 'e' {return Err(SvError::new(SvErrorKind::Token,self.source.pos,s));}
+                            if self.source.get_char().unwrap_or(' ') != 'p' {return Err(SvError::new(SvErrorKind::Token,self.source.pos,s));}
+                            let lc = self.source.peek_char().unwrap_or(&'/');
+                            if lc.is_whitespace() || lc==&';' {
+                                self.last_pos = self.source.pos;
+                                return Ok(Token::new(TokenKind::Kw1step,"1step".to_owned(),p));
+                            } else {
+                                return Err(SvError::new(SvErrorKind::Token,self.source.pos,s));
+                            }
+                        }
+                    }
                     self.last_char = c;
                     break;
                 }
@@ -275,21 +291,21 @@ impl<'a> TokenStream<'a> {
                 }
                 'a'|'b'|'c'|'d'|'e'|'f'|'A'|'B'|'C'|'D'|'E'|'F' if base==NumBase::Hexa => {},
                 '?' if base==NumBase::Binary && fsm != NumParseState::Int => {
-                    return Err(SvError::new(SvErrorKind::Token,p,s));
+                    return Err(SvError::new(SvErrorKind::Token,self.source.pos,s));
                 }
                 // _ can be used inside the value as a separator
                 '_' if fsm != NumParseState::Base => {}
                 // Dot -> real number
                 '.' => {
                     if fsm != NumParseState::Start || has_xz {
-                        return Err(SvError::new(SvErrorKind::Token,p,s));
+                        return Err(SvError::new(SvErrorKind::Token,self.source.pos,s));
                     }
                     fsm = NumParseState::Dec;
                 }
                 // Exponent -> real number
                 'e' | 'E' => {
                     if (fsm != NumParseState::Start && fsm != NumParseState::Dec) || has_xz {
-                        return Err(SvError::new(SvErrorKind::Token,p,s));
+                        return Err(SvError::new(SvErrorKind::Token,self.source.pos,s));
                     }
                     fsm = NumParseState::Exp;
                 }

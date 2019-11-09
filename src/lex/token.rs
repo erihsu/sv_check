@@ -22,7 +22,7 @@ pub enum TokenKind {
     KwFunction, KwEndFunction, KwTask, KwEndTask, KwRand, KwNew, KwConst, KwSuper, KwThis, KwNull,
     KwReturn, KwBreak, KwContinue, KwFork, KwJoin, KwDisable, KwWait, KwWaitOrder,
     KwAssert, KwCover, KwInterconnect,
-    KwConstraint, KwWith, KwCovergroup,
+    KwConstraint, KwWith, KwCovergroup, Kw1step,
     Keyword,    // Reserved SystemVerilog keyword
     // Base Type
     TypeIntAtom, TypeIntVector, TypeReal, TypeGenvar,
@@ -211,6 +211,7 @@ impl fmt::Display for TokenKind {
             TokenKind::KwWith            => write!(f, "Kw:with"        ),
             TokenKind::KwCovergroup      => write!(f, "Kw:covergroup"  ),
             TokenKind::KwInterconnect    => write!(f, "Kw:interconnect"),
+            TokenKind::Kw1step           => write!(f, "Kw:1step"       ),
             TokenKind::TypeIntAtom       => write!(f, "Type:IntAtom"   ),
             TokenKind::TypeIntVector     => write!(f, "Type:IntVector" ),
             TokenKind::TypeReal          => write!(f, "Type:Real"      ),

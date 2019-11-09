@@ -990,7 +990,7 @@ pub fn parse_delay (ts : &mut TokenStream) -> Result<AstNode, SvError> {
     node.attr.insert("kind".to_owned(),t.value);
     t = next_t!(ts,true);
     match t.kind {
-        TokenKind::Integer | TokenKind::Real => {
+        TokenKind::Integer | TokenKind::Real | TokenKind::Kw1step => {
             let mut nv = AstNode::new(AstNodeKind::Value);
             nv.attr.insert("value".to_owned(), t.value);
             ts.flush(1); // consume number
