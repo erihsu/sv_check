@@ -7,7 +7,7 @@ use crate::ast::Ast;
 use crate::ast::astnode::{AstNode,AstNodeKind};
 
 use crate::comp::comp_obj::{CompObj,ObjDef};
-use crate::comp::prototype::{DefMethod,DefMacro,Port,PortDir,SignalType};
+use crate::comp::prototype::{DefMethod,DefMacro,MacroPort,Port,PortDir,SignalType};
 
 #[derive(Debug, Clone)]
 pub struct CompLib {
@@ -182,26 +182,26 @@ impl CompLib {
                         }
                         if let Some(obj) = self.find_obj(&o,name,&c,missing_scope,imports) {
                             if let ObjDef::Method(d) = obj {
-                                let mut dps = d.ports.clone();
+                                let mut ports = d.ports.clone();
                                 for n in &c.child {
                                     match n.kind {
                                         AstNodeKind::Ports => {
                                             // println!("[{}] Call to Port {:?}", o.name, d.name);
                                             for p in &n.child {
-                                                if dps.len() == 0 {
-                                                    println!("[{}] Too many arguments in call to {}: {:?} ({:?})", o.name, d.name, dps,p);
+                                                if ports.len() == 0 {
+                                                    println!("[{}] Too many arguments in call to {}: {:?}", o.name, d.name, p);
                                                     break;
                                                 }
                                                 // When unamed, port are taken in order
                                                 if p.attr["name"] == "" {
-                                                    dps.remove(0);
+                                                    ports.remove(0);
                                                 } else {
-                                                    if let Some(i) = dps.iter().position(|x| x.name == p.attr["name"]) {
-                                                        // println!("[{}] Calling {} with argument name {} found at index {} of {}", o.name, d.name, p.attr["name"], i, dps.iter().fold(String::new(), |acc, x| format!("{}{},", acc,x)));
-                                                        dps.remove(i);
+                                                    if let Some(i) = ports.iter().position(|x| x.name == p.attr["name"]) {
+                                                        // println!("[{}] Calling {} with argument name {} found at index {} of {}", o.name, d.name, p.attr["name"], i, ports.iter().fold(String::new(), |acc, x| format!("{}{},", acc,x)));
+                                                        ports.remove(i);
                                                     }
                                                     else {
-                                                        println!("[{}] Calling {} with unknown argument name {} in {}", o.name, d.name, p.attr["name"], dps.iter().fold(String::new(), |acc, x| format!("{}{},", acc,x)));
+                                                        println!("[{}] Calling {} with unknown argument name {} in {}", o.name, d.name, p.attr["name"], ports.iter().fold(String::new(), |acc, x| format!("{}{},", acc,x)));
                                                     }
                                                 }
                                             }
@@ -209,11 +209,11 @@ impl CompLib {
                                         _ => {} // Ignore all other node
                                     }
                                 }
-                                if dps.len() > 0 {
+                                if ports.len() > 0 {
                                     // Check if remaining ports are optional or not
-                                    let ma :Vec<_> = dps.iter().filter(|p| p.default.is_none()).collect();
+                                    let ma :Vec<_> = ports.iter().filter(|p| p.default.is_none()).collect();
                                     if ma.len() > 0 {
-                                        println!("[{}] Missing {} arguments in call to {}: {}", o.name, dps.len(), d.name, ma.iter().fold(String::new(), |acc, x| format!("{}{},", acc,x)));
+                                        println!("[{}] Missing {} arguments in call to {}: {}", o.name, ports.len(), d.name, ma.iter().fold(String::new(), |acc, x| format!("{}{},", acc,x)));
                                     }
                                 }
                             } else {
@@ -230,8 +230,22 @@ impl CompLib {
                 AstNodeKind::MacroCall => {
                     if let Some(name) = c.attr.get("name") {
                         if let Some(obj) = self.find_obj(&o,name,&c,missing_scope,imports) {
-                            if let ObjDef::Macro(_) = obj {
-                                // println!("[{}] Found def for {} with {} ports", o.name, d.name, d.ports.len());
+                            if let ObjDef::Macro(d) = obj {
+                                let mut ports = d.ports.clone();
+                                for n in &c.child {
+                                    if ports.len() == 0 {
+                                        println!("[{}] Too many arguments in call to {}: {}", o.name, d.name, n);
+                                        break;
+                                    }
+                                    ports.remove(0);
+                                }
+                                if ports.len() > 0 {
+                                    // Check if remaining ports are optional or not
+                                    let ma :Vec<_> = ports.iter().filter(|p| p.is_opt==false).collect();
+                                    if ma.len() > 0 {
+                                        println!("[{}] Missing {} arguments in call to {}: {}", o.name, ports.len(), d.name, ma.iter().fold(String::new(), |acc, x| format!("{}{},", acc,x)));
+                                    }
+                                }
                             } else {
                                 println!("[{}] {} is not a macro : {:?}", o.name, name, obj);
                             }
@@ -248,7 +262,7 @@ impl CompLib {
                     if let Some(t) = c.attr.get("type") {
                         if let Some(obj) = self.objects.get(t) {
                             if let Some(ObjDef::Module(d)) = obj.definition.get("!") {
-                                let mut dps = d.ports.clone();
+                                let mut ports = d.ports.clone();
                                 let mut params = d.params.clone();
                                 for n in &c.child {
                                     match n.kind {
@@ -257,17 +271,17 @@ impl CompLib {
                                                 match nc.kind {
                                                     AstNodeKind::Port => {
                                                         // println!("[{}] Instance {} of {}, port {:?}", o.name, n.attr["name"],c.attr["type"],nc.attr);
-                                                        if dps.len() == 0 {
+                                                        if ports.len() == 0 {
                                                             println!("[{}] Too many arguments in call to {}: {:?}", o.name, d.name, nc);
                                                             break;
                                                         }
                                                         match nc.attr["name"].as_ref() {
                                                             // When unamed, port are taken in order
-                                                            "" => {dps.remove(0);}
+                                                            "" => {ports.remove(0);}
                                                             // Implicit connection
                                                             ".*" => {
                                                                 // Checked that signal with same name of ports are defined
-                                                                for p in &dps {
+                                                                for p in &ports {
                                                                     if o.definition.contains_key(&p.name) {
                                                                         // Type checking
                                                                     } else {
@@ -275,16 +289,16 @@ impl CompLib {
                                                                     }
 
                                                                 }
-                                                                dps.clear();
+                                                                ports.clear();
                                                             }
                                                             // Nameed connection
                                                             _ => {
-                                                                if let Some(i) = dps.iter().position(|x| x.name == nc.attr["name"]) {
-                                                                    // println!("[{}] Calling {} with argument name {} found at index {} of {}", o.name, d.name, nc.attr["name"], i, dps.iter().fold(String::new(), |acc, x| format!("{}{},", acc,x)));
-                                                                    dps.remove(i);
+                                                                if let Some(i) = ports.iter().position(|x| x.name == nc.attr["name"]) {
+                                                                    // println!("[{}] Calling {} with argument name {} found at index {} of {}", o.name, d.name, nc.attr["name"], i, ports.iter().fold(String::new(), |acc, x| format!("{}{},", acc,x)));
+                                                                    ports.remove(i);
                                                                 }
                                                                 else {
-                                                                    println!("[{}] Calling {} with unknown argument name {} in {}", o.name, d.name, nc.attr["name"], dps.iter().fold(String::new(), |acc, x| format!("{}{},", acc,x)));
+                                                                    println!("[{}] Calling {} with unknown argument name {} in {}", o.name, d.name, nc.attr["name"], ports.iter().fold(String::new(), |acc, x| format!("{}{},", acc,x)));
                                                                 }
                                                             }
                                                         }
@@ -328,11 +342,11 @@ impl CompLib {
                                         // _ => {} // Ignore all other node
                                     }
                                 }
-                                if dps.len() > 0 {
+                                if ports.len() > 0 {
                                     // Check if remaining ports are optional or not
-                                    let ma :Vec<_> = dps.iter().filter(|p| p.default.is_none()).collect();
+                                    let ma :Vec<_> = ports.iter().filter(|p| p.default.is_none()).collect();
                                     if ma.len() > 0 {
-                                        println!("[{}] Missing {} arguments in call to {}: {}", o.name, dps.len(), d.name, ma.iter().fold(String::new(), |acc, x| format!("{}{},", acc,x)));
+                                        println!("[{}] Missing {} arguments in call to {}: {}", o.name, ports.len(), d.name, ma.iter().fold(String::new(), |acc, x| format!("{}{},", acc,x)));
                                     }
                                 }
                             } else {
@@ -413,19 +427,53 @@ fn get_uvm_lib() -> CompObj {
     o.definition.insert("uvm_table_printer".to_owned(),ObjDef::Type);
     o.definition.insert("uvm_top".to_owned(),ObjDef::Type);
     // Function / Macro
-    o.definition.insert("`uvm_info".to_owned(),ObjDef::Macro(DefMacro::new("`uvm_info".to_owned())));
-    o.definition.insert("`uvm_warning".to_owned(),ObjDef::Macro(DefMacro::new("`uvm_warning".to_owned())));
-    o.definition.insert("`uvm_error".to_owned(),ObjDef::Macro(DefMacro::new("`uvm_error".to_owned())));
-    o.definition.insert("`uvm_fatal".to_owned(),ObjDef::Macro(DefMacro::new("`uvm_fatal".to_owned())));
-    o.definition.insert("`uvm_component_utils".to_owned(),ObjDef::Macro(DefMacro::new("`uvm_component_utils".to_owned())));
-    o.definition.insert("`uvm_object_utils".to_owned(),ObjDef::Macro(DefMacro::new("`uvm_object_utils".to_owned())));
-    o.definition.insert("`uvm_object_param_utils".to_owned(),ObjDef::Macro(DefMacro::new("`uvm_object_param_utils".to_owned())));
-    o.definition.insert("`uvm_create".to_owned(),ObjDef::Macro(DefMacro::new("`uvm_create".to_owned())));
-    o.definition.insert("`uvm_create_on".to_owned(),ObjDef::Macro(DefMacro::new("`uvm_create_on".to_owned())));
-    o.definition.insert("`uvm_send".to_owned(),ObjDef::Macro(DefMacro::new("`uvm_send".to_owned())));
-    o.definition.insert("`uvm_declare_p_sequencer".to_owned(),ObjDef::Macro(DefMacro::new("`uvm_declare_p_sequencer".to_owned())));
-    o.definition.insert("`uvm_component_utils_begin".to_owned(),ObjDef::Macro(DefMacro::new("`uvm_component_utils_begin".to_owned())));
-    o.definition.insert("`uvm_field_enum".to_owned(),ObjDef::Macro(DefMacro::new("`uvm_field_enum".to_owned())));
+    let mut m = DefMacro::new("`uvm_info".to_owned());
+    m.ports.push(MacroPort{name:"ID".to_owned(),is_opt: false});
+    m.ports.push(MacroPort{name:"MSG".to_owned(),is_opt: false});
+    m.ports.push(MacroPort{name:"VERBOSITY".to_owned(),is_opt: false});
+    o.definition.insert("`uvm_info".to_owned(),ObjDef::Macro(m));
+    m = DefMacro::new("`uvm_warning".to_owned());
+    m.ports.push(MacroPort{name:"ID".to_owned(),is_opt: false});
+    m.ports.push(MacroPort{name:"MSG".to_owned(),is_opt: false});
+    o.definition.insert("`uvm_warning".to_owned(),ObjDef::Macro(m));
+    m = DefMacro::new("`uvm_error".to_owned());
+    m.ports.push(MacroPort{name:"ID".to_owned(),is_opt: false});
+    m.ports.push(MacroPort{name:"MSG".to_owned(),is_opt: false});
+    o.definition.insert("`uvm_error".to_owned(),ObjDef::Macro(m));
+    m = DefMacro::new("`uvm_fatal".to_owned());
+    m.ports.push(MacroPort{name:"ID".to_owned(),is_opt: false});
+    m.ports.push(MacroPort{name:"MSG".to_owned(),is_opt: false});
+    o.definition.insert("`uvm_fatal".to_owned(),ObjDef::Macro(m));
+    m = DefMacro::new("`uvm_component_utils".to_owned());
+    m.ports.push(MacroPort{name:"T".to_owned(),is_opt: false});
+    o.definition.insert("`uvm_component_utils".to_owned(),ObjDef::Macro(m));
+    m = DefMacro::new("`uvm_object_utils".to_owned());
+    m.ports.push(MacroPort{name:"T".to_owned(),is_opt: false});
+    o.definition.insert("`uvm_object_utils".to_owned(),ObjDef::Macro(m));
+    m = DefMacro::new("`uvm_object_param_utils".to_owned());
+    m.ports.push(MacroPort{name:"T".to_owned(),is_opt: false});
+    o.definition.insert("`uvm_object_param_utils".to_owned(),ObjDef::Macro(m));
+    m = DefMacro::new("`uvm_create".to_owned());
+    m.ports.push(MacroPort{name:"SEQ_OR_ITEM".to_owned(),is_opt: false});
+    o.definition.insert("`uvm_create".to_owned(),ObjDef::Macro(m));
+    m = DefMacro::new("`uvm_create_on".to_owned());
+    m.ports.push(MacroPort{name:"SEQ_OR_ITEM".to_owned(),is_opt: false});
+    m.ports.push(MacroPort{name:"SEQR".to_owned(),is_opt: false});
+    o.definition.insert("`uvm_create_on".to_owned(),ObjDef::Macro(m));
+    m = DefMacro::new("`uvm_send".to_owned());
+    m.ports.push(MacroPort{name:"SEQ_OR_ITEM".to_owned(),is_opt: false});
+    o.definition.insert("`uvm_send".to_owned(),ObjDef::Macro(m));
+    m = DefMacro::new("`uvm_declare_p_sequencer".to_owned());
+    m.ports.push(MacroPort{name:"SEQUENCER".to_owned(),is_opt: false});
+    o.definition.insert("`uvm_declare_p_sequencer".to_owned(),ObjDef::Macro(m));
+    m = DefMacro::new("`uvm_component_utils_begin".to_owned());
+    m.ports.push(MacroPort{name:"T".to_owned(),is_opt: false});
+    o.definition.insert("`uvm_component_utils_begin".to_owned(),ObjDef::Macro(m));
+    m = DefMacro::new("`uvm_component_utils_begin".to_owned());
+    m.ports.push(MacroPort{name:"T".to_owned(),is_opt: false});
+    m.ports.push(MacroPort{name:"ARG".to_owned(),is_opt: false});
+    m.ports.push(MacroPort{name:"FLAG".to_owned(),is_opt: false});
+    o.definition.insert("`uvm_field_enum".to_owned(),ObjDef::Macro(m));
     o.definition.insert("`uvm_component_utils_end".to_owned(),ObjDef::Macro(DefMacro::new("`uvm_component_utils_end".to_owned())));
     let mut m = DefMethod::new("uvm_report_fatal".to_owned(),false);
     m.ports.push(Port{name:"id".to_owned(),dir:PortDir::Input,kind:SignalType::new("string".to_owned()),default: None});

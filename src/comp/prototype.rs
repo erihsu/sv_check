@@ -198,11 +198,35 @@ impl fmt::Display for DefMethod {
 
 
 // ------------------
-// Function definition
+// Macro definition
+#[derive(Debug, Clone)]
+pub struct MacroPort {
+    pub name  : String,
+    pub is_opt : bool,
+}
+
+impl MacroPort {
+    pub fn new(node: &AstNode) -> MacroPort {
+        MacroPort{
+            name: node.attr["name"].clone(),
+            is_opt: node.child.len()>0
+        }
+    }
+}
+
+impl fmt::Display for MacroPort {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}{}",
+            self.name,
+            if !self.is_opt {"?".to_owned()} else {"".to_owned()},
+        )
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct DefMacro {
     pub name   : String,
-    pub ports  : Vec<String>
+    pub ports  : Vec<MacroPort>
 }
 
 impl DefMacro {
@@ -215,7 +239,7 @@ impl fmt::Display for DefMacro {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         writeln!(f, "Macro {}",self.name)?;
         for p in &self.ports {
-            writeln!(f,"\t{}",p)?;
+            writeln!(f,"\t{}",p.name)?;
         }
         Ok(())
     }

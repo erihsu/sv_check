@@ -131,7 +131,7 @@ impl CompObj {
                         // println!("[CompObj] Compiling define {}", node);
                         let mut d = DefMacro::new(format!("`{}",node.attr["name"]));
                         for p in &node.child {
-                            d.ports.push(p.attr["name"].clone());
+                            d.ports.push(MacroPort::new(p));
                         }
                         lib.get_mut("!").unwrap().definition.insert(d.name.clone(),ObjDef::Macro(d));
                     }
@@ -306,7 +306,7 @@ impl CompObj {
                         // println!("[CompObj] {} | Compiling define {}", self.name, n);
                         let mut d = DefMacro::new(format!("`{}",n.attr["name"]));
                         for p in &n.child {
-                            d.ports.push(p.attr["name"].clone());
+                            d.ports.push(MacroPort::new(p));
                         }
                          self.definition.insert(d.name.clone(),ObjDef::Macro(d));
                     }
