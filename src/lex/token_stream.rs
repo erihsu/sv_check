@@ -237,6 +237,11 @@ impl<'a> TokenStream<'a> {
             }
             // println!("[parse_number] char {} ({}), fsm={:?}, base={:?}, has_xz={}", c,c.is_whitespace(),fsm,base,has_xz);
             match c {
+                // unsized literal
+                '0'|'1'|'x'|'z'|'X'|'Z' if fsm == NumParseState::Base => {
+                    fsm = NumParseState::Int;
+                    has_xz = true;
+                }
                 // x/z allowed for integer number only
                 'x'|'X'|'z'|'Z' => {
                     if base != NumBase::Binary && base != NumBase::Hexa && fsm!=NumParseState::Int && &s!="'" {
@@ -334,7 +339,14 @@ impl<'a> TokenStream<'a> {
             }
         }
         self.last_pos = self.source.pos;
-        let k = if fsm==NumParseState::Dec || fsm==NumParseState::Exp {TokenKind::Real} else {TokenKind::Integer};
+        // if fsm == NumParseState::Base {println!("[TokenStream] Integer {} | {:?} | {}", s,fsm,p);}
+        // let k = if fsm==NumParseState::Dec || fsm==NumParseState::Exp {TokenKind::Real} else {TokenKind::Integer};
+        let k = match fsm {
+            NumParseState::Dec | NumParseState::Exp => TokenKind::Real,
+            NumParseState::Base => {s.pop(); TokenKind::Casting}
+            _ => TokenKind::Integer
+        };
+        // println!("[TokenStream] Parse_number @ {} = {} | kind={} | FSM={:?}", p, s,k,fsm);
         Ok(Token::new(k,s,p))
     }
 

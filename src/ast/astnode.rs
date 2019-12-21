@@ -73,8 +73,13 @@ impl AstNode {
         s
     }
 
+    #[allow(dead_code)]
     pub fn has_scope(&self) -> bool {
         !self.child.is_empty() && self.child[0].kind == AstNodeKind::Scope
+    }
+
+    pub fn is_signed(&self) -> bool {
+        self.attr.get("signing").map_or(false,|x| x=="signed")
     }
 }
 

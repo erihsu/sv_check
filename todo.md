@@ -32,7 +32,7 @@ Reminder of special error/warning which needs to be caught by the tool eventuall
  [x] v0.2.0 : Improved parser (class) and basic source list
  [x] v0.3.0 : Setup AST walker to collect missing reference, calls, ...
  [x] v0.4.0 : Complete identifier check (including going through base class)
- [ ] v0.5.0 : Basic function/instance check (definition and number of parameters)
+ [x] v0.5.0 : Basic function/instance check (definition and number of parameters)
  [ ] v0.6.0 : Check hierarchical access
  [ ] v0.7.0 : Setup basic messaging system
  [ ] v0.8.0 : Incremental compilation

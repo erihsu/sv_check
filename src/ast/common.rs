@@ -488,7 +488,7 @@ pub fn parse_range(ts : &mut TokenStream) -> Result<String,SvError> {
         // println!("[parse_range]  {} (cnt s={}, p={})", t,cnt_s,cnt_p );
         if cnt_s==0 && t.kind != TokenKind::SquareLeft {
             if cnt_p > 0 {
-                return Err(SvError::new(SvErrorKind::Syntax, t.pos, "Unbalanced parenthesis".to_owned()));
+                return Err(SvError::new(SvErrorKind::Syntax, t.pos, "Unbalanced square bracket".to_owned()));
             }
             break;
         }
@@ -783,16 +783,11 @@ pub fn parse_struct(ts : &mut TokenStream) -> Result<AstNode,SvError> {
 pub fn parse_typedef(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), SvError> {
     ts.flush(0);
     let mut t = next_t!(ts,true);
-    let mut node_type;
+    let mut node_def = AstNode::new(AstNodeKind::Typedef);
     match t.kind {
-        TokenKind::KwEnum => {
-            node_type = parse_enum(ts,true)?;
-            if node_type.child.is_empty() {
-                return Ok(());
-            }
-        }
+        TokenKind::KwEnum => node_def.child.push(parse_enum(ts,true)?),
         TokenKind::KwStruct |
-        TokenKind::KwUnion  => node_type = parse_struct(ts)?,
+        TokenKind::KwUnion  => node_def.child.push(parse_struct(ts)?),
         TokenKind::KwReg         |
         TokenKind::Ident         |
         TokenKind::TypeIntAtom   |
@@ -801,32 +796,34 @@ pub fn parse_typedef(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), Sv
         TokenKind::TypeString    |
         TokenKind::TypeCHandle   |
         TokenKind::TypeEvent     => {
-            node_type = AstNode::new(AstNodeKind::Typedef);
+            let mut node_type = AstNode::new(AstNodeKind::Type);
             parse_data_type(ts,&mut node_type, 0)?;
+            node_def.child.push(node_type);
         }
         TokenKind::KwClass => {
             ts.flush(1);
-            node_type = AstNode::new(AstNodeKind::Typedef);
-            node_type.attr.insert("kind".to_owned(),t.value);
+            let mut node_type = AstNode::new(AstNodeKind::Type);
+            node_type.attr.insert("type".to_owned(),"class".to_owned());
+            node_type.attr.insert("name".to_owned(),t.value);
+            node_def.child.push(node_type);
         }
         _ => return Err(SvError::syntax(t, "typedef declaration, expecting type/enum/struct".to_owned()))
     }
     // Parse type name
     t = expect_t!(ts,"typedef", TokenKind::Ident, TokenKind::Macro);
-    node_type.kind = AstNodeKind::Typedef;
-    node_type.attr.insert("name".to_owned(),t.value);
+    node_def.attr.insert("name".to_owned(),t.value);
     // Optional unpacked dimension
     t = next_t!(ts,false);
     if t.kind == TokenKind::SquareLeft {
         let ws = parse_range(ts)?;
-        node_type.attr.insert("unpacked".to_owned(), ws);
+        node_def.attr.insert("unpacked".to_owned(), ws);
         t = next_t!(ts,false);
     }
     // Expect semi-colon
     if t.kind!=TokenKind::SemiColon {
         return Err(SvError::syntax(t, "package header. Expecting ;".to_owned()));
     }
-    node.child.push(node_type);
+    node.child.push(node_def);
     Ok(())
 }
 
@@ -936,6 +933,9 @@ pub fn parse_has_begin(ts : &mut TokenStream, node: &mut AstNode) -> Result<bool
     if t.kind == TokenKind::KwBegin {
         is_block = true;
         ts.flush(1);
+        if node.kind == AstNodeKind::Statement {
+            node.kind = AstNodeKind::Block;
+        }
         parse_label(ts,node,"block".to_owned())?;
     } else {
         ts.rewind(1);
@@ -1212,7 +1212,6 @@ pub fn parse_macro(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), SvEr
 }
 
 
-#[allow(unused_assignments)]
 /// Parse a virtual interface member declaration
 pub fn parse_vintf(ts : &mut TokenStream, node : &mut AstNode) -> Result<(), SvError> {
     ts.rewind(0);
@@ -1254,7 +1253,7 @@ pub fn parse_vintf(ts : &mut TokenStream, node : &mut AstNode) -> Result<(), SvE
 pub fn parse_struct_init(ts : &mut TokenStream, node : &mut AstNode) -> Result<(),SvError> {
     // Suppose the function is called when a token '{ has been read -> consume it
     ts.flush(1);
-    node.kind = AstNodeKind::StructInit;
+    let mut node_s = AstNode::new(AstNodeKind::StructInit);
     // Check the second next token: a colon indicate a structure
     next_t!(ts,true);
     let mut t = next_t!(ts,true);
@@ -1278,31 +1277,30 @@ pub fn parse_struct_init(ts : &mut TokenStream, node : &mut AstNode) -> Result<(
         if is_struct {
             n.attr.insert("fieldName".to_owned(),s);
         }
-        node.child.push(n);
+        node_s.child.push(n);
         loop_args_break_cont!(ts,"struct init",CurlyRight);
     }
+    node.child.push(node_s);
     Ok(())
 }
 
 pub fn parse_expr(ts : &mut TokenStream, cntxt: ExprCntxt, allow_type: bool) -> Result<AstNode, SvError> {
-    let mut node_e = AstNode::new(AstNodeKind::Expr);
-    let mut cnt_c = 0;
-    let mut cnt_s = 0;
-    let mut cnt_p = 0;
+    let mut node_e = AstNode::new(if cntxt==ExprCntxt::ExprGroup {AstNodeKind::ExprGroup} else {AstNodeKind::Expr});
     let mut is_first = true;
     let mut allow_ident = true;
-    let mut prev_kind = TokenKind::SemiColon;
+    let mut allow_op    = true;
+    let mut prev_tkind = TokenKind::SemiColon;
     let mut t;
     // ts.display_status("parse_expr: start");
     loop {
         t = next_t!(ts,true);
-        // println!("[parse_expr] Token = {}, cnt c={}, s={}, p={} (cntxt={:?}, first={}, allow_ident={})", t,cnt_c,cnt_s,cnt_p, cntxt, is_first, allow_ident);
+        // println!("[parse_expr] Token = {}, (cntxt={:?}, first={}, allow ident={} / op={} )", t,cntxt, is_first, allow_ident,allow_op);
         match t.kind {
             // Statement: end on semi-colon or comma: rewind it and end
             TokenKind::SemiColon if cntxt==ExprCntxt::StmtList || cntxt==ExprCntxt::Stmt => { ts.rewind(0); break; },
             TokenKind::SemiColon if cntxt!=ExprCntxt::StmtList && cntxt!=ExprCntxt::Stmt  => return Err(SvError::syntax(t, "expression".to_owned())),
             // End on comma (if not inside curly braces)
-            TokenKind::Comma if cnt_c==0 => {
+            TokenKind::Comma => {
                 if cntxt==ExprCntxt::Stmt || cntxt==ExprCntxt::Arg || cntxt==ExprCntxt::ExprGroup  {
                     return Err(SvError::syntax(t, "expression".to_owned()));
                 }
@@ -1313,80 +1311,84 @@ pub fn parse_expr(ts : &mut TokenStream, cntxt: ExprCntxt, allow_type: bool) -> 
             TokenKind::TickCurly if is_first  => parse_struct_init(ts, &mut node_e)?,
             TokenKind::CurlyLeft => {
                 ts.flush(0);
-                // Concatenation operator
-                if is_first {
-                    node_e.kind = AstNodeKind::Concat;
+                allow_op    = true;
+                // println!("[parse_expr] CurlyLeft, (cntxt={:?}, first={}, allow ident={} / op={} ) \n Last = {:?}",cntxt, is_first, allow_ident,allow_op,node_e.child.last());
+                if let Some(c) = node_e.child.last() {
+                    if (c.kind==AstNodeKind::Value || c.kind==AstNodeKind::Identifier || c.kind==AstNodeKind::ExprGroup) && cntxt == ExprCntxt::FieldList {
+                        let mut nc = AstNode::new(AstNodeKind::Replication);
+                        loop {
+                            nc.child.push(parse_expr(ts,ExprCntxt::FieldList,false)?);
+                            loop_args_break_cont!(ts,"replication",CurlyRight);
+                        }
+                        node_e.child.push(nc);
+                        allow_ident = false;
+                        continue;
+                    }
+                }
+                if allow_ident {
+                    // Concatenation operator
+                    let mut nc = AstNode::new(AstNodeKind::Concat);
                     loop {
-                        node_e.child.push(parse_expr(ts,ExprCntxt::FieldList,false)?);
+                        nc.child.push(parse_expr(ts,ExprCntxt::FieldList,false)?);
                         loop_args_break_cont!(ts,"concatenation",CurlyRight);
                     }
-                    // println!("{}", node_e);
-                }
-                // Check for replication operator
-                else if (node_e.kind==AstNodeKind::Value || node_e.kind==AstNodeKind::Identifier || node_e.kind==AstNodeKind::ExprGroup) && cntxt == ExprCntxt::FieldList {
-                    node_e.kind = AstNodeKind::Replication;
-                    loop {
-                        node_e.child.push(parse_expr(ts,ExprCntxt::FieldList,false)?);
-                        loop_args_break_cont!(ts,"replication",CurlyRight);
-                    }
-
+                    allow_ident = false;
+                    node_e.child.push(nc);
                 } else {
                     return Err(SvError::syntax(t, "expression".to_owned()));
                 }
+                // println!("{}", node_e);
             }
             TokenKind::CurlyRight  => {
-                if cnt_c == 0 {
-                    if cntxt==ExprCntxt::FieldList {
-                        ts.rewind(1); // reset to } token to be used by caller
-                        break;
-                    } else {
-                        return Err(SvError::syntax(t, "expression".to_owned()));
-                    }
+                if cntxt==ExprCntxt::FieldList {
+                    ts.rewind(1); // reset to } token to be used by caller
+                    break;
                 }
-                cnt_c -= 1
+                return Err(SvError::syntax(t, "expression".to_owned()));
             }
-            TokenKind::SquareLeft  => cnt_s += 1,
+            // TODO: create slice node on SquareLeft !
+            TokenKind::SquareLeft  => {
+                parse_opt_slice(ts,&mut node_e,true)?;
+                allow_ident = false;
+                allow_op    = true;
+                // cnt_s += 1,
+            }
             TokenKind::SquareRight => {
-                if cnt_s == 0 {
-                    if cntxt == ExprCntxt::BracketMsb || cntxt == ExprCntxt::BracketLsb {
-                        ts.rewind(1);
-                        break;
-                    } else {
-                        return Err(SvError::syntax(t, "expression".to_owned()));
-                    }
+                if cntxt == ExprCntxt::BracketMsb || cntxt == ExprCntxt::BracketLsb {
+                    ts.rewind(1);
+                    break;
                 }
-                cnt_s -= 1
+                return Err(SvError::syntax(t, "expression".to_owned()));
             }
             TokenKind::OpRange if cntxt == ExprCntxt::BracketMsb => {ts.rewind(1);break;},
             TokenKind::Colon if cntxt == ExprCntxt::BracketMsb   => {ts.rewind(1);break;},
             TokenKind::Colon if cntxt == ExprCntxt::Question     => {ts.rewind(1);break;},
-            TokenKind::ParenLeft   => {
+            TokenKind::ParenLeft if allow_ident => {
                 ts.flush(1); // Consume left parenthesis
-                node_e.kind = AstNodeKind::ExprGroup;
                 node_e.child.push(parse_expr(ts,ExprCntxt::ExprGroup,false)?);
                 ts.flush(1); // Consume right parenthesis
+                allow_ident = false;
+                allow_op    = true;
             },
-            TokenKind::ParenRight  => {
-                if cnt_p == 0 {
-                    match cntxt {
-                        ExprCntxt::ArgList | ExprCntxt::Arg | ExprCntxt::ExprGroup | ExprCntxt::Sensitivity => {
-                            ts.rewind(1);
-                            break;
-                        },
-                        _ => return Err(SvError::syntax(t, "expression".to_owned()))
-                    }
+            TokenKind::ParenRight => {
+                match cntxt {
+                    ExprCntxt::ArgList | ExprCntxt::Arg | ExprCntxt::ExprGroup | ExprCntxt::Sensitivity => {
+                        ts.rewind(1);
+                        break;
+                    },
+                    _ => return Err(SvError::syntax(t, "expression".to_owned()))
                 }
-                ts.flush(1);
-                cnt_p -= 1
             }
             TokenKind::KwOr if cntxt==ExprCntxt::Sensitivity => {ts.rewind(1);break;},
             TokenKind::Casting => {
-                node_e = AstNode::new(AstNodeKind::ExprGroup);
-                node_e.attr.insert("casting".to_owned(),t.value);
                 ts.flush(1); // Consume Casting operator
                 expect_t!(ts,"casting expression",TokenKind::ParenLeft);
-                node_e.child.push(parse_expr(ts,ExprCntxt::Arg,false)?);
+                let mut nc = parse_expr(ts,ExprCntxt::Arg,false)?;
+                nc.attr.insert("casting".to_owned(),t.value);
                 ts.flush(1); // Consume right parenthesis
+                node_e.child.push(nc);
+                allow_ident = false;
+                allow_op    = true;
             }
             //
             TokenKind::KwNew if is_first => {
@@ -1424,7 +1426,7 @@ pub fn parse_expr(ts : &mut TokenStream, cntxt: ExprCntxt, allow_type: bool) -> 
                 }
                 ts.rewind(0);
                 allow_ident = false;
-                // TODO : either check foollowing is a context terminator
+                allow_op    = false;
             }
             //
             TokenKind::KwSuper |
@@ -1433,7 +1435,7 @@ pub fn parse_expr(ts : &mut TokenStream, cntxt: ExprCntxt, allow_type: bool) -> 
                 if ! allow_ident {
                     match t.value.as_ref() {
                         "fs" |"ps" |"ns" |"us" |"ms" | "s" => {
-                            match prev_kind {
+                            match prev_tkind {
                                 TokenKind::Integer | TokenKind::Real => {
                                     node_e.attr.insert("value".to_owned(), t.value);
                                     ts.flush(1);
@@ -1444,30 +1446,31 @@ pub fn parse_expr(ts : &mut TokenStream, cntxt: ExprCntxt, allow_type: bool) -> 
                         _ => return Err(SvError::syntax(t, "expression.".to_owned()))
                     }
                 } else {
-                    if node_e.kind == AstNodeKind::Expr {
-                        node_e = parse_member_or_call(ts,true)?;
-                    } else {
-                        node_e.child.push(parse_member_or_call(ts,true)?);
-                    }
-                    allow_ident = false;
+                    node_e.child.push(parse_member_or_call(ts,true)?);
                 }
+                allow_ident = false;
+                allow_op    = true;
             },
             TokenKind::Macro if allow_ident => {
                 parse_macro(ts,&mut node_e)?;
                 allow_ident = false;
+                allow_op    = true;
             }
             TokenKind::Str     |
             TokenKind::Integer |
             TokenKind::KwNull  |
             TokenKind::Real     if allow_ident => {
-                node_e.kind = AstNodeKind::Value;
-                node_e.attr.insert("value".to_owned(), t.value);
+                let mut nc = AstNode::new(AstNodeKind::Value);
+                nc.attr.insert("value".to_owned(), t.value);
+                node_e.child.push(nc);
                 allow_ident = false;
+                allow_op    = true;
                 ts.flush(1);
             }
-            TokenKind::Integer if prev_kind==TokenKind::Integer => {
+            TokenKind::Integer if prev_tkind==TokenKind::Integer => {
                 if t.value.starts_with('\'') {
-                    node_e.attr.insert("value".to_owned(), format!("{}{}", node_e.attr["value"],t.value));
+                    node_e.child.last_mut().unwrap().attr.insert("value".to_owned(), t.value);
+                    // node_e.child.last().unwrap().attr.insert("value".to_owned(), format!("{}{}", node_e.attr["value"],t.value));
                     ts.flush(1);
                 } else {
                     return Err(SvError::syntax(t, "expression".to_owned()))
@@ -1475,12 +1478,13 @@ pub fn parse_expr(ts : &mut TokenStream, cntxt: ExprCntxt, allow_type: bool) -> 
             }
             // Operator with one operand
             // TokenKind::OpBang => {
-            TokenKind::OpBang if is_first => {
-                allow_ident = false;
+            TokenKind::OpBang if allow_ident => {
+                allow_ident = true;
+                allow_op    = false;
                 ts.flush(1);
-                node_e.kind = AstNodeKind::Operation;
-                node_e.attr.insert("kind".to_owned(),t.value.clone());
-                node_e.child.push(parse_expr(ts,cntxt.clone(),false)?);
+                let mut nc = AstNode::new(AstNodeKind::Operation);
+                nc.attr.insert("kind".to_owned(),t.value.clone());
+                node_e.child.push(nc);
                 // println!("{}", node_e);
             }
             // Operator with one or two operand
@@ -1492,20 +1496,26 @@ pub fn parse_expr(ts : &mut TokenStream, cntxt: ExprCntxt, allow_type: bool) -> 
             TokenKind::OpOr       |
             TokenKind::OpNor      |
             TokenKind::OpXor      |
-            TokenKind::OpXnor      => {
-                allow_ident = false;
+            TokenKind::OpXnor     if allow_op || allow_ident => {
+                allow_ident = true;
+                allow_op    = false;
                 ts.flush(1);
-                if is_first {
-                    node_e.kind = AstNodeKind::Operation;
-                } else {
-                    let node_lhs = node_e;
-                    node_e = AstNode::new(AstNodeKind::Operation);
-                    node_e.child.push(node_lhs);
-                }
-                node_e.attr.insert("kind".to_owned(),t.value.clone());
-                node_e.child.push(parse_expr(ts,cntxt.clone(),false)?);
+                let mut nc = AstNode::new(AstNodeKind::Operation);
+                nc.attr.insert("kind".to_owned(),t.value.clone());
+                node_e.child.push(nc);
                 // println!("{}", node_e);
             },
+            // Streaming operator
+            TokenKind::OpSL |
+            TokenKind::OpSR if is_first && cntxt==ExprCntxt::FieldList=> {
+                allow_ident = true;
+                allow_op    = false;
+                ts.flush(1);
+                let mut nc = AstNode::new(AstNodeKind::Operation);
+                nc.attr.insert("kind".to_owned(),t.value.clone());
+                // TODO: maybe improve check here : optional slice size followed by concatenation
+                node_e.child.push(nc);
+            }
             // Operator with two operand
             TokenKind::OpStar     |
             TokenKind::OpDiv      |
@@ -1525,31 +1535,27 @@ pub fn parse_expr(ts : &mut TokenStream, cntxt: ExprCntxt, allow_type: bool) -> 
             TokenKind::OpEq2Que   |
             TokenKind::OpDiff     |
             TokenKind::OpDiff2    |
-            TokenKind::OpDiffQue  => {
-                let node_lhs = node_e;
-                node_e = AstNode::new(AstNodeKind::Operation);
-                node_e.attr.insert("kind".to_owned(),t.value.clone());
+            TokenKind::OpDiffQue  if allow_op && !is_first => {
+                allow_ident = true;
+                allow_op    = false;
                 ts.flush(1);
-                node_e.child.push(node_lhs);
-                node_e.child.push(parse_expr(ts,cntxt.clone(),false)?);
-                // println!("Two Operand : {}", node_e);
-                allow_ident = false;
+                let mut nc = AstNode::new(AstNodeKind::Operation);
+                nc.attr.insert("kind".to_owned(),t.value.clone());
+                node_e.child.push(nc);
             },
             TokenKind::KwInside if !is_first => {
-                let node_lhs = node_e;
-                node_e = AstNode::new(AstNodeKind::Operation);
-                node_e.attr.insert("kind".to_owned(),t.value.clone());
+                let mut nc = AstNode::new(AstNodeKind::Constraint);
+                nc.attr.insert("kind".to_owned(),t.value.clone());
                 ts.flush(1);
-                node_e.child.push(node_lhs);
                 expect_t!(ts,"inside expression",TokenKind::CurlyLeft);
-                let mut node_rhs = AstNode::new(AstNodeKind::ExprGroup);
                 loop {
-                    node_rhs.child.push(parse_expr(ts,ExprCntxt::FieldList,false)?);
+                    nc.child.push(parse_expr(ts,ExprCntxt::FieldList,false)?);
                     loop_args_break_cont!(ts,"inside expression",CurlyRight);
                 }
-                node_e.child.push(node_rhs);
+                node_e.child.push(nc);
                 // println!("{}", node_e);
                 allow_ident = false;
+                allow_op    = true;
             }
             TokenKind::KwWith if !is_first => {
                 t = next_t!(ts,true);
@@ -1561,36 +1567,43 @@ pub fn parse_expr(ts : &mut TokenStream, cntxt: ExprCntxt, allow_type: bool) -> 
                     }
                     TokenKind::ParenLeft => {
                         ts.flush(2);
-                        node_e.child.push(parse_expr(ts,ExprCntxt::Arg,false)?);
+                        let mut nc = AstNode::new(AstNodeKind::Constraint);
+                        nc.attr.insert("kind".to_owned(),"with".to_owned());
+                        nc.child.push(parse_expr(ts,ExprCntxt::Arg,false)?);
+                        node_e.child.push(nc);
                         ts.flush(1);
                     }
                     _ => return Err(SvError::syntax(t, "with constraint. Expecting ( or {".to_owned()))
                 }
                 allow_ident = false;
+                allow_op    = true;
             }
             TokenKind::OpIncrDecr => {
-                if is_first {
-                    node_e.attr.insert("incr_decr".to_owned(),t.value);
-                    node_e.attr.insert("op".to_owned(),"pre".to_owned());
+                let mut nc = AstNode::new(AstNodeKind::Operation);
+                nc.attr.insert("kind".to_owned(),t.value.clone());
+                if is_first || !allow_op {
+                    nc.attr.insert("op".to_owned(),"pre".to_owned());
                     allow_ident = true;
+                    allow_op    = false;
                 }
-                else {
-                    node_e.attr.insert("incr_decr".to_owned(),t.value);
-                    node_e.attr.insert("op".to_owned(),"post".to_owned());
+                else if allow_op {
+                    nc.attr.insert("op".to_owned(),"post".to_owned());
                     allow_ident = false;
+                    allow_op    = true;
+                } else {
+                    return Err(SvError::syntax(t, "with constraint. Expecting ( or {".to_owned()));
                 }
+                node_e.child.push(nc);
                 ts.flush(1);
             }
             // Composed assignement are allowed in expression when surrounded by parenthesis
-            TokenKind::OpCompAss if cntxt==ExprCntxt::ExprGroup => {
-                let node_lhs = node_e;
-                node_e = AstNode::new(AstNodeKind::Operation);
-                node_e.attr.insert("kind".to_owned(),t.value.clone());
+            TokenKind::OpCompAss if cntxt==ExprCntxt::ExprGroup && !is_first && allow_op => {
+                let mut nc = AstNode::new(AstNodeKind::Operation);
+                nc.attr.insert("kind".to_owned(),t.value.clone());
+                node_e.child.push(nc);
+                allow_ident = true;
+                allow_op    = false;
                 ts.flush(1);
-                node_e.child.push(node_lhs);
-                node_e.child.push(parse_expr(ts,ExprCntxt::Arg,false)?);
-                expect_t!(ts,"composed assignement expression",TokenKind::ParenRight);
-                break;
             }
             //
             TokenKind::Que if !is_first => {
@@ -1607,9 +1620,10 @@ pub fn parse_expr(ts : &mut TokenStream, cntxt: ExprCntxt, allow_type: bool) -> 
                 break;
             }
             //
-            TokenKind::SystemTask => {
+            TokenKind::SystemTask if allow_ident => {
                 node_e.child.push(parse_system_task(ts)?);
                 allow_ident = false;
+                allow_op    = true;
             }
             //
             TokenKind::TypeIntVector if allow_type => {
@@ -1638,21 +1652,16 @@ pub fn parse_expr(ts : &mut TokenStream, cntxt: ExprCntxt, allow_type: bool) -> 
             _ => return Err(SvError::syntax(t, "expression".to_owned()))
         }
         is_first = false;
-        prev_kind = t.kind;
-    }
-    // Final checks before returning the expression
-    if cnt_c != 0 {
-        return Err(SvError::syntax(t, "Unbalanced curly braces".to_owned()));
-    }
-    if cnt_p != 0 {
-        return Err(SvError::syntax(t, "Unbalanced parenthesis".to_owned()));
-    }
-    if cnt_s != 0 {
-        return Err(SvError::syntax(t, "Unbalanced square bracket".to_owned()));
+        prev_tkind = t.kind;
     }
     // println!("[Expr] {}", node_e);
     // ts.display_status("parse_expr done");
-    Ok(node_e)
+    // Remove top layer Expr if only one child
+    if node_e.child.len()==1 {
+        Ok(node_e.child.into_iter().nth(0).unwrap())
+    } else {
+        Ok(node_e)
+    }
 }
 
 pub fn parse_member_or_call(ts : &mut TokenStream, is_first: bool) -> Result<AstNode, SvError> {
@@ -1692,12 +1701,14 @@ pub fn parse_member_or_call(ts : &mut TokenStream, is_first: bool) -> Result<Ast
             TokenKind::Comma | TokenKind::ParenRight => {
                 n = ns;
                 n.kind = AstNodeKind::Type;
+                n.attr.insert("name".to_owned(),name.clone());
                 ts.rewind(1);
                 return Ok(n);
             }
             TokenKind::Ident => {
                 n = ns; // Might need to update some attr of ns ? Kind ?
                 n.kind = AstNodeKind::Declaration;
+                n.attr.insert("name".to_owned(),name.clone());
                 ts.rewind(1);
                 parse_var_decl_name(ts, &mut n,ExprCntxt::StmtList,false)?;
                 loop {

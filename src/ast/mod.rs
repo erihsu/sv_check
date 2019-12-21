@@ -41,7 +41,7 @@ impl Ast {
                 match x {
                     Ok(t) => {
                         match t.kind {
-                            // Skip Comment / Atrribute (TEMP)
+                            // Skip Comment / Attribute (TEMP)
                             // TODO: actually use them to try associate comment with a node
                             TokenKind::Comment => {},
                             TokenKind::Macro => parse_macro(ts,&mut self.tree)?,

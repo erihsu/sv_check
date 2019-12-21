@@ -3,4 +3,7 @@
 
 mod prototype;
 mod comp_obj;
+mod def_type;
+mod lib_uvm;
+mod lib_std;
 pub mod comp_lib;

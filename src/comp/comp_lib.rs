@@ -1,675 +1,799 @@
 // This file is part of sv_check and subject to the terms of MIT Licence
 // Copyright (c) 2019, clams@mail.com
 
+#[allow(unused_imports)]
 use std::collections::{HashMap, HashSet};
 
 use crate::ast::Ast;
+#[allow(unused_imports)]
 use crate::ast::astnode::{AstNode,AstNodeKind};
 
-use crate::comp::comp_obj::{CompObj,ObjDef};
-use crate::comp::prototype::{DefMethod,DefMacro,MacroPort,Port,PortDir,SignalType};
+use crate::comp::comp_obj::{ObjDef};
+use crate::comp::prototype::*;
+use crate::comp::def_type::{DefType,TypeVIntf,TYPE_INT};
+use crate::comp::lib_uvm::get_uvm_lib;
+
+type LinkCntxt = (AstNodeKind,String);
 
 #[derive(Debug, Clone)]
 pub struct CompLib {
     pub name   : String,
-    pub objects: HashMap<String, CompObj>
+    pub objects: HashMap<String, ObjDef>,
+    cntxt : Vec<LinkCntxt>
 }
 
+// Structure containing local information for a block:
+// namely import dan signal/type definition
+#[derive(Debug, Clone)]
+pub struct LocalInfo {
+    pub imports: Vec<String>,
+    pub defs   : Vec<HashMap<String,ObjDef>>,
+    pub obj    : Option<ObjDef>,
+}
+
+impl LocalInfo {
+
+    pub fn add_def(&mut self, name: String, d: ObjDef) {
+        // Check it was not already defined
+        // for i in &self.defs {
+        //     if i.contains_key(&name) {
+        //         println!("[Linking] Redefinition of {} : \n  Prev = {:?}\n  New  = {:?}", name, i[&name], d);
+        //         return;
+        //     }
+        // }
+        // Insert new def
+        self.defs.last_mut().unwrap().insert(name,d);
+    }
+}
+
+#[allow(unused_mut)]
 impl CompLib {
 
     // Create a library containing definition of all object compiled
     // Try to fix any missing reference, analyze hierarchical access, ...
     pub fn new(name: String, ast_list: Vec<Ast>, ast_inc: HashMap<String,Ast>) -> CompLib {
-        let mut lib = CompLib {name, objects:HashMap::new()};
-        let mut missing_scope : HashSet<String> = HashSet::new();
+        let mut lib = CompLib {name, objects:HashMap::new(), cntxt:Vec::new()};
+        // let mut missing_scope : HashSet<String> = HashSet::new();
+
         // Create a top object for type/localparam definition without scope
-        lib.objects.insert("!".to_owned(),CompObj::new("!".to_owned()));
         lib.add_std_obj(); // Add definition for all standard lib classes
-        // Extract object from all ASTs
-        for ast in ast_list {
-            CompObj::from_ast(&ast, &ast_inc, &mut lib.objects);
-        }
         lib.objects.insert("uvm_pkg".to_owned(),get_uvm_lib());
-        // Linking
-        for (name,o) in &lib.objects {
-            // println!("[{}] Linking ...", name);
-            let mut import_hdr = o.import_hdr.clone();
-            import_hdr.push("!".to_owned());
-            let mut import_body = o.import_body.clone();
-            // import_body.extend(&import_hdr);
-            import_body.append(&mut import_hdr.clone());
-            lib.fix_unref(o,&mut missing_scope,&mut import_hdr,&mut import_body);
-            lib.check_call(o,&mut missing_scope,&mut import_body);
-            // Add current scope to the import
-            import_body.push(name.clone());
-            // Check definition
-            for v in o.definition.values() {
-                match v {
-                    ObjDef::Class(def) => {
-                        // println!("[{}] Should check unresolved in {:?}", name,def);
-                        lib.fix_unref(def,&mut missing_scope,&mut import_hdr,&mut import_body);
-                        lib.check_call(def,&mut missing_scope,&mut import_body);
+
+        // Extract object definition from all ASTs
+        for ast in &ast_list {
+            ObjDef::from_ast(&ast, &ast_inc, &mut lib.objects);
+        }
+
+        // Second pass : check types and signals are defined, module instance are correct ...
+        for ast in ast_list {
+            let mut li = LocalInfo{imports: Vec::new(),defs: Vec::new(), obj: None};
+            lib.check_ast(&ast.tree, &ast_inc, &mut li, false);
+        }
+
+        lib
+    }
+
+    pub fn check_ast(&mut self, node: &AstNode, ast_inc: & HashMap<String,Ast>, li: &mut LocalInfo, new_cntxt: bool) {
+        let mut port_dir = PortDir::Input; // Default port direction to input
+        let mut port_idx = -1 as i16;
+        if new_cntxt {
+            li.defs.push(HashMap::new());
+        }
+        for nc in &node.child {
+            match nc.kind {
+                // Blocks
+                AstNodeKind::Interface |
+                AstNodeKind::Module    |
+                AstNodeKind::Package   |
+                AstNodeKind::Class     => {
+                    // TODO: scope might be best describe as a vector of string ...
+                    let mut scope = None;
+                    if let Some((_,v)) = self.cntxt.get(0) {
+                        scope = Some(v.clone());
                     }
-                    // Check instance paramters
-                    ObjDef::Instance => {}
+                    if let Some(x) = self.find_def(&nc.attr["name"],scope.as_ref(),li,false,false) {
+                        li.obj = Some(x.clone());
+                    } else {
+                        li.obj = None;
+                    }
+                    self.cntxt.push((nc.kind.clone(), nc.attr["name"].clone()));
+                    // println!("[Linking] {} {}", nc.kind, nc.attr["name"]);
+                    self.check_ast(&nc, &ast_inc, li,true);
+                    self.cntxt.pop();
+                }
+                AstNodeKind::Process   |
+                AstNodeKind::Branch    |
+                AstNodeKind::Fork      |
+                AstNodeKind::Block     |
+                AstNodeKind::Case      => {
+                    self.check_ast(&nc, &ast_inc, li,true);
+                }
+                // AstNodeKind::Fork => {
+                //     println!("[Linking] {:?} | Checking Fork \n{:#?}", self.cntxt, nc);
+                //     self.check_ast(&nc, &ast_inc, li,true);
+                // }
+                AstNodeKind::LoopFor => {
+                    // TODO: add loop variable to the stack
+                    self.check_ast(&nc, &ast_inc, li,true);
+                }
+                AstNodeKind::Loop => {
+                    // TODO: add loop variable to the stack
+                    li.defs.push(HashMap::new());
+                    // Extract indices from the foreach
+                    if nc.attr.get("kind")==Some(&"foreach".to_string()) {
+                        // println!("[Linking] {:?} | Loop Foreach\n {}", self.cntxt, nc.child[0]);
+                        let mut ncc = &nc.child[0]; // Foreach loop always have at least one child
+                        loop {
+                            // Check if no child: should never happen ...
+                            if ncc.child.is_empty() {break;}
+                            // When found the slice extract all identifier
+                            if ncc.kind == AstNodeKind::Slice {
+                                // println!("[Linking] {:?} | Loop Foreach\n {}", self.cntxt, ncc);
+                                for x in &ncc.child {
+                                    if x.kind != AstNodeKind::Identifier {
+                                        println!("[Linking] {:?} | Unable to extract foreach variables in: {}", self.cntxt, ncc);
+                                        break;
+                                    }
+                                    let mb = DefMember{
+                                        name: x.attr["name"].clone(),
+                                        kind: TYPE_INT,
+                                        unpacked : None, is_const: false, access: Access::Public};
+                                    li.add_def(mb.name.clone(),ObjDef::Member(mb));
+                                }
+                                break;
+                            }
+                            ncc = &ncc.child[0];
+                        }
+                    }
+                    self.check_ast(&nc, &ast_inc, li,false);
+                    li.defs.pop();
+                }
+                // Sub-part
+                AstNodeKind::Ports  |
+                AstNodeKind::Params |
+                AstNodeKind::Header |
+                AstNodeKind::Body   => {
+                    self.check_ast(&nc, &ast_inc, li,false);
+                }
+                // Include node
+                AstNodeKind::Directive => {
+                    nc.attr.get("include").map(
+                        |i| ast_inc.get(i).map_or_else(
+                            || if i!="uvm_macros.svh" {println!("Include {} not found", i)},
+                            |a| self.check_ast(&a.tree,ast_inc,li,false)
+                        )
+                    );
+                },                  // Update local info
+                AstNodeKind::Import => {
+                    // Import DPI function/task
+                    if nc.attr.contains_key("dpi") {
+                        if nc.attr["kind"]=="import" {
+                            if nc.child.len() == 1 {
+                                let m = DefMethod::from(&nc.child[0]);
+                                li.add_def(m.name.clone(),ObjDef::Method(m));
+                            } else {
+                                println!("[Linking] {:?} | Skipping DPI import : {:?}", self.cntxt, nc);
+                            }
+                        }
+                    }
+                    // Import package
+                    else {
+                        for ncc in &nc.child {
+                            // Check package name is known
+                            if let Some(ObjDef::Package(_)) = self.objects.get(&ncc.attr["pkg_name"]) {
+                                if ncc.attr["name"] == "*" {
+                                    li.imports.push(ncc.attr["pkg_name"].clone());
+                                } else {
+                                    // TODO : check that the name exist in the context
+                                    //        decide how this should be handled in the local info:
+                                    //        maybe copy the def from the import ?
+                                    println!("[Linking] {:?} | Skipping Import {:?}", self.cntxt, ncc.attr);
+                                }
+                            } else {
+                                println!("[Linking] {:?} | Import Package {} not found", self.cntxt, ncc.attr["pkg_name"]);
+                            }
+                        }
+                    }
+                }
+                AstNodeKind::Declaration => {
+                    let m = DefMember::new(nc);
+                    // Check type was defined
+                    if nc.child.get(0).map(|x| x.kind==AstNodeKind::Enum) == Some(true) {
+                        self.add_enum_def(&nc.child[0],li);
+                    }
+                    self.check_type(nc,li);
+                    // add_def ensure it was not already defined
+                    li.add_def(m.name.clone(),ObjDef::Member(m));
+                }
+                AstNodeKind::Type if self.cntxt.last().unwrap().0 == AstNodeKind::Function => {
+                    let t = DefType::from(nc);
+                    let m = DefMember{
+                        name: self.cntxt.last().unwrap().1.clone(),
+                        kind : t, is_const: false, unpacked: None, access: Access::Local};
+                    if let DefType::User(k) = &m.kind {
+                        if self.find_def(&k.name,k.scope.as_ref(),li,false,false).is_none() {
+                            println!("[Linking] {:?} | Type {:?} undeclared", self.cntxt, k.name);
+                        }
+                    }
+                    // println!("[Linking] {:?} | Method {} has return type {:?}", self.cntxt, m.name,m.kind);
+                    li.add_def(m.name.clone(),ObjDef::Member(m));
+                }
+                AstNodeKind::VIntf => {
+                    let t = DefType::VIntf(TypeVIntf::from(nc));
+                    for ncc in &nc.child {
+                        match ncc.kind {
+                            AstNodeKind::Identifier => {
+                                let m = DefMember{
+                                    name : ncc.attr["name"].clone(),
+                                    kind : t.clone(),
+                                    is_const : false,
+                                    unpacked : ncc.attr.get("unpacked").map_or(None,|x| Some(x.clone())),
+                                    access   : Access::Public // TODO
+                                };
+                                li.add_def(m.name.clone(),ObjDef::Member(m));
+                            }
+                            AstNodeKind::Params => {}
+                            _ => println!("[Linking] {:?} | VIntf Skipping {}",self.cntxt, ncc.kind),
+                        }
+                    }
+                }
+                AstNodeKind::Typedef => {
+                    if let Some(c) = nc.child.get(0) {
+                        let d = DefType::from(c);
+                        match &d {
+                            // Add Enum value if any
+                            DefType::Enum(te) => {
+                                // println!("[Linking] Typedef enum {:?}", te);
+                                for tev in te {
+                                    li.add_def(tev.clone(),ObjDef::EnumValue(nc.attr["name"].clone()));
+                                }
+                                li.add_def(nc.attr["name"].clone(),ObjDef::Type(d));
+                            }
+                            // Expand forward declaration
+                            DefType::None => {
+                                // println!("[Linking] {:?} | Forward declaration for {}", self.cntxt, nc.attr["name"]);
+                                let mut scope = None;
+                                if let Some((_,v)) = self.cntxt.get(0) {
+                                    scope = Some(v.clone());
+                                }
+                                if let Some(fd) = self.find_def(&nc.attr["name"],scope.as_ref(),li,false,true) {
+                                    // println!("[Linking] {:?} | Forward declaration for {} = {:?}", self.cntxt, nc.attr["name"],fd);
+                                    let fdc = fd.clone();
+                                    li.add_def(nc.attr["name"].clone(),fdc);
+                                } else {
+                                    println!("[Linking] {:?} | Type {:?} undeclared", self.cntxt, nc.attr["name"]);
+                                }
+                            }
+                            _ => li.add_def(nc.attr["name"].clone(),ObjDef::Type(d))
+                        }
+                        // Add typedef definition
+                        ;
+                    }
+                }
+                AstNodeKind::Enum => self.add_enum_def(nc,li),
+                AstNodeKind::Port => {
+                    let mut p = DefPort::new(nc,&mut port_dir,&mut port_idx);
+                    li.add_def(p.name.clone(),ObjDef::Port(p));
+                    // Handle Ansi Port, check type
+                    // if self.ports.contains_key(&p.name) {
+                    //     p.idx = self.ports[&p.name].idx;
+                    //     self.ports.insert(p.name.clone(),p);
+                    // } else {
+                    //     println!("[{:?}] Port {} definition without declaration", self.name,p.name);
+                    // }
+                }
+                AstNodeKind::Param => {
+                    let p = DefParam::new(nc,&mut port_idx); // Index is actually irrelevant here so reuse the ame as port
+                    li.add_def(p.name.clone(),ObjDef::Param(p));
+                }
+                AstNodeKind::Task |
+                AstNodeKind::Function => {
+                    // let m = DefMethod::from(nc);
+                    // li.add_def(m.name.clone(),ObjDef::Method(m));
+                    // Get return type if any and auto-declare
+                    // Check content of the method
+                    // println!("[Linking] {:?} | Parsing childs of methods {:?} :\n{:?}", self.cntxt, nc.attr,nc.child);
+                    self.cntxt.push((nc.kind.clone(), nc.attr["name"].clone()));
+                    self.check_ast(&nc, &ast_inc, li,true);
+                    self.cntxt.pop();
+                }
+                // Interface defintion
+                AstNodeKind::Modport => {
+                    let d : DefModport = nc.child.iter().map(|x| x.attr["name"].clone()).collect();
+                    li.add_def(nc.attr["name"].clone(),ObjDef::Modport(d));
+                    // TODO: add check
+                }
+                // Handle Non-Ansi port declaration
+                AstNodeKind::Clocking => {
+                    // TODO: update once parsing actually extract all part of the clocking block
+                    let d : DefClocking = nc.child.iter()
+                                            .filter(|x| x.kind==AstNodeKind::Identifier)
+                                            .map(|x| x.attr["name"].clone())
+                                            .collect();
+                    // println!("[{:?}] Clocking {:?} : {:?} \n\t{:#?}", self.name, nc.attr["name"], d,n);
+                    li.add_def(nc.attr["name"].clone(),ObjDef::Clocking(d));
+                    // TODO: add check
+                }
+                AstNodeKind::Covergroup => {
+                    let mut d = DefCovergroup::new(nc.attr["name"].clone());
+                    li.add_def(nc.attr["name"].clone(),ObjDef::Covergroup(d));
+                    // TODO: add check
+                }
+                //-----------------------------
+                // Check
+                AstNodeKind::Extends  => {
+                    // println!("[Linking] {:?} | Extendind {:?}",self.cntxt, nc.attr);
+                    self.check_type(nc,li);
+                }
+                AstNodeKind::Identifier => {
+                    self.check_ident(nc,&li);
+                }
+                AstNodeKind::Event => self.check_ident(nc,&li),
+                AstNodeKind::Instances => {
+                    self.check_inst(nc,li);
+                }
+                AstNodeKind::MethodCall => self.check_call(nc,li),
+                AstNodeKind::MacroCall  => self.check_macro(&nc,li),
+                AstNodeKind::CaseItem   => {
+                    // Check case item itself: need to update the AST
+                    self.check_ast(&nc, &ast_inc, li,false);
+                }
+                // Assignement:
+                // - Check every variable has been declared
+                // - Check type compatibility
+                AstNodeKind::Assign => {
+                    self.search_ident(&nc,&li);
+                },
+                AstNodeKind::Assert      |
+                AstNodeKind::Concat      |
+                AstNodeKind::Expr        |
+                AstNodeKind::ExprGroup   |
+                AstNodeKind::Operation   |
+                AstNodeKind::Return      |
+                AstNodeKind::Sensitivity |
+                AstNodeKind::Statement   |
+                AstNodeKind::SystemTask  |
+                AstNodeKind::Wait        => {
+                    self.search_ident(&nc,&li);
+                },
+                // TODO :
+                AstNodeKind::Define     => {}
+                AstNodeKind::Constraint => {}
+                // Whitelist
+                AstNodeKind::Value  |
+                AstNodeKind::Timescale  => {}
+                _ => {println!("[Linking] {:?} | Skipping {:?} ({} childs) : {:?}", self.cntxt, nc.kind, nc.child.len(), nc.attr);}
+            }
+        }
+        if new_cntxt {
+            li.defs.pop();
+        }
+    }
+
+    // Search for identifier in all children
+    pub fn add_enum_def(&self, node: &AstNode, li: &mut LocalInfo) {
+        let enum_type = DefType::from(node);
+        // println!("[{:?}] enum type = {}", self.name,node);
+        for nc in &node.child {
+            match nc.kind {
+                AstNodeKind::EnumIdent  => {
+                    li.add_def(nc.attr["name"].clone(),ObjDef::EnumValue("".to_owned()));
+                },
+                AstNodeKind::Identifier => {
+                    let m = DefMember{
+                        name     : nc.attr["name"].clone(),
+                        kind     : enum_type.clone(),
+                        unpacked : nc.attr.get("unpacked").map_or(None,|x| Some(x.clone())),
+                        is_const : false,
+                        access   : Access::Public
+                    };
+                    // println!("[{:?}] Adding enum : {:?}", self.name,m);
+                    li.add_def(m.name.clone(),ObjDef::Member(m));
+                }
+                _ => println!("[Linking] {:?} | Enum: Skipping {}",self.cntxt, nc.kind),
+            }
+        }
+    }
+
+    // Search for identifier in all children
+    pub fn search_ident(&self, node: &AstNode, li: &LocalInfo) {
+        // println!("[CompObj] {} | Searching: {}",self.name,node);
+        for n in &node.child {
+            match n.kind {
+                AstNodeKind::Identifier => self.check_ident(&n,li),
+                _ => if n.child.len()>0 {self.search_ident(&n,li)},
+            }
+        }
+    }
+
+
+    // TODO: evaluate a cache version of find_def
+    // Find a definition from a string
+    pub fn find_def<'a>(&'a self, name: &String, scope: Option<&String>,li: &'a LocalInfo, check_base: bool, check_obj: bool) -> Option<&'a ObjDef> {
+        // if name == "type_name" {println!("[Linking] {:?} | searching for {} : scope = {:?}, check_base={}, check_obj={}",self.cntxt,name,scope,check_base,check_obj);}
+        if let Some(scope_name) = scope {
+            if let Some(ObjDef::Package(di)) = &self.objects.get(scope_name) {
+                return di.defs.get(name);
+            }
+            match self.find_def(scope_name,None,li,false,check_obj) {
+                Some(ObjDef::Class(cd)) => {
+                    if let Some(bd) = cd.defs.get(name) {
+                        return Some(bd);
+                    }
+                    if check_base {
+                        return self.find_def_in_base(cd,name,li)
+                    }
+                    return None;
+                }
+                Some(di) => {println!("[Linking] {:?} | Ignoring scope definition: {:?}",self.cntxt,di);return None;}
+                _ => {return None;}
+            }
+        }
+        // Check local definition
+        if check_obj {
+            // TODO: write some traits or whatever to get easy access to the defs
+            match &li.obj {
+                Some(ObjDef::Class(d)) => {
+                    if d.defs.contains_key(name) {
+                        return Some(&d.defs[name]);
+                    }
+                }
+                Some(ObjDef::Module(d)) => {
+                    if d.defs.contains_key(name) {
+                        return Some(&d.defs[name]);
+                    }
+                }
+                Some(ObjDef::Package(d)) => {
+                    if d.defs.contains_key(name) {
+                        return Some(&d.defs[name]);
+                    }
+                }
+                _ => {}
+            }
+        }
+        for i in &li.defs {
+            if i.contains_key(name) {
+                return Some(&i[name]);
+            }
+        }
+        // Check in current link context
+        if self.cntxt.len()>1 {
+            for (_k,n) in &self.cntxt {
+                match self.objects.get(n) {
+                    Some(ObjDef::Package(di)) => {
+                        if di.defs.contains_key(name) {
+                            return di.defs.get(name);
+                        }
+                    }
+                    // TODO: support Class ?
                     _ => {}
                 }
             }
         }
-        lib
-    }
-
-    pub fn get_import_obj(&self, imports: &mut Vec<String>, name: &str, missing: &mut HashSet<String>) -> Option<&ObjDef> {
-        for pkg in imports {
-            // println!("[{}] Searching {} in {}  ",self.name,name,pkg);
-            if missing.contains(pkg) {continue;}
-            if !self.objects.contains_key(pkg) {
-                // println!("[{}] Unable to find import package {}", self.name, pkg);
-                missing.insert(pkg.clone());
-            } else {
-                // println!("[{}] Searching {} in definition of {} ",self.name,name,pkg);
-                if self.objects[pkg].definition.contains_key(name) {
-                    return Some(&self.objects[pkg].definition[name]);
+        // TODO: Check in base class if any
+        if check_base {
+            if let Some(ObjDef::Class(cd)) = &li.obj {
+                if let Some(bd) = self.find_def_in_base(cd,name,li) {
+                    return Some(bd);
                 }
             }
         }
+        // Check in imports
+        for i in &li.imports {
+            if let ObjDef::Package(di) = &self.objects[i] {
+                if di.defs.contains_key(name) {
+                    return Some(&di.defs[name]);
+                }
+            }
+        }
+        // Last try: Check top
+        self.objects.get(name)
+    }
 
+    pub fn find_def_in_base<'a>(&'a self, cd: &DefClass, name: &String, li: &'a LocalInfo) -> Option<&'a ObjDef> {
+        let mut o = cd;
+        // println!("[Linking] {:?} | Class {:?} -> looking for base",self.cntxt,cd.name);
+        while let Some(bct) = &o.base {
+            // if name=="type_name" {println!("[Linking] Class {} looking for {} in base class {}", o.name, name, bct.name);}
+            match self.find_def(&bct.name,None,li,false,true) {
+                Some(ObjDef::Class(bcd)) =>  {
+                    // if name=="type_name" {println!("[Linking] Class {} looking for {} in base class {} \n{:#?}", o.name, name, bcd.name, bcd);}
+                    // println!("[Linking] {:?} | Class {:?} has base {:?}",self.cntxt,cd.name,bct.name);
+                    if bcd.defs.contains_key(name) {
+                        return Some(&bcd.defs[name]);
+                    }
+                    o = &bcd;
+                }
+                Some(bcd) => {
+                    println!("[Linking] {:?} | Class {:?} -> Base class {} is not a class : {:?}",self.cntxt,cd.name,bct.name,bcd);
+                    break;
+                }
+                None => {
+                    println!("[Linking] {:?} | Class {:?} -> Base class {} not found",self.cntxt,cd.name,bct.name);
+                    break;
+                }
+            }
+        }
         None
     }
 
-    pub fn find_obj<'a>(&'a self, obj_top:&'a CompObj, name:&str, node: &'a AstNode, missing: &'a mut HashSet<String>,imports: &'a mut Vec<String>) -> Option<&'a ObjDef> {
-        // Check if scoped
-        if node.has_scope() {
-            let scope_name = &node.child[0].attr["name"];
-            // Check if already flagged as missing
-            if missing.contains(scope_name) {return None;}
-            // Check if the scope is a package
-            if self.objects.contains_key(scope_name) {
-                if node.child[0].has_scope() {
-                    if let Some(ObjDef::Class(cc)) = self.objects[scope_name].definition.get(&node.child[0].child[0].attr["name"]) {
-                        return cc.definition.get(name);
-                    } else {
-                        println!("[{}] Unable to find sub-class {}::{}", obj_top.name, scope_name,node.child[0].child[0].attr["name"]);
-                        return None;
-                    }
-                } else {
-                    return self.objects[scope_name].definition.get(name);
-                }
-            }
-            // Try to find the scope as part of classes in imported packages
-            else if let Some(ObjDef::Class(c)) = self.get_import_obj(imports,scope_name,missing) {
-                if node.child[0].has_scope() {
-                    if let Some(ObjDef::Class(cc)) = c.definition.get(&node.child[0].child[0].attr["name"]) {
-                        return cc.definition.get(name);
-                    } else {
-                        // Hack until macro expansion is working properly
-                        if node.child[0].child[0].attr["name"] == "type_id" {
-                            if let Some(ObjDef::Class(cc)) = self.objects["uvm_pkg"].definition.get("uvm_reg_field") {
-                                if let Some(ObjDef::Class(ccc)) = cc.definition.get("type_id") {
-                                    return ccc.definition.get(name);
-                                }
-                            }
-                        } else {
-                            println!("[{}] Unable to find sub-class {}::{}", obj_top.name, scope_name,node.child[0].child[0].attr["name"]);
-                            return None;
-                        }
-                    }
-                } else {
-                    return c.definition.get(name);
-                }
-            }
-            // Scoped not found -> Flag it to avoid future useless search
-            else {
-                println!("[{}] Unable to find scope {}", obj_top.name, scope_name);
-                missing.insert(scope_name.clone());
-                return None
-            }
-            // println!("[{}] Unsolved ref {}::{} ", obj_top.name, scope_name, name);
-            // return None;
-        }
-        // Check in current context
-        if obj_top.definition.contains_key(name) {
-            return obj_top.definition.get(name);
-        }
-        // Check in base class
-        let mut o = obj_top;
-        while let Some(base) = &o.base_class {
-            if let Some(ObjDef::Class(bc)) = self.get_import_obj(imports,&base,missing) {
-                // println!("[{}] Searching {} in {}", obj_top.name, name, bc.name);
-                if bc.definition.contains_key(name) {
-                    // println!("[{}] Found {} in {}", obj_top.name,name,bc.name);
-                    return bc.definition.get(name)
-                }
-                o = bc;
-            } else {break;}
-        }
-        // Not scoped : checked amongst imported package
-        self.get_import_obj(imports,&name,missing)
+
+    // Find definition of a node Identifier, checking the scope
+    pub fn find_ident_def<'a>(&'a self, node: &AstNode, li: &'a LocalInfo, check_obj: bool) -> Option<&'a ObjDef> {
+        let name = &node.attr["name"];
+        let scope = if node.has_scope() {Some(&node.child[0].attr["name"])} else {None};
+        return self.find_def(name,scope,li,true,check_obj);
     }
 
-    pub fn fix_unref(&self, o: &CompObj,missing_scope: &mut HashSet<String>,import_hdr: &mut Vec<String>,import_body:&mut Vec<String>) {
-        for (name,node) in &o.unref {
-            match node.kind {
-                AstNodeKind::Header => {
-                    if self.find_obj(&o,name,&node,missing_scope,import_hdr).is_some() {
-                        continue;
+    // Check a node identifier is properly defined and check any hierarchical access to it.
+    pub fn check_ident(&self, node: &AstNode, li: &LocalInfo) {
+        match node.attr["name"].as_ref() {
+            "this"  => {}
+            "super" => {}
+            _ => match self.find_ident_def(node,li,false) {
+                Some(ObjDef::Module(_d)) => {
+                    // Check for hierarchical access
+                    if node.child.len() != 0 {
                     }
                 }
-                AstNodeKind::Port        |
-                AstNodeKind::Extends     |
-                AstNodeKind::Declaration |
-                AstNodeKind::Identifier  |
-                AstNodeKind::Type        => {
-                    if self.find_obj(&o,name,&node,missing_scope,import_body).is_some() {
-                        continue;
+                Some(ObjDef::Class(_d)) => {
+                    // Check for hierarchical access
+                    if node.child.len() != 0 {
                     }
                 }
-                _ => {println!("[{}] CompLib | Skipping {}",o.name,node);}
+                Some(ObjDef::Covergroup(_d)) => {
+                    // Check for hierarchical access
+                    if node.child.len() != 0 {
+                    }
+                }
+                Some(_d) => {
+                    // Check for hierarchical access
+                    if node.child.len() != 0 {
+                        // let t = d.get_type();
+                        // match t {
+                        //     DefType::User(x) => {
+                        //         // println!("[Linking] {:?} | Checking Node {:?} with type {:?}", self.cntxt, node.attr, x);
+                        //         let td = self.find_def(&x.name,x.scope.as_ref(),li,false);
+                        //         match td {
+                        //             // Structure : Allow access to field and potentially slice if array of struct
+                        //             Some(ObjDef::Type(DefType::Struct(_td))) => {}//println!("[Linking] {:?} | Identifier {} is a struct named {}", self.cntxt, node.attr["name"], x.name),
+                        //             // Enum type: allow function first/last/next...
+                        //             Some(ObjDef::Type(DefType::Enum(_td))) => {}
+                        //             // Typdedef of usertype -> need to fully solve the type
+                        //             Some(ObjDef::Type(DefType::User(_td))) => {}
+                        //             Some(ObjDef::Param(_td)) => {}
+                        //             // Interface/module : allow access to signal/instance/clocking block/ ...
+                        //             Some(ObjDef::Module(_td)) => {} //println!("[Linking] {:?} | Identifier {} is a module/interface named {}", self.cntxt, node.attr["name"], x.name),
+                        //             // Class
+                        //             Some(ObjDef::Class(_td)) => {}
+                        //             Some(_x) => println!("[Linking] {:?} | Identifier {} with user type {} = {:?}", self.cntxt, node.attr["name"], x.name, _x),
+                        //             _ => println!("[Linking] {:?} | No definition for user type {:?}", self.cntxt, x.name)
+                        //         }
+                        //     }
+                        //     // Virtual interface: allow access to fields of the virtual interface
+                        //     DefType::VIntf(_x) => {}
+                        //     // Should only expect slice child
+                        //     DefType::IntVector(_x) => {}
+                        //     DefType::IntAtom(_x) => {}
+                        //     // Need differentiation between the different primary type
+                        //     DefType::Primary(_x) => {}
+                        //     DefType::None => {}
+                        //     _ => println!("[Linking] {:?} | Identifier {} found with type {:?}\n\tDefinition = {:?}\n\tChilds = {:?}", self.cntxt, node.attr["name"],t,d,node.child)
+                        // }
+                    }
+                }
+                None => {
+                    println!("[Linking] {:?} | Identifier {:?} undeclared", self.cntxt, node.attr["name"]);
+                }
             }
-            // If we reached this point it means the reference was not found anywhere
-            println!("[{}] Unsolved ref {} ({})", o.name, name, node.kind);
         }
     }
 
-    // Check call to function/task/instance/...
-    pub fn check_call(&self, o: &CompObj,missing_scope: &mut HashSet<String>,imports: &mut Vec<String>) {
-        for c in &o.call {
-            match c.kind {
-                AstNodeKind::MethodCall => {
-                    if let Some(name) = c.attr.get("name") {
-                        if name=="randomize" || name=="srandom" {
-                            continue;
-                        }
-                        if let Some(obj) = self.find_obj(&o,name,&c,missing_scope,imports) {
-                            if let ObjDef::Method(d) = obj {
-                                let mut ports = d.ports.clone();
-                                for n in &c.child {
-                                    match n.kind {
-                                        AstNodeKind::Ports => {
-                                            // println!("[{}] Call to Port {:?}", o.name, d.name);
-                                            for p in &n.child {
-                                                if ports.len() == 0 {
-                                                    println!("[{}] Too many arguments in call to {}: {:?}", o.name, d.name, p);
-                                                    break;
+    // Analyse a module/interface instance
+    pub fn check_type(&self, node: &AstNode, li: &LocalInfo) {
+        if node.attr.contains_key("type") {
+            // println!("[Linking] {:?} | Checking type in {:?}", self.cntxt, node.attr);
+            let name = &node.attr["type"];
+            let scope = if node.has_scope() {Some(&node.child[0].attr["name"])} else {None};
+            match name.as_ref() {
+                "logic" | "bit" | "reg" => {},
+                "genvar" | "process" | "struct" | "enum"=> {},
+                "byte" | "shortint" | "int" | "longint" | "integer" | "time" => {},
+                "shortreal" | "real" | "realtime" | "string" | "void" | "chandle" | "event" => {},
+                _ => {
+                    if self.find_def(name,scope,li,false,false).is_none() {
+                        println!("[Linking] {:?} | Type {:?} undeclared", self.cntxt, node.attr["type"]);
+                    }
+                }
+            }
+        }
+    }
+
+    // Analyse a module/interface instance
+    pub fn check_inst(&self, node: &AstNode, li: &mut LocalInfo) {
+        // Paranoid check : to be removed
+        if !node.attr.contains_key("type") {
+            println!("[Linking] Instance with no type: {:?}", node.attr);
+            return;
+        }
+        // Instance module should appear as a top object
+        match self.objects.get(&node.attr["type"]) {
+            Some(ObjDef::Module(d)) => {
+                // println!("[Linking] Instance type {:?}\n\tDefinition = {:?}", node.attr["type"],d);
+                let mut ports : Vec<DefPort> = d.ports.values().cloned().collect();
+                let mut params : Vec<DefParam> = d.params.values().cloned().collect();
+                for n in &node.child {
+                    match n.kind {
+                        AstNodeKind::Instance => {
+                            for nc in &n.child {
+                                match nc.kind {
+                                    AstNodeKind::Port => {
+                                        // println!("[{}] Instance {} of {}, port {:?} = {:?}", self.cntxt, n.attr["name"],c.attr["type"],nc.attr, nc.child);
+                                        if ports.len() == 0 {
+                                            println!("[Linking] {:?} |  Too many ports in instance {} of {}",self.cntxt,nc.attr["name"], node.attr["type"]);
+                                            break;
+                                        }
+                                        match nc.attr["name"].as_ref() {
+                                            // When unamed, port are taken in order
+                                            "" => {ports.remove(0);}
+                                            // Implicit connection
+                                            ".*" => {
+                                                // Checked that signal with same name of ports are defined
+                                                for p in &ports {
+                                                    if let Some(_d) = self.find_def(&p.name,None,li,false,false) {
+                                                        // Type checking
+                                                    } else {
+                                                        println!("[Linking] {:?} | Missing signal for implicit connection to {} in {}", self.cntxt, p, n.attr["name"])
+                                                    }
+
                                                 }
-                                                // When unamed, port are taken in order
-                                                if p.attr["name"] == "" {
-                                                    ports.remove(0);
-                                                } else {
-                                                    if let Some(i) = ports.iter().position(|x| x.name == p.attr["name"]) {
-                                                        // println!("[{}] Calling {} with argument name {} found at index {} of {}", o.name, d.name, p.attr["name"], i, ports.iter().fold(String::new(), |acc, x| format!("{}{},", acc,x)));
-                                                        ports.remove(i);
-                                                    }
-                                                    else {
-                                                        println!("[{}] Calling {} with unknown argument name {} in {}", o.name, d.name, p.attr["name"], ports.iter().fold(String::new(), |acc, x| format!("{}{},", acc,x)));
-                                                    }
+                                                ports.clear();
+                                            }
+                                            // Named connection
+                                            _ => {
+                                                if let Some(i) = ports.iter().position(|x| x.name == nc.attr["name"]) {
+                                                    // println!("[{}] Calling {} with argument name {} found at index {} of {}", self.cntxt, d.name, nc.attr["name"], i, ports.iter().fold(String::new(), |acc, x| format!("{}{},", acc,x)));
+                                                    ports.remove(i);
+                                                }
+                                                else {
+                                                    println!("[Linking] {:?} | Unknown port name {} in instance {} of {}", self.cntxt, nc.attr["name"], n.attr["name"], d.name );
                                                 }
                                             }
                                         }
-                                        _ => {} // Ignore all other node
+                                        // Check identifiers use in binding are OK
+                                        // TODO: check type / direction as well
+                                        self.search_ident(&nc,li);
                                     }
+                                    _ => println!("[Linking] {:?} | Instance {} of {}, skipping {}", self.cntxt, n.attr["name"],nc.attr["type"],nc.kind)
+                                    // _ => {} // Ignore all other node
                                 }
-                                if ports.len() > 0 {
-                                    // Check if remaining ports are optional or not
-                                    let ma :Vec<_> = ports.iter().filter(|p| p.default.is_none()).collect();
-                                    if ma.len() > 0 {
-                                        println!("[{}] Missing {} arguments in call to {}: {}", o.name, ports.len(), d.name, ma.iter().fold(String::new(), |acc, x| format!("{}{},", acc,x)));
-                                    }
-                                }
-                            } else {
-                                println!("[{}] {} is not a method : {:?}", o.name, name, obj);
                             }
-                        } else {
-                            println!("[{}] Unsolved call to {} ({})", o.name, name, c.kind);
+                            li.add_def(n.attr["name"].clone(),ObjDef::Module(d.clone()));
                         }
-                    }
-                    else {
-                        println!("[{}] check_call | No name in {}", o.name, c);
+                        AstNodeKind::Params => {
+                            for nc in &n.child {
+                                match nc.kind {
+                                    AstNodeKind::Param => {
+                                        // println!("[{}] Instance of {:?}, param {:?}", self.cntxt, c.attr["type"],nc.attr);
+                                        if params.len() == 0 {
+                                            println!("[Linking] {:?} | Too many arguments in parameters of {}: ({:?})", self.cntxt, d.name, nc);
+                                            break;
+                                        }
+                                        match nc.attr["name"].as_ref() {
+                                            // When unamed, port are taken in order
+                                            "" => {params.remove(0);}
+                                            // Nameed connection
+                                            _ => {
+                                                if let Some(i) = params.iter().position(|x| x.name == nc.attr["name"]) {
+                                                    // println!("[{}] Calling {} with argument name {} found at index {} of {}", self.cntxt, d.name, nc.attr["name"], i, params.iter().fold(String::new(), |acc, x| format!("{}{},", acc,x)));
+                                                    params.remove(i);
+                                                }
+                                                else {
+                                                    println!("[Linking] {:?} | Calling {} with unknown parameter name {} in {}", self.cntxt, d.name, nc.attr["name"], params.iter().fold(String::new(), |acc, x| format!("{}{:?},", acc,x)));
+                                                }
+                                            }
+                                        }
+                                    }
+                                    _ => println!("[Linking] {:?} | Instance of {:?}, skipping {:?}", self.cntxt,node.attr["type"],nc.kind)
+                                    // _ => {} // Ignore all other node
+                                }
+                                // TODO: check parameters as well
+                            }
+                        }
+                        _ => println!("[Linking] {:?} | Instances of {}, skipping {}", self.cntxt, node.attr["type"],n.kind)
+                        // _ => {} // Ignore all other node
                     }
                 }
-                AstNodeKind::MacroCall => {
-                    if let Some(name) = c.attr.get("name") {
-                        if let Some(obj) = self.find_obj(&o,name,&c,missing_scope,imports) {
-                            if let ObjDef::Macro(d) = obj {
-                                let mut ports = d.ports.clone();
-                                for n in &c.child {
-                                    if ports.len() == 0 {
-                                        println!("[{}] Too many arguments in call to {}: {}", o.name, d.name, n);
-                                        break;
-                                    }
+                if ports.len() > 0 {
+                    // Check if remaining ports are optional or not
+                    let ma :Vec<_> = ports.iter().filter(|p| p.default.is_none()).collect();
+                    if ma.len() > 0 {
+                        println!("[Linking] {:?} | Missing {} arguments in call to {}: {}", self.cntxt, ports.len(), d.name, ma.iter().fold(String::new(), |acc, x| format!("{}{},", acc,x)));
+                    }
+                }
+            }
+            _ => {
+                println!("[Linking] Instance Type {:?} undeclared", node.attr["type"]);
+            }
+        }
+    }
+
+    // Analyze a function/task call
+    pub fn check_call(&self, node: &AstNode, li: &LocalInfo) {
+
+        // Check for standard defined method
+        if let Some(name) = node.attr.get("name") {
+            if name=="randomize" || name=="srandom" {
+                return;
+            }
+        }
+        match self.find_ident_def(node,li,true) {
+            Some(ObjDef::Method(d)) => {
+                let mut ports = d.ports.clone();
+                for n in &node.child {
+                    match n.kind {
+                        AstNodeKind::Ports => {
+                            // println!("[Linking] {:?} | Call to Port {:?}", self.cntxt, d.name);
+                            for p in &n.child {
+                                if ports.len() == 0 {
+                                    println!("[Linking] {:?} | Too many arguments in call to {}: {:?}", self.cntxt, d.name, p);
+                                    break;
+                                }
+                                // When unamed, port are taken in order
+                                if p.attr["name"] == "" {
                                     ports.remove(0);
-                                }
-                                if ports.len() > 0 {
-                                    // Check if remaining ports are optional or not
-                                    let ma :Vec<_> = ports.iter().filter(|p| p.is_opt==false).collect();
-                                    if ma.len() > 0 {
-                                        println!("[{}] Missing {} arguments in call to {}: {}", o.name, ports.len(), d.name, ma.iter().fold(String::new(), |acc, x| format!("{}{},", acc,x)));
+                                } else {
+                                    if let Some(i) = ports.iter().position(|x| x.name == p.attr["name"]) {
+                                        // println!("[Linking] {:?} | Calling {} with argument name {} found at index {} of {}", self.cntxt, d.name, p.attr["name"], i, ports.iter().fold(String::new(), |acc, x| format!("{}{},", acc,x)));
+                                        ports.remove(i);
+                                    }
+                                    else {
+                                        println!("[Linking] {:?} | Calling {} with unknown argument name {} in {}", self.cntxt, d.name, p.attr["name"], ports.iter().fold(String::new(), |acc, x| format!("{}{},", acc,x)));
                                     }
                                 }
-                            } else {
-                                println!("[{}] {} is not a macro : {:?}", o.name, name, obj);
                             }
-                        } else {
-                            println!("[{}] Unsolved call to macro {} ({})", o.name, name, c.kind);
                         }
-                    }
-                    else {
-                        println!("[{}] check_call | No name in {}", o.name, c);
+                        _ => {} // Ignore all other node
                     }
                 }
-                AstNodeKind::Instances => {
-                    // println!("[{}] Checking instance of {:?}", o.name,c.attr);
-                    if let Some(t) = c.attr.get("type") {
-                        if let Some(obj) = self.objects.get(t) {
-                            if let Some(ObjDef::Module(d)) = obj.definition.get("!") {
-                                let mut ports = d.ports.clone();
-                                let mut params = d.params.clone();
-                                for n in &c.child {
-                                    match n.kind {
-                                        AstNodeKind::Instance => {
-                                            for nc in &n.child {
-                                                match nc.kind {
-                                                    AstNodeKind::Port => {
-                                                        // println!("[{}] Instance {} of {}, port {:?}", o.name, n.attr["name"],c.attr["type"],nc.attr);
-                                                        if ports.len() == 0 {
-                                                            println!("[{}] Too many arguments in call to {}: {:?}", o.name, d.name, nc);
-                                                            break;
-                                                        }
-                                                        match nc.attr["name"].as_ref() {
-                                                            // When unamed, port are taken in order
-                                                            "" => {ports.remove(0);}
-                                                            // Implicit connection
-                                                            ".*" => {
-                                                                // Checked that signal with same name of ports are defined
-                                                                for p in &ports {
-                                                                    if o.definition.contains_key(&p.name) {
-                                                                        // Type checking
-                                                                    } else {
-                                                                        println!("[{}] Missing signal for implicit connection to {} in {}", o.name, p, n.attr["name"])
-                                                                    }
-
-                                                                }
-                                                                ports.clear();
-                                                            }
-                                                            // Nameed connection
-                                                            _ => {
-                                                                if let Some(i) = ports.iter().position(|x| x.name == nc.attr["name"]) {
-                                                                    // println!("[{}] Calling {} with argument name {} found at index {} of {}", o.name, d.name, nc.attr["name"], i, ports.iter().fold(String::new(), |acc, x| format!("{}{},", acc,x)));
-                                                                    ports.remove(i);
-                                                                }
-                                                                else {
-                                                                    println!("[{}] Calling {} with unknown argument name {} in {}", o.name, d.name, nc.attr["name"], ports.iter().fold(String::new(), |acc, x| format!("{}{},", acc,x)));
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-                                                    _ => println!("[{}] Instance {} of {}, skipping {}", o.name, n.attr["name"],c.attr["type"],nc.kind)
-                                                    // _ => {} // Ignore all other node
-                                                }
-                                            }
-                                        }
-                                        AstNodeKind::Params => {
-                                            for nc in &n.child {
-                                                match nc.kind {
-                                                    AstNodeKind::Param => {
-                                                        // println!("[{}] Instance of {:?}, param {:?}", o.name, c.attr["type"],nc.attr);
-                                                        if params.len() == 0 {
-                                                            println!("[{}] Too many arguments in parameters of {}: ({:?})", o.name, d.name, nc);
-                                                            break;
-                                                        }
-                                                        match nc.attr["name"].as_ref() {
-                                                            // When unamed, port are taken in order
-                                                            "" => {params.remove(0);}
-                                                            // Nameed connection
-                                                            _ => {
-                                                                if let Some(i) = params.iter().position(|x| x.name == nc.attr["name"]) {
-                                                                    // println!("[{}] Calling {} with argument name {} found at index {} of {}", o.name, d.name, nc.attr["name"], i, params.iter().fold(String::new(), |acc, x| format!("{}{},", acc,x)));
-                                                                    params.remove(i);
-                                                                }
-                                                                else {
-                                                                    println!("[{}] Calling {} with unknown parameter name {} in {}", o.name, d.name, nc.attr["name"], params.iter().fold(String::new(), |acc, x| format!("{}{:?},", acc,x)));
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-                                                    _ => println!("[{}] Instance of {:?}, skipping {:?}", o.name, c.attr["type"],nc.kind)
-                                                    // _ => {} // Ignore all other node
-                                                }
-                                            }
-                                            // TODO: check parameters as well
-                                        }
-                                        _ => println!("[{}] Instances of {}, skipping {}", o.name, c.attr["type"],n.kind)
-                                        // _ => {} // Ignore all other node
-                                    }
-                                }
-                                if ports.len() > 0 {
-                                    // Check if remaining ports are optional or not
-                                    let ma :Vec<_> = ports.iter().filter(|p| p.default.is_none()).collect();
-                                    if ma.len() > 0 {
-                                        println!("[{}] Missing {} arguments in call to {}: {}", o.name, ports.len(), d.name, ma.iter().fold(String::new(), |acc, x| format!("{}{},", acc,x)));
-                                    }
-                                }
-                            } else {
-                                println!("[{}] Unable to get module definition for {} in {:?}", o.name, t,obj.definition);
-                            }
-                        } else {
-                            println!("[{}] Unsolved instance of {}", o.name, t);
-                        }
-                    } else {
-                        println!("[{}] check_call | Instance with no type !\n {}", o.name, c);
+                if ports.len() > 0 {
+                    // Check if remaining ports are optional or not
+                    let ma :Vec<_> = ports.iter().filter(|p| p.default.is_none()).collect();
+                    if ma.len() > 0 {
+                        println!("[Linking] {:?} | Missing {} arguments in call to {}: {}", self.cntxt, ports.len(), d.name, ma.iter().fold(String::new(), |acc, x| format!("{}{},", acc,x)));
                     }
                 }
-                _ => println!("[{}] check_call | Skipping {}", o.name, c.kind)
             }
+            Some(_) => println!("[Linking] {:?} | {:?} is not a method ", self.cntxt, node.attr.get("name")),
+            None    => println!("[Linking] {:?} | Unsolved call to {:?} ({:?})", self.cntxt, node.attr.get("name"), node.attr)
         }
     }
 
-    // Standard Lib
-    // class process;
-    //     typedef enum { FINISHED, RUNNING, WAITING, SUSPENDED, KILLED } state;
-    //     static function process self();
-    //     function state status();
-    //     function void kill();
-    //     task await();
-    //     function void suspend();
-    //     function void resume();
-    //     function void srandom( int seed );
-    //     function string get_randstate();
-    //     function void set_randstate( string state );
-    // endclass
-    pub fn add_std_obj (&mut self)  {
-        let mut o = CompObj::new("process".to_owned());
-        o.definition.insert("FINISHED".to_owned(),ObjDef::Value);
-        o.definition.insert("RUNNING".to_owned(),ObjDef::Value);
-        o.definition.insert("WAITING".to_owned(),ObjDef::Value);
-        o.definition.insert("SUSPENDED".to_owned(),ObjDef::Value);
-        o.definition.insert("KILLED".to_owned(),ObjDef::Value);
-        o.definition.insert("self".to_owned(),ObjDef::Method(DefMethod::new("self".to_owned(),false)));
-        self.objects.insert("process".to_owned(),o);
+    // Analyze a function/task call
+    pub fn check_macro(&self, node: &AstNode, li: &LocalInfo) {
+        // println!("[Linking] {:?} | Checking Macro call {} ", self.cntxt, node);
+        match self.find_ident_def(node,li,true) {
+            Some(ObjDef::Macro(d)) => {
+                // println!("[Linking] {:?} | Found macro {:?}", self.cntxt, d)
+                let mut ports = d.ports.clone();
+                for nc in &node.child {
+                    if ports.len() == 0 {
+                        println!("[Linking] {:?} | Too many arguments in call to {}: {}", self.cntxt, d.name, nc);
+                        break;
+                    }
+                    ports.remove(0);
+                }
+                if ports.len() > 0 {
+                    // Check if remaining ports are optional or not
+                    let ma :Vec<_> = ports.iter().filter(|p| p.is_opt==false).collect();
+                    if ma.len() > 0 {
+                        println!("[Linking] {:?} | Missing {} arguments in call to {}: {}", self.cntxt, ports.len(), d.name, ma.iter().fold(String::new(), |acc, x| format!("{}{},", acc,x)));
+                    }
+                }
+            }
+            Some(_) => println!("[Linking] {:?} | {:?} is not a macro ", self.cntxt, node.attr.get("name")),
+            None => println!("[Linking] {:?} | Unsolved macro {:?}", self.cntxt, node.attr.get("name"))
+        }
     }
 
-}
-
-// Temporary uvm definition object
-// Need to put in place incremental compilation and load pre-compiled uvm lib
-fn get_uvm_lib() -> CompObj {
-    let mut o = CompObj::new("uvm_pkg".to_owned());
-    // Class
-    o.definition.insert("uvm_phase".to_owned(),ObjDef::Type);
-    o.definition.insert("uvm_verbosity".to_owned(),ObjDef::Type);
-    o.definition.insert("uvm_analysis_export".to_owned(),ObjDef::Type);
-    o.definition.insert("uvm_analysis_port".to_owned(),ObjDef::Type);
-    o.definition.insert("uvm_comparer".to_owned(),ObjDef::Type);
-    o.definition.insert("uvm_object".to_owned(),ObjDef::Type);
-    o.definition.insert("uvm_object_wrapper".to_owned(),ObjDef::Type);
-    o.definition.insert("uvm_objection".to_owned(),ObjDef::Type);
-    o.definition.insert("uvm_reg_bus_op".to_owned(),ObjDef::Type);
-    o.definition.insert("uvm_reg_data_t".to_owned(),ObjDef::Type);
-    o.definition.insert("uvm_reg_field".to_owned(),ObjDef::Type);
-    o.definition.insert("uvm_reg_map".to_owned(),ObjDef::Type);
-    o.definition.insert("uvm_sequencer_base".to_owned(),ObjDef::Type);
-    o.definition.insert("uvm_status_e".to_owned(),ObjDef::Type);
-    o.definition.insert("uvm_tlm_analysis_fifo".to_owned(),ObjDef::Type);
-    o.definition.insert("uvm_active_passive_enum".to_owned(),ObjDef::Type);
-    o.definition.insert("uvm_analysis_port".to_owned(),ObjDef::Type);
-    o.definition.insert("uvm_coverage_model_e".to_owned(),ObjDef::Type);
-    o.definition.insert("uvm_default_comparer".to_owned(),ObjDef::Type);
-    o.definition.insert("uvm_event".to_owned(),ObjDef::Type);
-    o.definition.insert("uvm_object_wrapper".to_owned(),ObjDef::Type);
-    o.definition.insert("uvm_objection".to_owned(),ObjDef::Type);
-    o.definition.insert("uvm_printer".to_owned(),ObjDef::Type);
-    o.definition.insert("uvm_reg_adapter".to_owned(),ObjDef::Type);
-    o.definition.insert("uvm_reg_addr_t".to_owned(),ObjDef::Type);
-    o.definition.insert("uvm_reg_bus_op".to_owned(),ObjDef::Type);
-    o.definition.insert("uvm_reg_data_t".to_owned(),ObjDef::Type);
-    o.definition.insert("uvm_reg_item".to_owned(),ObjDef::Type);
-    o.definition.insert("uvm_reg_map".to_owned(),ObjDef::Type);
-    o.definition.insert("uvm_table_printer".to_owned(),ObjDef::Type);
-    o.definition.insert("uvm_top".to_owned(),ObjDef::Type);
-    // Function / Macro
-    let mut m = DefMacro::new("`uvm_info".to_owned());
-    m.ports.push(MacroPort{name:"ID".to_owned(),is_opt: false});
-    m.ports.push(MacroPort{name:"MSG".to_owned(),is_opt: false});
-    m.ports.push(MacroPort{name:"VERBOSITY".to_owned(),is_opt: false});
-    o.definition.insert("`uvm_info".to_owned(),ObjDef::Macro(m));
-    m = DefMacro::new("`uvm_warning".to_owned());
-    m.ports.push(MacroPort{name:"ID".to_owned(),is_opt: false});
-    m.ports.push(MacroPort{name:"MSG".to_owned(),is_opt: false});
-    o.definition.insert("`uvm_warning".to_owned(),ObjDef::Macro(m));
-    m = DefMacro::new("`uvm_error".to_owned());
-    m.ports.push(MacroPort{name:"ID".to_owned(),is_opt: false});
-    m.ports.push(MacroPort{name:"MSG".to_owned(),is_opt: false});
-    o.definition.insert("`uvm_error".to_owned(),ObjDef::Macro(m));
-    m = DefMacro::new("`uvm_fatal".to_owned());
-    m.ports.push(MacroPort{name:"ID".to_owned(),is_opt: false});
-    m.ports.push(MacroPort{name:"MSG".to_owned(),is_opt: false});
-    o.definition.insert("`uvm_fatal".to_owned(),ObjDef::Macro(m));
-    m = DefMacro::new("`uvm_component_utils".to_owned());
-    m.ports.push(MacroPort{name:"T".to_owned(),is_opt: false});
-    o.definition.insert("`uvm_component_utils".to_owned(),ObjDef::Macro(m));
-    m = DefMacro::new("`uvm_object_utils".to_owned());
-    m.ports.push(MacroPort{name:"T".to_owned(),is_opt: false});
-    o.definition.insert("`uvm_object_utils".to_owned(),ObjDef::Macro(m));
-    m = DefMacro::new("`uvm_object_param_utils".to_owned());
-    m.ports.push(MacroPort{name:"T".to_owned(),is_opt: false});
-    o.definition.insert("`uvm_object_param_utils".to_owned(),ObjDef::Macro(m));
-    m = DefMacro::new("`uvm_create".to_owned());
-    m.ports.push(MacroPort{name:"SEQ_OR_ITEM".to_owned(),is_opt: false});
-    o.definition.insert("`uvm_create".to_owned(),ObjDef::Macro(m));
-    m = DefMacro::new("`uvm_create_on".to_owned());
-    m.ports.push(MacroPort{name:"SEQ_OR_ITEM".to_owned(),is_opt: false});
-    m.ports.push(MacroPort{name:"SEQR".to_owned(),is_opt: false});
-    o.definition.insert("`uvm_create_on".to_owned(),ObjDef::Macro(m));
-    m = DefMacro::new("`uvm_send".to_owned());
-    m.ports.push(MacroPort{name:"SEQ_OR_ITEM".to_owned(),is_opt: false});
-    o.definition.insert("`uvm_send".to_owned(),ObjDef::Macro(m));
-    m = DefMacro::new("`uvm_declare_p_sequencer".to_owned());
-    m.ports.push(MacroPort{name:"SEQUENCER".to_owned(),is_opt: false});
-    o.definition.insert("`uvm_declare_p_sequencer".to_owned(),ObjDef::Macro(m));
-    m = DefMacro::new("`uvm_component_utils_begin".to_owned());
-    m.ports.push(MacroPort{name:"T".to_owned(),is_opt: false});
-    o.definition.insert("`uvm_component_utils_begin".to_owned(),ObjDef::Macro(m));
-    m = DefMacro::new("`uvm_component_utils_begin".to_owned());
-    m.ports.push(MacroPort{name:"T".to_owned(),is_opt: false});
-    m.ports.push(MacroPort{name:"ARG".to_owned(),is_opt: false});
-    m.ports.push(MacroPort{name:"FLAG".to_owned(),is_opt: false});
-    o.definition.insert("`uvm_field_enum".to_owned(),ObjDef::Macro(m));
-    o.definition.insert("`uvm_component_utils_end".to_owned(),ObjDef::Macro(DefMacro::new("`uvm_component_utils_end".to_owned())));
-    let mut m = DefMethod::new("uvm_report_fatal".to_owned(),false);
-    m.ports.push(Port{name:"id".to_owned(),dir:PortDir::Input,kind:SignalType::new("string".to_owned()),default: None});
-    m.ports.push(Port{name:"message".to_owned(),dir:PortDir::Input,kind:SignalType::new("string".to_owned()),default: None});
-    m.ports.push(Port{name:"verbosity".to_owned(),dir:PortDir::Input,kind:SignalType::new("int".to_owned()),default: Some("UVM_NONE".to_owned())});
-    m.ports.push(Port{name:"file".to_owned(),dir:PortDir::Input,kind:SignalType::new("string".to_owned()),default: Some("".to_owned())});
-    m.ports.push(Port{name:"line".to_owned(),dir:PortDir::Input,kind:SignalType::new("int".to_owned()),default: Some("".to_owned())});
-    o.definition.insert("uvm_report_fatal".to_owned(),ObjDef::Method(m.clone()));
-    o.definition.insert("uvm_report_error".to_owned(),ObjDef::Method(m.clone()));
-    o.definition.insert("uvm_report_warning".to_owned(),ObjDef::Method(m.clone()));
-    o.definition.insert("uvm_report_info".to_owned(),ObjDef::Method(m));
-    m = DefMethod::new("run_test".to_owned(),false);
-    m.ports.push(Port{name:"test_name".to_owned(),dir:PortDir::Input,kind:SignalType::new("string".to_owned()),default: Some("".to_owned())});
-    o.definition.insert("run_test".to_owned(),ObjDef::Method(m));
-    // Enum
-    o.definition.insert("UVM_NONE".to_owned(),ObjDef::Value);
-    o.definition.insert("UVM_FULL".to_owned(),ObjDef::Value);
-    o.definition.insert("UVM_ACTIVE".to_owned(),ObjDef::Value);
-    o.definition.insert("UVM_PASSIVE".to_owned(),ObjDef::Value);
-    o.definition.insert("UVM_DEBUG".to_owned(),ObjDef::Value);
-    o.definition.insert("UVM_HIGH".to_owned(),ObjDef::Value);
-    o.definition.insert("UVM_MEDIUM".to_owned(),ObjDef::Value);
-    o.definition.insert("UVM_ALL_ON".to_owned(),ObjDef::Value);
-    o.definition.insert("UVM_HEX".to_owned(),ObjDef::Value);
-    o.definition.insert("UVM_IS_OK".to_owned(),ObjDef::Value);
-    o.definition.insert("UVM_LOW".to_owned(),ObjDef::Value);
-    o.definition.insert("UVM_NO_COVERAGE".to_owned(),ObjDef::Value);
-    o.definition.insert("UVM_NOT_OK".to_owned(),ObjDef::Value);
-    o.definition.insert("UVM_READ".to_owned(),ObjDef::Value);
-    o.definition.insert("UVM_WRITE".to_owned(),ObjDef::Value);
-    o.definition.insert("UVM_LITTLE_ENDIAN".to_owned(),ObjDef::Value);
-    o.definition.insert("UVM_NO_COVERAGE".to_owned(),ObjDef::Value);
-    //
-    let mut o_ = CompObj::new("uvm_component".to_owned());
-    o_.definition.insert("m_name".to_owned(),ObjDef::Type);
-    o_.definition.insert("type_name".to_owned(),ObjDef::Type);
-    o_.definition.insert("m_current_phase".to_owned(),ObjDef::Type);
-    o_.definition.insert("get_parent".to_owned(),ObjDef::Method(DefMethod::new("get_parent".to_owned(),false)));
-    o_.definition.insert("get_full_name".to_owned(),ObjDef::Method(DefMethod::new("get_full_name".to_owned(),false)));
-    o_.definition.insert("get_name".to_owned(),ObjDef::Method(DefMethod::new("get_name".to_owned(),false)));
-    o_.definition.insert("get_type_name".to_owned(),ObjDef::Method(DefMethod::new("get_type_name".to_owned(),false)));
-    m = DefMethod::new("create_component".to_owned(),false);
-    m.ports.push(Port{name:"requested_type_name".to_owned(),dir:PortDir::Input,kind:SignalType::new("string".to_owned()),default: None});
-    m.ports.push(Port{name:"name".to_owned(),dir:PortDir::Input,kind:SignalType::new("string".to_owned()),default: None});
-    o_.definition.insert("create_component".to_owned(),ObjDef::Method(m));
-    m = DefMethod::new("create_object".to_owned(),false);
-    m.ports.push(Port{name:"requested_type_name".to_owned(),dir:PortDir::Input,kind:SignalType::new("string".to_owned()),default: None});
-    m.ports.push(Port{name:"name".to_owned(),dir:PortDir::Input,kind:SignalType::new("string".to_owned()),default: Some("".to_owned())});
-    o_.definition.insert("create_object".to_owned(),ObjDef::Method(m));
-    m = DefMethod::new("set_inst_override".to_owned(),false);
-    m.ports.push(Port{name:"relative_inst_path".to_owned(),dir:PortDir::Input,kind:SignalType::new("string".to_owned()),default: None});
-    m.ports.push(Port{name:"original_type_name".to_owned(),dir:PortDir::Input,kind:SignalType::new("string".to_owned()),default: None});
-    m.ports.push(Port{name:"override_type_name".to_owned(),dir:PortDir::Input,kind:SignalType::new("string".to_owned()),default: None});
-    o_.definition.insert("set_inst_override".to_owned(),ObjDef::Method(m));
-    o_.definition.insert("get_report_verbosity_level".to_owned(),ObjDef::Method(DefMethod::new("get_report_verbosity_level".to_owned(),false)));
-    o.definition.insert("uvm_component".to_owned(),ObjDef::Class(Box::new(o_)));
-    o_ = CompObj::new("uvm_test".to_owned());
-    o_.base_class = Some("uvm_component".to_owned());
-    o.definition.insert("uvm_test".to_owned(),ObjDef::Class(Box::new(o_)));
-    o_ = CompObj::new("uvm_env".to_owned());
-    o_.base_class = Some("uvm_component".to_owned());
-    o.definition.insert("uvm_env".to_owned(),ObjDef::Class(Box::new(o_)));
-    o_ = CompObj::new("uvm_driver".to_owned());
-    o_.base_class = Some("uvm_component".to_owned());
-    o_.definition.insert("req".to_owned(),ObjDef::Type);
-    o_.definition.insert("rsp".to_owned(),ObjDef::Type);
-    o_.definition.insert("seq_item_port".to_owned(),ObjDef::Type);
-    o.definition.insert("uvm_driver".to_owned(),ObjDef::Class(Box::new(o_)));
-    o_ = CompObj::new("uvm_monitor".to_owned());
-    o_.base_class = Some("uvm_component".to_owned());
-    o.definition.insert("uvm_monitor".to_owned(),ObjDef::Class(Box::new(o_)));
-    o_ = CompObj::new("uvm_sequencer".to_owned());
-    o_.base_class = Some("uvm_component".to_owned());
-    o.definition.insert("uvm_sequencer".to_owned(),ObjDef::Class(Box::new(o_)));
-    o_ = CompObj::new("uvm_sequence".to_owned());
-    o_.base_class = Some("uvm_sequence_item".to_owned());
-    o_.definition.insert("req".to_owned(),ObjDef::Type);
-    o_.definition.insert("rsp".to_owned(),ObjDef::Type);
-    m = DefMethod::new("get_response".to_owned(),false);
-    m.ports.push(Port{name:"response".to_owned(),dir:PortDir::Input,kind:SignalType::new("RSP".to_owned()),default: None});
-    m.ports.push(Port{name:"transaction_id".to_owned(),dir:PortDir::Input,kind:SignalType::new("int".to_owned()),default: Some("-1".to_owned())});
-    o_.definition.insert("get_response".to_owned(),ObjDef::Method(m));
-    o.definition.insert("uvm_sequence".to_owned(),ObjDef::Class(Box::new(o_)));
-    o_ = CompObj::new("uvm_sequence_item".to_owned());
-    o_.definition.insert("m_parent_sequence".to_owned(),ObjDef::Type); // Part of uvm_sequence item
-    o_.definition.insert("m_sequencer".to_owned(),ObjDef::Type);
-    o_.definition.insert("p_sequencer".to_owned(),ObjDef::Type);
-    o_.definition.insert("get_starting_phase".to_owned(),ObjDef::Method(DefMethod::new("get_starting_phase".to_owned(),false)));
-    m = DefMethod::new("start".to_owned(),false);
-    m.ports.push(Port{name:"sequencer".to_owned(),dir:PortDir::Input,kind:SignalType::new("uvm_sequencer_base".to_owned()),default: None});
-    m.ports.push(Port{name:"parent_sequence".to_owned(),dir:PortDir::Input,kind:SignalType::new("uvm_sequence_base".to_owned()),default: Some("null".to_owned())});
-    m.ports.push(Port{name:"this_priority".to_owned(),dir:PortDir::Input,kind:SignalType::new("int".to_owned()),default: Some("-1".to_owned())});
-    m.ports.push(Port{name:"call_pre_post".to_owned(),dir:PortDir::Input,kind:SignalType::new("bit".to_owned()),default: Some("1".to_owned())});
-    o_.definition.insert("start".to_owned(),ObjDef::Method(m));
-    o_.definition.insert("get_sequencer".to_owned(),ObjDef::Method(DefMethod::new("get_sequencer".to_owned(),false)));
-    o_.definition.insert("get_full_name".to_owned(),ObjDef::Method(DefMethod::new("get_full_name".to_owned(),false)));
-    o_.definition.insert("get_sequence_id".to_owned(),ObjDef::Method(DefMethod::new("get_sequence_id".to_owned(),false)));
-    o.definition.insert("uvm_sequence_item".to_owned(),ObjDef::Class(Box::new(o_)));
-    o_ = CompObj::new("uvm_agent".to_owned());
-    o_.base_class = Some("uvm_component".to_owned());
-    o_.definition.insert("is_active".to_owned(),ObjDef::Type);
-    o.definition.insert("uvm_agent".to_owned(),ObjDef::Class(Box::new(o_)));
-    o_ = CompObj::new("uvm_reg_block".to_owned());
-    o_.base_class = Some("uvm_component".to_owned());
-    o_.definition.insert("default_map".to_owned(),ObjDef::Type);
-    m = DefMethod::new("create_map".to_owned(),false);
-    m.ports.push(Port{name:"name".to_owned(),dir:PortDir::Input,kind:SignalType::new("string".to_owned()),default: None});
-    m.ports.push(Port{name:"base_addr".to_owned(),dir:PortDir::Input,kind:SignalType::new("uvm_reg_addr_t".to_owned()),default: None});
-    m.ports.push(Port{name:"n_bytes".to_owned(),dir:PortDir::Input,kind:SignalType::new("int unsigned".to_owned()),default: None});
-    m.ports.push(Port{name:"endian".to_owned(),dir:PortDir::Input,kind:SignalType::new("uvm_endianness_e".to_owned()),default: None});
-    m.ports.push(Port{name:"byte_addressing".to_owned(),dir:PortDir::Input,kind:SignalType::new("bit".to_owned()),default: Some("1".to_owned())});
-    o_.definition.insert("create_map".to_owned(),ObjDef::Method(m));
-    m = DefMethod::new("configure".to_owned(),false);
-    m.ports.push(Port{name:"parent".to_owned(),dir:PortDir::Input,kind:SignalType::new("uvm_reg_block".to_owned()),default: Some("null".to_owned())});
-    m.ports.push(Port{name:"hdl_path".to_owned(),dir:PortDir::Input,kind:SignalType::new("string".to_owned()),default: Some("".to_owned())});
-    o_.definition.insert("configure".to_owned(),ObjDef::Method(m));
-    m = DefMethod::new("find_block".to_owned(),false);
-    m.ports.push(Port{name:"name".to_owned(),dir:PortDir::Input,kind:SignalType::new("string".to_owned()),default: None});
-    m.ports.push(Port{name:"root".to_owned(),dir:PortDir::Input,kind:SignalType::new("uvm_reg_block".to_owned()),default: Some("null".to_owned())});
-    m.ports.push(Port{name:"accessor".to_owned(),dir:PortDir::Input,kind:SignalType::new("uvm_object".to_owned()),default: Some("null".to_owned())});
-    o_.definition.insert("find_block".to_owned(),ObjDef::Method(m));
-    o_.definition.insert("lock_model".to_owned(),ObjDef::Method(DefMethod::new("lock_model".to_owned(),false)));
-    o_.definition.insert("reset".to_owned(),ObjDef::Method(DefMethod::new("reset".to_owned(),false)));
-    o.definition.insert("uvm_reg_block".to_owned(),ObjDef::Class(Box::new(o_)));
-    o_ = CompObj::new("uvm_reg_predictor".to_owned());
-    o_.base_class = Some("uvm_component".to_owned());
-    o_.definition.insert("bus_in".to_owned(),ObjDef::Type);
-    o_.definition.insert("map".to_owned(),ObjDef::Type);
-    o_.definition.insert("adapter".to_owned(),ObjDef::Type);
-    o_.definition.insert("reg_ap".to_owned(),ObjDef::Type);
-    o_.definition.insert("get_full_name".to_owned(),ObjDef::Method(DefMethod::new("get_full_name".to_owned(),false)));
-    o.definition.insert("uvm_reg_predictor".to_owned(),ObjDef::Class(Box::new(o_)));
-    o_ = CompObj::new("uvm_reg_sequence".to_owned());
-    o_.base_class = Some("uvm_sequence".to_owned());
-    o_.definition.insert("m_verbosity".to_owned(),ObjDef::Type); // Not true, but just to avoid error until we know how to follow properly the inheritance tree
-    m = DefMethod::new("write_reg".to_owned(),false);
-    m.ports.push(Port{name:"rg".to_owned(),dir:PortDir::Input,kind:SignalType::new("uvm_reg".to_owned()),default: None});
-    m.ports.push(Port{name:"status".to_owned(),dir:PortDir::Output,kind:SignalType::new("uvm_status_e".to_owned()),default: None});
-    m.ports.push(Port{name:"value".to_owned(),dir:PortDir::Input,kind:SignalType::new("uvm_reg_data_t".to_owned()),default: None});
-    m.ports.push(Port{name:"path".to_owned(),dir:PortDir::Input,kind:SignalType::new("uvm_path_e".to_owned()),default: Some("UVM_DEFAULT_PATH".to_owned())});
-    m.ports.push(Port{name:"map".to_owned(),dir:PortDir::Input,kind:SignalType::new("uvm_reg_map".to_owned()),default: Some("null".to_owned())});
-    m.ports.push(Port{name:"prior".to_owned(),dir:PortDir::Input,kind:SignalType::new("int".to_owned()),default: Some("-1".to_owned())});
-    m.ports.push(Port{name:"extension".to_owned(),dir:PortDir::Input,kind:SignalType::new("uvm_object".to_owned()),default: Some("null".to_owned())});
-    m.ports.push(Port{name:"fname".to_owned(),dir:PortDir::Input,kind:SignalType::new("string".to_owned()),default: Some("".to_owned())});
-    m.ports.push(Port{name:"lineno".to_owned(),dir:PortDir::Input,kind:SignalType::new("int".to_owned()),default: Some("0".to_owned())});
-    o_.definition.insert("write_reg".to_owned(),ObjDef::Method(m));
-    m = DefMethod::new("read_reg".to_owned(),false);
-    m.ports.push(Port{name:"rg".to_owned(),dir:PortDir::Input,kind:SignalType::new("uvm_reg".to_owned()),default: None});
-    m.ports.push(Port{name:"status".to_owned(),dir:PortDir::Output,kind:SignalType::new("uvm_status_e".to_owned()),default: None});
-    m.ports.push(Port{name:"value".to_owned(),dir:PortDir::Output,kind:SignalType::new("uvm_reg_data_t".to_owned()),default: None});
-    m.ports.push(Port{name:"path".to_owned(),dir:PortDir::Input,kind:SignalType::new("uvm_path_e".to_owned()),default: Some("UVM_DEFAULT_PATH".to_owned())});
-    m.ports.push(Port{name:"map".to_owned(),dir:PortDir::Input,kind:SignalType::new("uvm_reg_map".to_owned()),default: Some("null".to_owned())});
-    m.ports.push(Port{name:"prior".to_owned(),dir:PortDir::Input,kind:SignalType::new("int".to_owned()),default: Some("-1".to_owned())});
-    m.ports.push(Port{name:"extension".to_owned(),dir:PortDir::Input,kind:SignalType::new("uvm_object".to_owned()),default: Some("null".to_owned())});
-    m.ports.push(Port{name:"fname".to_owned(),dir:PortDir::Input,kind:SignalType::new("string".to_owned()),default: Some("".to_owned())});
-    m.ports.push(Port{name:"lineno".to_owned(),dir:PortDir::Input,kind:SignalType::new("int".to_owned()),default: Some("0".to_owned())});
-    o_.definition.insert("read_reg".to_owned(),ObjDef::Method(m));
-    o.definition.insert("uvm_reg_sequence".to_owned(),ObjDef::Class(Box::new(o_)));
-    o_ = CompObj::new("uvm_config_db".to_owned());
-    let mut m = DefMethod::new("get".to_owned(),false);
-    m.ports.push(Port{name:"cntxt".to_owned(),dir:PortDir::Input,kind:SignalType::new("uvm_component".to_owned()),default: None});
-    m.ports.push(Port{name:"inst_name".to_owned(),dir:PortDir::Input,kind:SignalType::new("string".to_owned()),default: None});
-    m.ports.push(Port{name:"field_name".to_owned(),dir:PortDir::Input,kind:SignalType::new("string".to_owned()),default: None});
-    m.ports.push(Port{name:"value".to_owned(),dir:PortDir::Inout,kind:SignalType::new("T".to_owned()),default: None});
-    o_.definition.insert("get".to_owned(),ObjDef::Method(m));
-    m = DefMethod::new("set".to_owned(),false);
-    m.ports.push(Port{name:"cntxt".to_owned(),dir:PortDir::Input,kind:SignalType::new("uvm_component".to_owned()),default: None});
-    m.ports.push(Port{name:"inst_name".to_owned(),dir:PortDir::Input,kind:SignalType::new("string".to_owned()),default: None});
-    m.ports.push(Port{name:"field_name".to_owned(),dir:PortDir::Input,kind:SignalType::new("string".to_owned()),default: None});
-    m.ports.push(Port{name:"value".to_owned(),dir:PortDir::Input,kind:SignalType::new("T".to_owned()),default: None});
-    o_.definition.insert("set".to_owned(),ObjDef::Method(m));
-    o.definition.insert("uvm_config_db".to_owned(),ObjDef::Class(Box::new(o_)));
-    o_ = CompObj::new("uvm_report_server".to_owned());
-    o_.definition.insert("get_server".to_owned(),ObjDef::Method(DefMethod::new("get_server".to_owned(),false)));
-    o.definition.insert("uvm_report_server".to_owned(),ObjDef::Class(Box::new(o_)));
-    o_ = CompObj::new("uvm_factory".to_owned());
-    o_.definition.insert("get".to_owned(),ObjDef::Method(DefMethod::new("get".to_owned(),false)));
-    o.definition.insert("uvm_factory".to_owned(),ObjDef::Class(Box::new(o_)));
-    o_ = CompObj::new("uvm_reg".to_owned());
-    o_.base_class = Some("uvm_component".to_owned());
-    m = DefMethod::new("include_coverage".to_owned(),false);
-    m.ports.push(Port{name:"scope".to_owned(),dir:PortDir::Input,kind:SignalType::new("string".to_owned()),default: None});
-    m.ports.push(Port{name:"models".to_owned(),dir:PortDir::Input,kind:SignalType::new("uvm_reg_cvr_t".to_owned()),default: None});
-    m.ports.push(Port{name:"accessor".to_owned(),dir:PortDir::Input,kind:SignalType::new("uvm_object".to_owned()),default: Some("null".to_owned())});
-    o_.definition.insert("include_coverage".to_owned(),ObjDef::Method(m));
-    o.definition.insert("uvm_reg".to_owned(),ObjDef::Class(Box::new(o_)));
-    o_ = CompObj::new("uvm_reg_field".to_owned());
-    o_.base_class = Some("uvm_component".to_owned());
-    let mut ot = CompObj::new("type_id".to_owned());
-    m = DefMethod::new("create".to_owned(),false);
-    m.ports.push(Port{name:"name".to_owned(),dir:PortDir::Input,kind:SignalType::new("string".to_owned()),default: None});
-    m.ports.push(Port{name:"parent".to_owned(),dir:PortDir::Input,kind:SignalType::new("uvm_component".to_owned()),default: Some("null".to_owned())});
-    m.ports.push(Port{name:"contxt".to_owned(),dir:PortDir::Input,kind:SignalType::new("string".to_owned()),default: Some("".to_owned())});
-    ot.definition.insert("create".to_owned(),ObjDef::Method(m));
-    o_.definition.insert("type_id".to_owned(),ObjDef::Class(Box::new(ot)));
-    o.definition.insert("uvm_reg_field".to_owned(),ObjDef::Class(Box::new(o_)));
-
-    o
 }
