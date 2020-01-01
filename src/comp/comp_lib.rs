@@ -271,6 +271,28 @@ impl CompLib {
                     }
                 }
                 AstNodeKind::Enum => self.add_enum_def(nc,li),
+                AstNodeKind::Struct => {
+                    // println!("[Linking] {:?} | New struct : {}", self.cntxt,nc);
+                    let d = DefType::from(nc);
+                    for ncc in &nc.child {
+                        match ncc.kind {
+                            AstNodeKind::Identifier => {
+                                // println!("[Linking] {:?} | Adding struct {:?} for {}", self.cntxt,d,ncc);
+                                let m = DefMember{
+                                    name: ncc.attr["name"].clone(),
+                                    kind: d.clone(),
+                                    unpacked : ncc.attr.get("unpacked").map_or(None,|x| Some(x.clone())),
+                                    is_const: false,
+                                    access: Access::Public
+                                };
+                                li.add_def(m.name.clone(),ObjDef::Member(m));
+                            }
+                            AstNodeKind::Declaration => {}
+                            AstNodeKind::Slice  => {}
+                            _ => println!("[Linking] {:?} | Struct: Skipping {}",self.cntxt, ncc),
+                        }
+                    }
+                }
                 AstNodeKind::Port => {
                     let mut p = DefPort::new(nc,&mut port_dir,&mut port_idx);
                     li.add_def(p.name.clone(),ObjDef::Port(p));
@@ -346,6 +368,7 @@ impl CompLib {
                 },
                 AstNodeKind::Assert      |
                 AstNodeKind::Concat      |
+                AstNodeKind::Slice      |
                 AstNodeKind::Expr        |
                 AstNodeKind::ExprGroup   |
                 AstNodeKind::Operation   |
@@ -520,6 +543,7 @@ impl CompLib {
 
     // Find definition of a node Identifier, checking the scope
     pub fn find_ident_def<'a>(&'a self, node: &AstNode, li: &'a LocalInfo, check_obj: bool) -> Option<&'a ObjDef> {
+        // println!("[Linking] {:?} | find_ident_def {}",self.cntxt,node);
         let name = &node.attr["name"];
         let scope = if node.has_scope() {Some(&node.child[0].attr["name"])} else {None};
         return self.find_def(name,scope,li,true,check_obj);
@@ -527,6 +551,7 @@ impl CompLib {
 
     // Check a node identifier is properly defined and check any hierarchical access to it.
     pub fn check_ident(&self, node: &AstNode, li: &LocalInfo) {
+        if !node.attr.contains_key("name") {println!("[Linking] {:?} | check_ident {}",self.cntxt,node);}
         match node.attr["name"].as_ref() {
             "this"  => {}
             "super" => {}
@@ -556,7 +581,7 @@ impl CompLib {
                         //         let td = self.find_def(&x.name,x.scope.as_ref(),li,false);
                         //         match td {
                         //             // Structure : Allow access to field and potentially slice if array of struct
-                        //             Some(ObjDef::Type(DefType::Struct(_td))) => {}//println!("[Linking] {:?} | Identifier {} is a struct named {}", self.cntxt, node.attr["name"], x.name),
+                        //             Some(ObjDef::Type(DefType:: begin Struct end (_td))) => {}//println!("[Linking] {:?} | Identifier {} is a struct named {}", self.cntxt, node.attr["name"], x.name),
                         //             // Enum type: allow function first/last/next...
                         //             Some(ObjDef::Type(DefType::Enum(_td))) => {}
                         //             // Typdedef of usertype -> need to fully solve the type
@@ -617,42 +642,39 @@ impl CompLib {
             return;
         }
         // Instance module should appear as a top object
+        // println!("[Linking] {:?} | Checking instance in {}", self.cntxt, node);
         match self.objects.get(&node.attr["type"]) {
             Some(ObjDef::Module(d)) => {
                 // println!("[Linking] Instance type {:?}\n\tDefinition = {:?}", node.attr["type"],d);
-                let mut ports : Vec<DefPort> = d.ports.values().cloned().collect();
-                let mut params : Vec<DefParam> = d.params.values().cloned().collect();
                 for n in &node.child {
+                    let mut params : Vec<DefParam> = d.params.values().cloned().collect();
+                    let mut has_impl = false;
                     match n.kind {
                         AstNodeKind::Instance => {
+                            let mut ports : Vec<DefPort> = d.ports.values().cloned().collect();
                             for nc in &n.child {
                                 match nc.kind {
                                     AstNodeKind::Port => {
-                                        // println!("[{}] Instance {} of {}, port {:?} = {:?}", self.cntxt, n.attr["name"],c.attr["type"],nc.attr, nc.child);
-                                        if ports.len() == 0 {
-                                            println!("[Linking] {:?} |  Too many ports in instance {} of {}",self.cntxt,nc.attr["name"], node.attr["type"]);
-                                            break;
-                                        }
+                                        // println!("[{:?}] Instance {} of {}, port {:?} = {:?}", self.cntxt, n.attr["name"],node.attr["type"],nc.attr, nc.child);
                                         match nc.attr["name"].as_ref() {
                                             // When unamed, port are taken in order
-                                            "" => {ports.remove(0);}
-                                            // Implicit connection
-                                            ".*" => {
-                                                // Checked that signal with same name of ports are defined
-                                                for p in &ports {
-                                                    if let Some(_d) = self.find_def(&p.name,None,li,false,false) {
-                                                        // Type checking
-                                                    } else {
-                                                        println!("[Linking] {:?} | Missing signal for implicit connection to {} in {}", self.cntxt, p, n.attr["name"])
-                                                    }
-
+                                            "" => {
+                                                if ports.len() == 0 {
+                                                    println!("[Linking] {:?} |  Too many ports in instance {} of {}",self.cntxt,nc.attr["name"], node.attr["type"]);
+                                                    break;
                                                 }
-                                                ports.clear();
+                                                ports.remove(0);
                                             }
+                                            // Implicit connection
+                                            ".*" => has_impl = true,
                                             // Named connection
                                             _ => {
+                                                if ports.len() == 0 {
+                                                    println!("[Linking] {:?} |  Too many ports in instance {} of {}",self.cntxt,nc.attr["name"], node.attr["type"]);
+                                                    break;
+                                                }
                                                 if let Some(i) = ports.iter().position(|x| x.name == nc.attr["name"]) {
-                                                    // println!("[{}] Calling {} with argument name {} found at index {} of {}", self.cntxt, d.name, nc.attr["name"], i, ports.iter().fold(String::new(), |acc, x| format!("{}{},", acc,x)));
+                                                    // println!("[{:?}] Calling {} with argument name {} found at index {} of {}", self.cntxt, d.name, nc.attr["name"], i, ports.iter().fold(String::new(), |acc, x| format!("{}{},", acc,x)));
                                                     ports.remove(i);
                                                 }
                                                 else {
@@ -664,11 +686,32 @@ impl CompLib {
                                         // TODO: check type / direction as well
                                         self.search_ident(&nc,li);
                                     }
-                                    _ => println!("[Linking] {:?} | Instance {} of {}, skipping {}", self.cntxt, n.attr["name"],nc.attr["type"],nc.kind)
+                                    AstNodeKind::Slice => {}
+                                    _ => println!("[Linking] {:?} | Instance {} of {}, skipping {}", self.cntxt, n.attr["name"],node.attr["type"],nc.kind)
                                     // _ => {} // Ignore all other node
                                 }
                             }
                             li.add_def(n.attr["name"].clone(),ObjDef::Module(d.clone()));
+                            // Check implicit connection
+                            if has_impl {
+                                for p in &ports {
+                                    if let Some(_d) = self.find_def(&p.name,None,li,false,false) {
+                                        // Type checking
+                                    } else {
+                                        println!("[Linking] {:?} | Missing signal for implicit connection to {} in {}", self.cntxt, p, n.attr["name"])
+                                    }
+
+                                }
+                                ports.clear();
+                            }
+                            // Check all ports are connected
+                            else if ports.len() > 0 {
+                                // Check if remaining ports are optional or not
+                                let ma :Vec<_> = ports.iter().filter(|p| p.default.is_none()).collect();
+                                if ma.len() > 0 {
+                                    println!("[Linking] {:?} | Missing {} arguments in call to {}: {}", self.cntxt, ports.len(), d.name, ma.iter().fold(String::new(), |acc, x| format!("{}{},", acc,x)));
+                                }
+                            }
                         }
                         AstNodeKind::Params => {
                             for nc in &n.child {
@@ -704,13 +747,6 @@ impl CompLib {
                         // _ => {} // Ignore all other node
                     }
                 }
-                if ports.len() > 0 {
-                    // Check if remaining ports are optional or not
-                    let ma :Vec<_> = ports.iter().filter(|p| p.default.is_none()).collect();
-                    if ma.len() > 0 {
-                        println!("[Linking] {:?} | Missing {} arguments in call to {}: {}", self.cntxt, ports.len(), d.name, ma.iter().fold(String::new(), |acc, x| format!("{}{},", acc,x)));
-                    }
-                }
             }
             _ => {
                 println!("[Linking] Instance Type {:?} undeclared", node.attr["type"]);
@@ -720,7 +756,7 @@ impl CompLib {
 
     // Analyze a function/task call
     pub fn check_call(&self, node: &AstNode, li: &LocalInfo) {
-
+        // println!("[Linking] {:?} | Checking call in {:?}", self.cntxt, node.attr);
         // Check for standard defined method
         if let Some(name) = node.attr.get("name") {
             if name=="randomize" || name=="srandom" {

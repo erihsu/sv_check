@@ -102,7 +102,8 @@ impl ObjDef {
                 // AstNodeKind::Param => {
                 //     lib.get_mut("!").unwrap().definition.insert(node.attr["name"].clone(),ObjDef::Signal);
                 // }
-                // AstNodeKind::Typedef => lib.get_mut("!").unwrap().add_type_def(&node),
+                // Temporay Whitelist
+                AstNodeKind::Import => {}
                 _ => {println!("[ObjDef] Top: Skipping {:?}", node.kind);}
             }
         }
@@ -207,7 +208,27 @@ impl DefModule {
                         }
                     }
                 }
-                // AstNodeKind::Struct => {}
+                AstNodeKind::Struct => {
+                    let d = DefType::from(n);
+                    for nc in &n.child {
+                        match nc.kind {
+                            AstNodeKind::Identifier => {
+                                let m = DefMember{
+                                    name: nc.attr["name"].clone(),
+                                    kind: d.clone(),
+                                    unpacked : nc.attr.get("unpacked").map_or(None,|x| Some(x.clone())),
+                                    is_const: false,
+                                    access: Access::Public
+                                };
+                                // println!("[{:?}] Adding enum : {:?}", self.name,m);
+                                self.defs.insert(m.name.clone(),ObjDef::Member(m));
+                            }
+                            AstNodeKind::Declaration => {}
+                            AstNodeKind::Slice  => {}
+                            _ => println!("[DefModule] {} | Struct: Skipping {}",self.name, nc),
+                        }
+                    }
+                }
                 AstNodeKind::Declaration => {
                     let m = DefMember::new(n);
                     self.defs.insert(m.name.clone(),ObjDef::Member(m));
@@ -256,7 +277,7 @@ impl DefModule {
                 // Header in a body: Loop definition
                 AstNodeKind::Header => {
                     // Check for instances ?
-                    println!("[DefModule] {} Skipping {}",self.name, n.kind);
+                    println!("[DefModule] {} | Header Skipping {}",self.name, n);
                 }
                 AstNodeKind::Define  => {
                     // println!("[Compiling] Module define {}", n.attr["name"]);
@@ -271,11 +292,14 @@ impl DefModule {
                     let d = DefCovergroup::new(n.attr["name"].clone());
                     self.defs.insert(n.attr["name"].clone(),ObjDef::Covergroup(d));
                 }
+                AstNodeKind::SvaProperty => {}
                 // Temporary: Whitelist node we can safely skip
                 // To be removed and replaced by default once eveything is working as intended
                 AstNodeKind::Timescale |
                 AstNodeKind::MacroCall |
+                AstNodeKind::Primitive |
                 AstNodeKind::Assign    |
+                AstNodeKind::Assert    |
                 AstNodeKind::Process   => {}
                 //
                 AstNodeKind::Class => {
@@ -283,7 +307,7 @@ impl DefModule {
                     d.parse_body(&n,ast_inc);
                     self.defs.insert(d.name.clone(),ObjDef::Class(d));
                 }
-                _ => {println!("[DefModule] {} Skipping {}",self.name, n.kind);}
+                _ => {println!("[DefModule] {} | Skipping {}",self.name, n);}
             }
         }
     }
@@ -425,6 +449,7 @@ impl DefPackage {
                 // To be removed and replaced by default once eveything is working as intended
                 AstNodeKind::MacroCall => {}
                 AstNodeKind::Timescale => {}
+                AstNodeKind::SvaProperty => {}
                 //
                 AstNodeKind::Class => {
                     let mut d = DefClass::new(n.attr["name"].clone());
@@ -561,6 +586,7 @@ impl DefClass {
                 // TODO
                 AstNodeKind::Constraint => {}
                 AstNodeKind::Covergroup => {}
+                AstNodeKind::SvaProperty => {}
                 // Temporary: Whitelist node we can safely skip
                 // To be removed and replaced by default once eveything is working as intended
                 AstNodeKind::MacroCall  |

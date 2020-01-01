@@ -64,7 +64,7 @@ pub fn parse_interface(ts : &mut TokenStream) -> Result<AstNode, SvError> {
             TokenKind::KwUnion  => {
                 let mut node_s = parse_struct(ts)?;
                 parse_ident_list(ts,&mut node_s)?;
-                node.child.push(node_s);
+                node_b.child.push(node_s);
             }
             TokenKind::KwTypedef => parse_typedef(ts,&mut node_b)?,
             TokenKind::TypeGenvar => {
@@ -141,7 +141,7 @@ pub fn parse_interface(ts : &mut TokenStream) -> Result<AstNode, SvError> {
             TokenKind::KwFor  => parse_for(ts,&mut node_b,true)?,
             TokenKind::KwIf   => {
                 ts.flush(0);
-                parse_if_else(ts,&mut node_b, "if".to_owned(), true)?;
+                parse_if_else(ts,&mut node_b, true)?;
             }
             // End of loop depends on context
             // TokenKind::KwEnd         if cntxt == ModuleCntxt::ForBlock => break,
@@ -191,22 +191,14 @@ pub fn parse_modport(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), Sv
                 node_p.attr.insert("dir".to_owned(), t.value);
                 t = next_t!(ts,false);
                 match t.kind {
-                    TokenKind::Ident => {
-                        node_p.attr.insert("name".to_owned(), t.value);
-                        t = next_t!(ts,false);
-                        match t.kind {
-                            TokenKind::Comma => {},
-                            TokenKind::ParenRight => break,
-                            _ =>  return Err(SvError::syntax(t,"modport. Expecting , or )".to_owned())),
-                        }
-                    }
+                    TokenKind::Ident =>  {node_p.attr.insert("name".to_owned(), t.value);}
                     // modport expression
                     TokenKind::Dot => {
                         t = next_t!(ts,false);
-                        if t.kind!=TokenKind::Ident {
-                            return Err(SvError::syntax(t,"modport. Expecting identifier".to_owned()));
+                        match t.kind {
+                            TokenKind::Ident => {node_p.attr.insert("name".to_owned(), t.value);}
+                            _ =>  return Err(SvError::syntax(t,"modport. Expecting identifier".to_owned())),
                         }
-                        node_p.attr.insert("name".to_owned(), t.value);
                     }
                     _ =>  return Err(SvError::syntax(t,"modport. Expecting port name/expression".to_owned())),
                 }
@@ -215,31 +207,33 @@ pub fn parse_modport(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), Sv
                 node_p.kind = AstNodeKind::Clocking;
                 t = next_t!(ts,false);
                 match t.kind {
-                    TokenKind::Ident => {
-                        node_p.attr.insert("name".to_owned(), t.value);
-                        t = next_t!(ts,false);
-                        match t.kind {
-                            TokenKind::Comma => {},
-                            TokenKind::ParenRight => break,
-                            _ =>  return Err(SvError::syntax(t,"modport. Expecting , or )".to_owned())),
-                        }
-                    }
+                    TokenKind::Ident => {node_p.attr.insert("name".to_owned(), t.value);}
                     _ =>  return Err(SvError::syntax(t,"modport. Expecting port name/expression".to_owned())),
                 }
             }
             TokenKind::Ident => {
                 node_p.attr.insert("name".to_owned(), t.value);
+            }
+            TokenKind::KwImport | TokenKind::KwExport => {
+                node_p.kind = AstNodeKind::Import;
+                node_p.attr.insert("kind".to_owned(), t.value);
                 t = next_t!(ts,false);
                 match t.kind {
-                    TokenKind::Comma => {},
-                    TokenKind::ParenRight => break,
-                    _ =>  return Err(SvError::syntax(t,"modport. Expecting , or )".to_owned())),
+                    TokenKind::Ident => {node_p.attr.insert("name".to_owned(), t.value);}
+                    // TODO: support task prototype
+                    _ =>  return Err(SvError::syntax(t,"modport. Expecting port name/expression".to_owned())),
                 }
             }
             // TODO : support port expression
             _ =>  return Err(SvError::syntax(t,"modport. Expecting direction/identifier/cloking/import/export (".to_owned())),
         }
         node_mp.child.push(node_p);
+        t = next_t!(ts,false);
+        match t.kind {
+            TokenKind::Comma => {},
+            TokenKind::ParenRight => break,
+            _ =>  return Err(SvError::syntax(t,"modport. Expecting , or )".to_owned())),
+        }
     }
     // Expect semi-colon
     t = next_t!(ts,false);

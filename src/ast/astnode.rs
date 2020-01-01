@@ -10,11 +10,11 @@ pub enum AstNodeKind {
     Root, // first node of a tree
     Module, Ports, Port, Params, Param,
     Class, Extends, Implements, Function, Task,
-    Constraint, Covergroup,
+    Constraint, Covergroup, SvaProperty,
     Interface, Modport, Clocking,
     Package,
     Program,
-    Udp,
+    Udp, Primitive,
     Config,
     //
     Header,

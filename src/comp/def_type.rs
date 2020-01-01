@@ -148,8 +148,9 @@ impl From<&AstNode> for DefType {
                 ),
             AstNodeKind::Struct | AstNodeKind::Union =>
                 DefType::Struct(TypeStruct {
-                    is_packed : node.attr.contains_key("packed"),
+                    is_packed : node.child.iter().find(|x| x.kind==AstNodeKind::Slice).is_some(),
                     members : node.child.iter()
+                                .filter(|x| x.kind==AstNodeKind::Declaration)
                                 .map(|x| DefMember::new(x))
                                 .collect()
                 }),

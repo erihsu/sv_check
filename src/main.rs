@@ -132,6 +132,7 @@ fn main() {
         let mut src = Source::from_file(fname.clone())
                     .unwrap_or_else(|_| exit!("File {:?} not found!",fname));
         let mut ts = TokenStream::new(&mut src);
+        // println!("[Info] Parsing file {:?}", ts.source.get_filename());
         let mut ast = ast::Ast::new();
         match ast.build(&mut ts) {
             Err(e) => println!("[Error] {:?}, {}", ts.source.get_filename(), e),
@@ -185,11 +186,12 @@ fn main() {
         let mut src = Source::from_file(fname.clone())
                     .unwrap_or_else(|_| panic!("File {:?} not found!",fname));
         let mut ts = TokenStream::new(&mut src);
+        // println!("[Info] Parsing include file {:?}", ts.source.get_filename());
         let mut ast = ast::Ast::new();
         match ast.build(&mut ts) {
             Err(e) => println!("[Error] {:?}, {}", ts.source.get_filename(), e),
             _ => {
-                // println!("[Info] File {:?} compiled with success", fname);
+                // println!("[Info] File {:?} parsed with success", fname);
                 ast_inc.insert(inc_name,ast);
             }
             // _ => println!("{}", ast.tree)

@@ -7,7 +7,7 @@ use crate::lex::token_stream::TokenStream;
 use crate::ast::astnode::*;
 use crate::ast::common::*;
 use crate::ast::module_body::{parse_timescale};
-use crate::ast::class::{parse_func,parse_task};
+use crate::ast::class::{parse_class,parse_func,parse_task};
 
 
 /// This function should be called after a keyword package
@@ -35,7 +35,8 @@ pub fn parse_package(ts : &mut TokenStream) -> Result<AstNode, SvError> {
             // Import statement
             TokenKind::KwImport | TokenKind::KwExport => parse_import(ts,&mut node)?,
             TokenKind::KwTimeunit | TokenKind::KwTimeprec => parse_timescale(ts,&mut node)?,
-            // Only local param declaration
+            // Param declaration
+            TokenKind::KwParam |
             TokenKind::KwLParam => {
                 ts.rewind(1); // put back the token so that it can be read by the parse param function
                 // potential list of param (the parse function extract only one at a time)
@@ -50,6 +51,7 @@ pub fn parse_package(ts : &mut TokenStream) -> Result<AstNode, SvError> {
                     }
                 }
             }
+            TokenKind::KwClass => node.child.push(parse_class(ts)?),
             // Nettype (might need another function to parse the signal to include strength/charge, delay, ...)
             TokenKind::KwConst   |
             TokenKind::KwNetType |
@@ -97,6 +99,8 @@ pub fn parse_package(ts : &mut TokenStream) -> Result<AstNode, SvError> {
             TokenKind::KwFunction   => parse_func(ts, &mut node, false, false)?,
             TokenKind::KwTask       => parse_task(ts, &mut node)?,
             TokenKind::KwCovergroup => parse_covergroup(ts,&mut node)?,
+            // Extra semi-colon
+            TokenKind::SemiColon => {ts.flush(1);}, // TODO: generate a warning
             // End module -> parsing of body is done
             TokenKind::KwEndPackage => {
                 ts.flush(1);

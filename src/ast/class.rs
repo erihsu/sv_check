@@ -597,7 +597,7 @@ pub fn parse_class_stmt(ts : &mut TokenStream, node: &mut AstNode, is_block: boo
     loop {
         let mut t = next_t!(ts,true);
         was_decl = false;
-        // println!("[parse_stmt] Token = {}", t);
+        // println!("[parse_stmt] Token = {} (block={})", t, is_block);
         // ts.display_status("");
         match t.kind {
             TokenKind::KwBegin => {
@@ -609,10 +609,7 @@ pub fn parse_class_stmt(ts : &mut TokenStream, node: &mut AstNode, is_block: boo
                 }
                 node.child.push(n);
             }
-            TokenKind::KwIf   => {
-                ts.flush(1);
-                parse_class_if_else(ts,node, "if")?;
-            }
+            TokenKind::KwIf   => parse_class_if_else(ts,node)?,
             TokenKind::KwFor   => {
                 ts.flush(1);
                 parse_class_for(ts,node)?;
@@ -678,12 +675,16 @@ pub fn parse_class_stmt(ts : &mut TokenStream, node: &mut AstNode, is_block: boo
                 n.child.push(ns);
                 node.child.push(n);
             }
-            TokenKind::KwCase     |
+            TokenKind::KwCase     => parse_case(ts,node)?,
             TokenKind::KwPriority |
             TokenKind::KwUnique   |
             TokenKind::KwUnique0   => {
-                ts.rewind(0);
-                parse_class_case(ts,node)?;
+                t = next_t!(ts,true);
+                match t.kind {
+                    TokenKind::KwIf   => parse_class_if_else(ts,node)?,
+                    TokenKind::KwCase => parse_case(ts,node)?,
+                    _ => return Err(SvError::syntax(t,"priority statement. Expecting case/if".to_owned()))
+                }
             }
             TokenKind::KwFork => {
                 ts.flush(1);
@@ -859,40 +860,7 @@ pub fn parse_class_stmt(ts : &mut TokenStream, node: &mut AstNode, is_block: boo
                 }
                 node.child.push(n);
             }
-            TokenKind::KwAssert => {
-                let mut n = AstNode::new(AstNodeKind::Assert);
-                ts.flush(1); // Consume assert
-                // TODO: support for deffered assertion (#0/final)
-                t = next_t!(ts,false);
-                if t.kind!=TokenKind::ParenLeft {
-                    return Err(SvError::syntax(t,"assert statement. Expecting (".to_owned()));
-                }
-                n.child.push(parse_expr(ts,ExprCntxt::Arg,false)?);
-                ts.flush(1); // Consume right parenthesis
-                t = next_t!(ts,true);
-                match t.kind {
-                    //
-                    TokenKind::SemiColon => ts.flush(1),
-                    // Else part handle after
-                    TokenKind::KwElse => {}
-                    _ => {
-                        ts.rewind(0);
-                        parse_class_stmt_or_block(ts, &mut n)?;
-                        t = next_t!(ts,true);
-                    }
-                }
-                // Handle optionnal else part
-                if t.kind==TokenKind::KwElse {
-                    ts.flush(1);
-                    let mut node_else = AstNode::new(AstNodeKind::Branch);
-                    node_else.attr.insert("kind".to_owned(),"else".to_owned());
-                    parse_class_stmt_or_block(ts, &mut node_else)?;
-                    n.child.push(node_else);
-                } else {
-                    ts.rewind(0);
-                }
-                node.child.push(n);
-            }
+            TokenKind::KwAssert => parse_assert(ts,node)?,
             TokenKind::Casting => {
                 ts.flush(1); // Consume
                 if t.value!="void'" {
@@ -965,10 +933,22 @@ pub fn parse_assign_or_call(ts : &mut TokenStream, node: &mut AstNode, cntxt: Ex
     }
     t = next_t!(ts,true);
     match t.kind {
-        TokenKind::OpEq | TokenKind::OpLTE | TokenKind::OpCompAss if !is_decl => {
+        TokenKind::OpEq | TokenKind::OpCompAss if !is_decl => {
             ts.flush(1); // Consume the operand
             n.attr.insert("kind".to_owned(),t.value);
             n.child.push(nm);
+            n.child.push(parse_expr(ts,cntxt.clone(),false)?);
+        }
+        TokenKind::OpLTE if !is_decl => {
+            ts.flush(1); // Consume the operand
+            n.attr.insert("kind".to_owned(),t.value);
+            n.child.push(nm);
+            t = next_t!(ts,true);
+            if t.kind==TokenKind::Hash {
+                n.child.push(parse_delay(ts)?);
+            } else {
+                ts.rewind(1);
+            }
             n.child.push(parse_expr(ts,cntxt.clone(),false)?);
         }
         TokenKind::OpIncrDecr if !is_decl => {
@@ -1008,9 +988,23 @@ pub fn parse_assign_or_call(ts : &mut TokenStream, node: &mut AstNode, cntxt: Ex
 /// Parse If/Else if/Else statements
 /// Suppose first IF has been consumed
 #[allow(unused_variables, unused_mut)]
-pub fn parse_class_if_else(ts : &mut TokenStream, node: &mut AstNode, cond: &str) -> Result<(), SvError> {
+pub fn parse_class_if_else(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), SvError> {
+    ts.rewind(0);
     let mut node_if = AstNode::new(AstNodeKind::Branch);
-    node_if.attr.insert("kind".to_owned(),cond.to_string());
+    let mut t = next_t!(ts,false);
+    if t.kind==TokenKind::KwPriority || t.kind==TokenKind::KwUnique || t.kind==TokenKind::KwUnique0 {
+        node_if.attr.insert("prio".to_owned(),t.value);
+        t = next_t!(ts,false);
+    }
+    if t.kind==TokenKind::KwElse {
+        t = next_t!(ts,false);
+        node_if.attr.insert("kind".to_owned(),"else if".to_owned());
+    } else {
+        node_if.attr.insert("kind".to_owned(),"if".to_owned());
+    }
+    if t.kind!=TokenKind::KwIf {
+        return Err(SvError::syntax(t, " if statement. Expecting if".to_owned()));
+    }
     expect_t!(ts,"if statement",TokenKind::ParenLeft);
     let n = parse_expr(ts,ExprCntxt::Arg,false)?;
     ts.flush(1); // Consume right parenthesis
@@ -1024,13 +1018,12 @@ pub fn parse_class_if_else(ts : &mut TokenStream, node: &mut AstNode, cond: &str
         t = next_t!(ts,true);
         // println!("[parse_if_else] Else Token ? {}", t);
         if t.kind == TokenKind::KwElse {
-            ts.flush(0);
             t = next_t!(ts,true);
             // println!("[parse_if_else] If Token ? {}", t);
             if t.kind == TokenKind::KwIf {
-                ts.flush(0);
-                parse_class_if_else(ts,node,"else if")?;
+                parse_class_if_else(ts,node)?;
             } else {
+                ts.flush(1); // Consume else
                 ts.rewind(0);
                 let mut node_else = AstNode::new(AstNodeKind::Branch);
                 node_else.attr.insert("kind".to_owned(),"else".to_owned());
@@ -1113,85 +1106,3 @@ pub fn parse_class_for(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), 
     Ok(())
 }
 
-
-/// Parse case statement
-pub fn parse_class_case(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), SvError> {
-    ts.rewind(0);
-    let mut t = next_t!(ts,false);
-    let mut node_c = AstNode::new(AstNodeKind::Case);
-    // println!("[parse_class_case] First Token {}", t);
-    if t.kind==TokenKind::KwPriority || t.kind==TokenKind::KwUnique || t.kind==TokenKind::KwUnique0 {
-        node_c.attr.insert("prio".to_owned(),t.value);
-        t = next_t!(ts,false);
-    }
-    if t.kind!=TokenKind::KwCase {
-        return Err(SvError::syntax(t,"case statement. Expecting case".to_owned()));
-    }
-    node_c.attr.insert("kind".to_owned(),t.value);
-    // Parse case expression
-    expect_t!(ts,"case",TokenKind::ParenLeft);
-    node_c.child.push(parse_expr(ts,ExprCntxt::Arg,false)?);
-    ts.flush(1); // Consume right parenthesis
-    // TODO: test for Match/inside
-    t = next_t!(ts,true);
-    match t.kind {
-        TokenKind::KwUnique   |
-        TokenKind::KwUnique0  |
-        TokenKind::KwPriority => {
-            ts.flush(0);
-            node_c.attr.insert("prio".to_owned(),t.value);
-        }
-        _ => ts.rewind(0)
-    }
-    // Loop on all case entry until endcase
-    loop {
-        t = next_t!(ts,true);
-        // println!("[parse_class_case] case item {}", t);
-        let mut node_i =  AstNode::new(AstNodeKind::CaseItem);
-        while t.kind == TokenKind::CompDir {
-            parse_macro(ts,&mut node_i)?;
-            t = next_t!(ts,true);
-        }
-        match t.kind {
-            TokenKind::OpPlus   |
-            TokenKind::OpMinus  |
-            TokenKind::Integer  |
-            TokenKind::Ident    |
-            TokenKind::Macro    |
-            TokenKind::Str      |
-            TokenKind::KwTagged  => {
-                ts.rewind(0);
-                // Collect case item expression
-                let mut s = "".to_owned();
-                loop {
-                    let nt = next_t!(ts,false);
-                    match nt.kind {
-                        // TODO : be more restrictive, and also handle case like ranges
-                        TokenKind::Colon => break,
-                        _ => s.push_str(&nt.value),
-                    }
-                }
-                // println!("[parse_class_case] case item value {}", s);
-                node_i.attr.insert("item".to_owned(),s);
-                ts.flush(0); // every character until the colon should be consumed
-            }
-            TokenKind::KwDefault => {
-                ts.flush(1);
-                let nt = next_t!(ts,true);
-                if nt.kind==TokenKind::Colon {ts.flush(1);} else {ts.rewind(1);}
-                node_i.attr.insert("item".to_owned(),"default".to_owned());
-            }
-            TokenKind::KwEndcase => break,
-            // TODO : support tagged keyword for case-matches
-            _ => return Err(SvError::syntax(t,"case entry. Expecting identifier/value/endcase".to_owned()))
-        }
-        // Parse statement
-        parse_class_stmt_or_block(ts,&mut node_i)?;
-        // println!("[parse_class_case] case item node {}", node_i);
-        node_c.child.push(node_i);
-    }
-    ts.flush(0);
-    // println!("[parse_class_case] {}", node_c);
-    node.child.push(node_c);
-    Ok(())
-}

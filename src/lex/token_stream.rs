@@ -18,7 +18,7 @@ pub struct TokenStream<'a> {
 }
 
 /// Enum for the state machine parsing number
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Debug,  Clone)]
 enum NumParseState {Start, Base, IntStart, Int, Dec, Exp}
 
 #[derive(PartialEq, Debug)]
@@ -230,23 +230,31 @@ impl<'a> TokenStream<'a> {
         let mut has_xz = false;
         let mut base = NumBase::Decimal;
         let mut fsm = if first_char=='\'' {NumParseState::Base} else  {NumParseState::Start};
+        let mut fsm_next;
+        let mut done = false;
         s.push(first_char);
         while let Some(c) = self.source.get_char() {
-            if fsm==NumParseState::IntStart && !c.is_whitespace() {
-                fsm = NumParseState::Int;
-            }
+            // if fsm==NumParseState::IntStart && !c.is_whitespace() {
+            //
+            // }
+            fsm_next = fsm.clone(); // Default next state is current state
             // println!("[parse_number] char {} ({}), fsm={:?}, base={:?}, has_xz={}", c,c.is_whitespace(),fsm,base,has_xz);
             match c {
                 // unsized literal
-                '0'|'1'|'x'|'z'|'X'|'Z' if fsm == NumParseState::Base => {
-                    fsm = NumParseState::Int;
-                    has_xz = true;
+                '0'|'1'|'x'|'z'|'X'|'Z'|'?' if fsm == NumParseState::Base => {
+                    fsm_next = NumParseState::Int;
+                    done = true;
                 }
+                //
+                'x'|'X'|'z'|'Z'|'?' if fsm==NumParseState::IntStart && base==NumBase::Decimal => done = true,
                 // x/z allowed for integer number only
                 'x'|'X'|'z'|'Z' => {
-                    if base != NumBase::Binary && base != NumBase::Hexa && fsm!=NumParseState::Int && &s!="'" {
+                    if base != NumBase::Binary && base != NumBase::Hexa && fsm!=NumParseState::Int && fsm!=NumParseState::IntStart && fsm!=NumParseState::Start && &s!="'" {
                         return Err(SvError::new(SvErrorKind::Token,self.source.pos,s));
                     }
+                    has_xz = true;
+                }
+                '?' if base==NumBase::Binary && (fsm == NumParseState::Int || fsm == NumParseState::IntStart) => {
                     has_xz = true;
                 }
                 // Base specifier
@@ -254,7 +262,7 @@ impl<'a> TokenStream<'a> {
                     if fsm != NumParseState::Start || has_xz {
                         return Err(SvError::new(SvErrorKind::Token,self.source.pos,s));
                     }
-                    fsm = NumParseState::Base;
+                    fsm_next = NumParseState::Base;
                 },
                 // s following a number can be the time unit
                 's' if fsm != NumParseState::Base => {
@@ -280,24 +288,21 @@ impl<'a> TokenStream<'a> {
                 // s in the base part indicates a signed value
                 's'|'S' if fsm == NumParseState::Base => {}
                 'b'|'B' if fsm == NumParseState::Base => {
-                    fsm = NumParseState::IntStart;
+                    fsm_next = NumParseState::IntStart;
                     base = NumBase::Binary;
                 }
                 'o'|'O' if fsm == NumParseState::Base => {
-                    fsm = NumParseState::IntStart;
+                    fsm_next = NumParseState::IntStart;
                     base = NumBase::Octal;
                 }
                 'h'|'H' if fsm == NumParseState::Base => {
-                    fsm = NumParseState::IntStart;
+                    fsm_next = NumParseState::IntStart;
                     base = NumBase::Hexa;
                 }
                 'd'|'D' if fsm == NumParseState::Base => {
-                    fsm = NumParseState::IntStart;
+                    fsm_next = NumParseState::IntStart;
                 }
                 'a'|'b'|'c'|'d'|'e'|'f'|'A'|'B'|'C'|'D'|'E'|'F' if base==NumBase::Hexa => {},
-                '?' if base==NumBase::Binary && fsm != NumParseState::Int => {
-                    return Err(SvError::new(SvErrorKind::Token,self.source.pos,s));
-                }
                 // _ can be used inside the value as a separator
                 '_' if fsm != NumParseState::Base => {}
                 // Dot -> real number
@@ -305,14 +310,14 @@ impl<'a> TokenStream<'a> {
                     if fsm != NumParseState::Start || has_xz {
                         return Err(SvError::new(SvErrorKind::Token,self.source.pos,s));
                     }
-                    fsm = NumParseState::Dec;
+                    fsm_next = NumParseState::Dec;
                 }
                 // Exponent -> real number
                 'e' | 'E' => {
                     if (fsm != NumParseState::Start && fsm != NumParseState::Dec) || has_xz {
                         return Err(SvError::new(SvErrorKind::Token,self.source.pos,s));
                     }
-                    fsm = NumParseState::Exp;
+                    fsm_next = NumParseState::Exp;
                 }
                 // Sign exponent
                 '+' | '-' => {
@@ -331,9 +336,13 @@ impl<'a> TokenStream<'a> {
                     break
                 }
             }
+            if fsm==NumParseState::IntStart && !c.is_whitespace() && fsm==NumParseState::IntStart {
+                fsm_next = NumParseState::Int;
+            }
+            fsm = fsm_next.clone();
             s.push(c);
             self.last_char = c;
-            if &s=="'0" || &s=="'1" || &s=="'x" || &s=="'z" || &s=="'X" || &s=="'Z" {
+            if done {
                 self.last_char = ' ';
                 break;
             }
@@ -689,6 +698,7 @@ impl<'a> TokenStream<'a> {
                         self.source.get_char().unwrap(); // Consume next char
                         Ok(Token::new(TokenKind::TickCurly ,"'{".to_owned(),p))
                     },
+                    '(' => Ok(Token::new(TokenKind::Casting,"\'".to_owned(),p)),
                     'h'|'d'|'o'|'b'|'x'|'z'|'H'|'D'|'O'|'B'|'X'|'Z'|'1'|'0' => self.parse_number(c),
                     _ => Err(SvError::new(SvErrorKind::Token,p,'\''.to_string()))
                 }
