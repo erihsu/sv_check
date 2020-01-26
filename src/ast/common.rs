@@ -181,7 +181,7 @@ pub fn parse_port_decl(ts : &mut TokenStream, allow_void : bool, cntxt: ExprCntx
     let mut type_found = false;
     let mut t = next_t!(ts,true);
     // println!("[parse_port_decl] First token = {:?}", t);
-    // Handle conditionnal macro. TODO: andle directly in the next_t macro
+    // Handle conditionnal macro. TODO: handle directly in the next_t macro
     while t.kind == TokenKind::CompDir {
         parse_macro(ts,&mut node)?;
         t = next_t!(ts,true);
@@ -283,7 +283,7 @@ pub fn parse_port_decl(ts : &mut TokenStream, allow_void : bool, cntxt: ExprCntx
             type_found = true;
         }
         // No port case
-        TokenKind::ParenRight => {return Ok(node);}
+        // TokenKind::ParenRight => {return Ok(node);}
         //
         _ => {}
     }
@@ -293,7 +293,10 @@ pub fn parse_port_decl(ts : &mut TokenStream, allow_void : bool, cntxt: ExprCntx
         // Optional data type
         parse_data_type(ts,&mut node, if allow_void {1} else {0})?;
     }
-    parse_var_decl_name(ts,&mut node,cntxt,false)?;
+    let mut ni = AstNode::new(AstNodeKind::Identifier);
+    parse_var_decl_name(ts,&mut ni,cntxt.clone(),false)?;
+    node.child.push(ni);
+    parse_opt_ident_list(ts,&mut node,cntxt)?;
     // println!("port_decl: {:?}", node);
     // ts.display_status("port_decl");
     Ok(node)
@@ -322,7 +325,7 @@ pub fn parse_signal_decl_list(ts : &mut TokenStream, node: &mut AstNode) -> Resu
                 node.child.push(node_sig);
                 break;
             }
-            // Open parenthesis : it was a signal but an rray of instance
+            // Open parenthesis : it was a signal but an array of instance
             TokenKind::ParenLeft if is_first => {
                 node_sig.kind = AstNodeKind::Instances;
                 let mut node_i = node_sig.clone();
@@ -661,7 +664,7 @@ pub fn parse_ident_list(ts : &mut TokenStream, node: &mut AstNode) -> Result<(),
                 let mut n = AstNode::new(AstNodeKind::Identifier);
                 n.attr.insert("name".to_owned(),t.value);
                 parse_opt_slice(ts,&mut n,true)?;
-                parse_opt_init_value(ts,&mut n)?;
+                parse_opt_init_value(ts,&mut n,ExprCntxt::StmtList)?;
                 node.child.push(n);
                 expect_ident = false;
             }
@@ -676,23 +679,28 @@ pub fn parse_ident_list(ts : &mut TokenStream, node: &mut AstNode) -> Result<(),
     Ok(())
 }
 
-pub fn parse_opt_ident_list(ts : &mut TokenStream, node: &mut AstNode) -> Result<(),SvError> {
+// Parse an optionnal identifier list: the next item in the list could be a type and so some pre-parsing is required
+pub fn parse_opt_ident_list(ts : &mut TokenStream, node: &mut AstNode,cntxt: ExprCntxt) -> Result<(),SvError> {
     loop {
         let mut t = next_t!(ts,true);
         if t.kind != TokenKind::Comma {break;}
         let tid = next_t!(ts,true);
         if tid.kind != TokenKind::Ident {break;}
         t = next_t!(ts,true);
-        // println!("[parse_opt_ident_list] tid={}, t={}", tid, t);
+        if tid.kind == TokenKind::SquareLeft {
+            println!("[parse_opt_ident_list] Found range in list -> not supported yet");
+            break;
+        }
         match t.kind {
-            TokenKind::Comma |
-            TokenKind::OpEq |
-            TokenKind::SemiColon => {ts.flush(2);ts.rewind(1);}
+            TokenKind::Comma      |
+            TokenKind::OpEq       |
+            TokenKind::ParenRight |
+            TokenKind::SemiColon  => {ts.flush(2);ts.rewind(1);}
             _ => break,
         }
         let mut n = AstNode::new(AstNodeKind::Identifier);
         n.attr.insert("name".to_owned(),tid.value);
-        parse_opt_init_value(ts,&mut n)?;
+        parse_opt_init_value(ts,&mut n,cntxt.clone())?;
         node.child.push(n);
     }
     ts.rewind(0);
@@ -700,13 +708,13 @@ pub fn parse_opt_ident_list(ts : &mut TokenStream, node: &mut AstNode) -> Result
     Ok(())
 }
 
-pub fn parse_opt_init_value(ts : &mut TokenStream, node: &mut AstNode) -> Result<(),SvError> {
+pub fn parse_opt_init_value(ts : &mut TokenStream, node: &mut AstNode, cntxt: ExprCntxt) -> Result<(),SvError> {
     let t = next_t!(ts,true);
     if t.kind != TokenKind::OpEq {
         ts.rewind(1);
     } else {
         ts.flush(1);
-        node.child.push(parse_expr(ts,ExprCntxt::StmtList,false)?);
+        node.child.push(parse_expr(ts,cntxt,false)?);
     }
     Ok(())
 }
@@ -1878,6 +1886,7 @@ pub fn parse_member_or_call(ts : &mut TokenStream, is_first: bool) -> Result<Ast
                 ts.rewind(1);
                 return Ok(n);
             }
+            // TODO : need to be reviewed, the scope handline seems incorrect ...
             TokenKind::Ident => {
                 n = ns; // Might need to update some attr of ns ? Kind ?
                 n.kind = AstNodeKind::Declaration;

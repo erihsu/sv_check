@@ -298,10 +298,11 @@ pub fn parse_class_members(ts : &mut TokenStream, node : &mut AstNode) -> Result
     // Parse data type
     parse_data_type(ts, &mut node_m, 2)?;
     // Parse data name
-    parse_var_decl_name(ts, &mut node_m,ExprCntxt::StmtList,false)?;
+    let mut n = AstNode::new(AstNodeKind::Identifier);
+    parse_var_decl_name(ts, &mut n,ExprCntxt::StmtList,false)?;
     // println!("[parse_class_members] {}", node_m);
     // if node_m.attr.contains_key("net") {println!("{:?}", node);}
-    node.child.push(node_m);
+    node_m.child.push(n);
     // Check for extra signals
     loop {
         t = next_t!(ts,false);
@@ -311,12 +312,13 @@ pub fn parse_class_members(ts : &mut TokenStream, node : &mut AstNode) -> Result
             TokenKind::SemiColon => break, // Semi colon indicate end of statement, stop the loop
             _ => return Err(SvError::syntax(t, "signal declaration, expecting , or ;".to_owned()))
         }
-        node_m = AstNode::new(AstNodeKind::Declaration);
-        parse_var_decl_name(ts, &mut node_m,ExprCntxt::StmtList,false)?;
+        n = AstNode::new(AstNodeKind::Identifier);
+        parse_var_decl_name(ts, &mut n,ExprCntxt::StmtList,false)?;
         // println!("[class members] {}", node_m);
         // ts.display_status("class_members");
-        node.child.push(node_m);
+        node_m.child.push(n);
     }
+    node.child.push(node_m);
     ts.rewind(0);
     // ts.display_status("Post parse_class_members");
     Ok(())

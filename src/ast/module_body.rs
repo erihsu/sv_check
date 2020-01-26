@@ -38,16 +38,7 @@ pub fn parse_module_body(ts : &mut TokenStream, node : &mut AstNode, cntxt : Mod
             // Port
             TokenKind::KwInput | TokenKind::KwOutput | TokenKind::KwInout | TokenKind::KwRef => {
                 ts.rewind(1); // put back the token so that it can be read by the parse param function
-                // potential list of param (the parse function extract only one at a time)
-                loop {
-                    let mut n = parse_port_decl(ts,false,ExprCntxt::StmtList)?;
-                    // Check for identifier list without type
-                    parse_opt_ident_list(ts,&mut n)?;
-                    node.child.push(n);
-                    // Stop loop on semicolon, consume comma if any
-                    loop_args_break_cont!(ts,"port declaration",SemiColon);
-                }
-
+                node.child.push(parse_port_decl(ts,false,ExprCntxt::StmtList)?);
             }
             // Nettype
             TokenKind::KwNetType |

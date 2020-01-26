@@ -60,7 +60,17 @@ impl ObjDef {
                                     match n.kind {
                                         AstNodeKind::Port => {
                                             let p = DefPort::new(n,&mut prev_dir,&mut idx_port);
-                                            d.ports.insert(p.name.clone(),p);
+                                            let mut cnt = 0;
+                                            for nc in &n.child {
+                                                if nc.kind==AstNodeKind::Identifier {
+                                                    let mut pc = p.clone();
+                                                    pc.name = nc.attr["name"].clone();
+                                                    pc.idx += cnt;
+                                                    d.ports.insert(nc.attr["name"].clone(),ObjDef::Port(pc));
+                                                }
+                                                cnt += 1;
+                                            }
+                                            idx_port += cnt - 1;
                                         }
                                         AstNodeKind::Param => {
                                             let p = DefParam::new(n,&mut idx_param);
@@ -111,15 +121,16 @@ impl ObjDef {
 
     //
     #[allow(dead_code)]
-    pub fn get_type(&self) -> &DefType {
+    pub fn get_typename(&self) -> String {
         match self {
-            ObjDef::Member(x) => &x.kind,
-            ObjDef::Port(x) => &x.kind,
-            ObjDef::Module(_) => &DefType::None,
-            _ => {
-                println!("get_type not handled on {:?}", self);
-                &DefType::None
-            }
+            ObjDef::Module(x)  => format!("module {}", x.name),
+            ObjDef::Class(x)   => format!("class {}", x.name),
+            ObjDef::Package(x) => format!("package {}", x.name),
+            ObjDef::Param(x)   => format!("param {}", x.name),
+            ObjDef::Type(x)    => format!("{}", x),
+            ObjDef::Member(_x) => "member".to_owned(),
+            ObjDef::Port(_x) => "member".to_owned(),
+            _ => format!("{:?}", self)
         }
     }
 }
@@ -147,12 +158,19 @@ impl DefModule {
                 },
                 // Handle Non-Ansi port declaration
                 AstNodeKind::Port => {
-                    let mut p = DefPort::new(n,&mut prev_dir,&mut idx_port);
-                    if self.ports.contains_key(&p.name) {
-                        p.idx = self.ports[&p.name].idx;
-                        self.ports.insert(p.name.clone(),p);
-                    } else {
-                        println!("[{:?}] Port {} definition without declaration", self.name,p.name);
+                    let p = DefPort::new(n,&mut prev_dir,&mut idx_port);
+                    for nc in &n.child {
+                        if nc.kind==AstNodeKind::Identifier {
+                            let mut pc = p.clone();
+                            pc.name = nc.attr["name"].clone();
+                            // Check the port was declared
+                            if let Some(ObjDef::Port(pa)) = self.ports.get(&pc.name) {
+                                pc.idx = pa.idx;
+                                self.ports.insert(pc.name.clone(),ObjDef::Port(pc));
+                            } else {
+                                println!("[{:?}] Port {} definition without declaration", self.name,pc.name);
+                            }
+                        }
                     }
                 }
                 // Handle Non-Ansi port declaration
@@ -231,7 +249,14 @@ impl DefModule {
                 }
                 AstNodeKind::Declaration => {
                     let m = DefMember::new(n);
-                    self.defs.insert(m.name.clone(),ObjDef::Member(m));
+                    if m.name != "" {self.defs.insert(m.name.clone(),ObjDef::Member(m.clone()));}
+                    for nc in &n.child {
+                        if nc.kind==AstNodeKind::Identifier {
+                            let mut mc = m.clone();
+                            mc.name = nc.attr["name"].clone();
+                            self.defs.insert(nc.attr["name"].clone(),ObjDef::Member(mc));
+                        }
+                    }
                 }
                 AstNodeKind::Instances => {
                     for nc in &n.child {
@@ -293,6 +318,7 @@ impl DefModule {
                     self.defs.insert(n.attr["name"].clone(),ObjDef::Covergroup(d));
                 }
                 AstNodeKind::SvaProperty => {}
+                AstNodeKind::Bind => {}
                 // Temporary: Whitelist node we can safely skip
                 // To be removed and replaced by default once eveything is working as intended
                 AstNodeKind::Timescale |
@@ -401,7 +427,14 @@ impl DefPackage {
                 },
                 AstNodeKind::Declaration => {
                     let m = DefMember::new(n);
-                    self.defs.insert(m.name.clone(),ObjDef::Member(m));
+                    if m.name != "" {self.defs.insert(m.name.clone(),ObjDef::Member(m.clone()));}
+                    for nc in &n.child {
+                        if nc.kind==AstNodeKind::Identifier {
+                            let mut mc = m.clone();
+                            mc.name = nc.attr["name"].clone();
+                            self.defs.insert(nc.attr["name"].clone(),ObjDef::Member(mc));
+                        }
+                    }
                 }
                 AstNodeKind::Instances => {
                     for nc in &n.child {
@@ -474,7 +507,7 @@ impl DefClass {
                     for nc in &n.child {
                         match nc.kind {
                             AstNodeKind::Param => {
-                                self.params.insert(nc.attr["name"].clone(),DefParam::new(nc,&mut idx_param));
+                                self.params.insert(nc.attr["name"].clone(),ObjDef::Param(DefParam::new(nc,&mut idx_param)));
                             }
                             _ => println!("[Compiling] Class Params: Skipping {:?}", nc.kind)
                         }
@@ -533,7 +566,14 @@ impl DefClass {
                 AstNodeKind::Param      |
                 AstNodeKind::Declaration => {
                     let m = DefMember::new(n);
-                    self.defs.insert(m.name.clone(),ObjDef::Member(m));
+                    if m.name != "" {self.defs.insert(m.name.clone(),ObjDef::Member(m.clone()));}
+                    for nc in &n.child {
+                        if nc.kind==AstNodeKind::Identifier {
+                            let mut mc = m.clone();
+                            mc.name = nc.attr["name"].clone();
+                            self.defs.insert(nc.attr["name"].clone(),ObjDef::Member(mc));
+                        }
+                    }
                 }
                 AstNodeKind::VIntf => {
                     let t = DefType::VIntf(TypeVIntf::from(n));

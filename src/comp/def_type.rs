@@ -2,9 +2,10 @@
 // Copyright (c) 2019, clams@mail.com
 
 
+use crate::comp::comp_obj::{ObjDef};
 use crate::ast::astnode::{AstNode,AstNodeKind};
-use crate::comp::prototype::{DefMember};
-// use std::collections::HashMap;
+use crate::comp::prototype::{DefMember, param_value};
+use std::fmt;
 
 // ------------
 // Signal type
@@ -30,6 +31,20 @@ pub struct TypeIntVector {
 /// byte, shortint, int, longint, integer, time
 #[derive(Debug, Clone)]
 pub enum IntAtomName {Byte, Shortint, Int, Longint, Integer, Time}
+
+impl fmt::Display for IntAtomName {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            IntAtomName::Byte     => write!(f, "byte"),
+            IntAtomName::Shortint => write!(f, "shortint"),
+            IntAtomName::Int      => write!(f, "int"),
+            IntAtomName::Longint  => write!(f, "longint"),
+            IntAtomName::Integer  => write!(f, "integer"),
+            IntAtomName::Time     => write!(f, "time")
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct TypeIntAtom {
     pub name : IntAtomName,
@@ -41,13 +56,28 @@ pub const TYPE_STR : DefType = DefType::Primary(TypePrimary::Str);
 
 /// Standard defined type, non integer
 #[derive(Debug, Clone)]
-pub enum TypePrimary {Shortreal,Real,Realtime,Str,Void,CHandle,Event}
+pub enum TypePrimary {Shortreal,Real,Realtime,Str,Void,CHandle,Event,Type}
+
+impl fmt::Display for TypePrimary {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            TypePrimary::Shortreal => write!(f, "shortreal"),
+            TypePrimary::Real      => write!(f, "real"),
+            TypePrimary::Realtime  => write!(f, "realtime"),
+            TypePrimary::Str       => write!(f, "str"),
+            TypePrimary::Void      => write!(f, "void"),
+            TypePrimary::CHandle   => write!(f, "chandle"),
+            TypePrimary::Event     => write!(f, "event"),
+            TypePrimary::Type      => write!(f, "type")
+        }
+    }
+}
 
 // Structure/Union
 #[derive(Debug, Clone)]
 pub struct TypeStruct {
     pub is_packed : bool,
-    pub members : Vec<DefMember>,
+    pub members : Vec<ObjDef>,
 }
 
 
@@ -63,21 +93,7 @@ impl From<&AstNode> for VecKeyVal {
             // println!("[VecKeyVal] {:?} : Params {:?}",node.attr, np);
             match np.kind {
                 AstNodeKind::Param => {
-                    let mut s = "".to_owned();
-                    for npc in &np.child {
-                        match npc.kind {
-                            AstNodeKind::Type |
-                            AstNodeKind::Identifier => s.push_str(&npc.attr["name"].clone()),
-                            AstNodeKind::Value => s.push_str(&npc.attr["value"].clone()),
-                            // TODO
-                            AstNodeKind::Concat => {},
-                            AstNodeKind::Expr => {},
-                            _ => {
-                                println!("[VecKeyVal] Skipping param value {:?}",npc);
-                            }
-                        }
-                    }
-                    v.push(KeyVal{key:np.attr["name"].clone(), val:s});
+                    v.push(KeyVal{key:np.attr["name"].clone(), val: param_value(np)});
                 }
                 _ => println!("[VecKeyVal] Skipping params child type {:?}", np.kind)
             }
@@ -151,7 +167,7 @@ impl From<&AstNode> for DefType {
                     is_packed : node.child.iter().find(|x| x.kind==AstNodeKind::Slice).is_some(),
                     members : node.child.iter()
                                 .filter(|x| x.kind==AstNodeKind::Declaration)
-                                .map(|x| DefMember::new(x))
+                                .map(|x| ObjDef::Member(DefMember::new(x)))
                                 .collect()
                 }),
             AstNodeKind::VIntf => DefType::VIntf(TypeVIntf::from(node)),
@@ -159,6 +175,7 @@ impl From<&AstNode> for DefType {
                 if node.attr.contains_key("intf") {
                     return DefType::User(TypeUser::new(node.attr["intf"].clone()));
                 }
+                // println!("[DefType] {:?}", node.attr);
                 match node.attr.get("type") {
                     // Implicit type
                     Some(t) => {
@@ -191,6 +208,7 @@ impl From<&AstNode> for DefType {
                             "void"      => DefType::Primary(TypePrimary::Void),
                             "chandle"   => DefType::Primary(TypePrimary::CHandle),
                             "event"     => DefType::Primary(TypePrimary::Event),
+                            "type"      => DefType::Primary(TypePrimary::Type),
                             // Forward declaration
                             "class"     => DefType::None,
                             // User type : TODO, check for interface
@@ -208,6 +226,23 @@ impl From<&AstNode> for DefType {
     }
 }
 
+impl fmt::Display for DefType {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            DefType::IntVector(x) => {
+                if x.packed.is_some() {write!(f,"{} [{}]",x.name, x.packed.as_ref().unwrap())}
+                else {write!(f,"{}",x.name)}
+            }
+            DefType::IntAtom(x)   => write!(f,"{}",x.name),
+            DefType::Primary(x)   => write!(f,"{}", x),
+            DefType::Struct(_x)   => write!(f,"struct"),
+            DefType::Enum(_x)     => write!(f,"enum"),
+            DefType::VIntf(x)     => write!(f,"interface {}",x.name),
+            DefType::User(x)      => write!(f,"typedef {}", x.name),
+            _ =>  write!(f, "{:?}",self)
+        }
+    }
+}
 // impl fmt::Display for DefType {
 //     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
 //         write!(f, "{}{}{}{}{}",

@@ -10,7 +10,7 @@ use crate::ast::astnode::{AstNode,AstNodeKind};
 
 use crate::comp::comp_obj::{ObjDef};
 use crate::comp::prototype::*;
-use crate::comp::def_type::{DefType,TypeVIntf,TYPE_INT};
+use crate::comp::def_type::{DefType,TypeVIntf,TypePrimary,TYPE_INT};
 use crate::comp::lib_uvm::get_uvm_lib;
 
 type LinkCntxt = (AstNodeKind,String);
@@ -23,7 +23,7 @@ pub struct CompLib {
 }
 
 // Structure containing local information for a block:
-// namely import dan signal/type definition
+// namely import and signal/type definition
 #[derive(Debug, Clone)]
 pub struct LocalInfo {
     pub imports: Vec<String>,
@@ -91,7 +91,7 @@ impl CompLib {
                     if let Some((_,v)) = self.cntxt.get(0) {
                         scope = Some(v.clone());
                     }
-                    if let Some(x) = self.find_def(&nc.attr["name"],scope.as_ref(),li,false,false) {
+                    if let Some(x) = self.find_def(&nc.attr["name"],scope.as_ref(),li,false,false).0 {
                         li.obj = Some(x.clone());
                     } else {
                         li.obj = None;
@@ -196,14 +196,19 @@ impl CompLib {
                     }
                 }
                 AstNodeKind::Declaration => {
-                    let m = DefMember::new(nc);
-                    // Check type was defined
+                    // In case of anonymous enum add the defined variant to the list
                     if nc.child.get(0).map(|x| x.kind==AstNodeKind::Enum) == Some(true) {
                         self.add_enum_def(&nc.child[0],li);
                     }
-                    self.check_type(nc,li);
-                    // add_def ensure it was not already defined
-                    li.add_def(m.name.clone(),ObjDef::Member(m));
+                    let m = DefMember::new(nc);
+                    if m.name != "" {li.add_def(m.name.clone(),ObjDef::Member(m.clone()));}
+                    for ncc in &nc.child {
+                        if ncc.kind==AstNodeKind::Identifier {
+                            let mut mc = m.clone();
+                            mc.name = ncc.attr["name"].clone();
+                            li.add_def(ncc.attr["name"].clone(),ObjDef::Member(mc));
+                        }
+                    }
                 }
                 AstNodeKind::Type if self.cntxt.last().unwrap().0 == AstNodeKind::Function => {
                     let t = DefType::from(nc);
@@ -211,7 +216,7 @@ impl CompLib {
                         name: self.cntxt.last().unwrap().1.clone(),
                         kind : t, is_const: false, unpacked: None, access: Access::Local};
                     if let DefType::User(k) = &m.kind {
-                        if self.find_def(&k.name,k.scope.as_ref(),li,false,false).is_none() {
+                        if self.find_def(&k.name,k.scope.as_ref(),li,false,false).0.is_none() {
                             println!("[Linking] {:?} | Type {:?} undeclared", self.cntxt, k.name);
                         }
                     }
@@ -256,7 +261,7 @@ impl CompLib {
                                 if let Some((_,v)) = self.cntxt.get(0) {
                                     scope = Some(v.clone());
                                 }
-                                if let Some(fd) = self.find_def(&nc.attr["name"],scope.as_ref(),li,false,true) {
+                                if let Some(fd) = self.find_def(&nc.attr["name"],scope.as_ref(),li,false,true).0 {
                                     // println!("[Linking] {:?} | Forward declaration for {} = {:?}", self.cntxt, nc.attr["name"],fd);
                                     let fdc = fd.clone();
                                     li.add_def(nc.attr["name"].clone(),fdc);
@@ -293,9 +298,21 @@ impl CompLib {
                         }
                     }
                 }
+                // Add port declaration to the current context
                 AstNodeKind::Port => {
+                    // println!("[Linking] {:?} | Port {:?} ", self.cntxt, nc);
                     let mut p = DefPort::new(nc,&mut port_dir,&mut port_idx);
-                    li.add_def(p.name.clone(),ObjDef::Port(p));
+                    let mut cnt = 0;
+                    for ncc in &nc.child {
+                        if ncc.kind==AstNodeKind::Identifier {
+                            let mut pc = p.clone();
+                            pc.name = ncc.attr["name"].clone();
+                            pc.idx += cnt;
+                            li.add_def(ncc.attr["name"].clone(),ObjDef::Port(pc));
+                        }
+                        cnt += 1;
+                    }
+                    port_idx += cnt - 1;
                     // Handle Ansi Port, check type
                     // if self.ports.contains_key(&p.name) {
                     //     p.idx = self.ports[&p.name].idx;
@@ -354,7 +371,7 @@ impl CompLib {
                 AstNodeKind::Instances => {
                     self.check_inst(nc,li);
                 }
-                AstNodeKind::MethodCall => self.check_call(nc,li),
+                AstNodeKind::MethodCall => self.check_call(nc,self.find_ident_def(nc,li,true),li),
                 AstNodeKind::MacroCall  => self.check_macro(&nc,li),
                 AstNodeKind::CaseItem   => {
                     // Check case item itself: need to update the AST
@@ -432,24 +449,24 @@ impl CompLib {
 
     // TODO: evaluate a cache version of find_def
     // Find a definition from a string
-    pub fn find_def<'a>(&'a self, name: &String, scope: Option<&String>,li: &'a LocalInfo, check_base: bool, check_obj: bool) -> Option<&'a ObjDef> {
+    pub fn find_def<'a>(&'a self, name: &String, scope: Option<&String>,li: &'a LocalInfo, check_base: bool, check_obj: bool) ->  (Option<&'a ObjDef>,Option<HashMap<String,String>>) {
         // if name == "type_name" {println!("[Linking] {:?} | searching for {} : scope = {:?}, check_base={}, check_obj={}",self.cntxt,name,scope,check_base,check_obj);}
         if let Some(scope_name) = scope {
             if let Some(ObjDef::Package(di)) = &self.objects.get(scope_name) {
-                return di.defs.get(name);
+                return (di.defs.get(name),None);
             }
-            match self.find_def(scope_name,None,li,false,check_obj) {
+            match self.find_def(scope_name,None,li,false,check_obj).0 {
                 Some(ObjDef::Class(cd)) => {
                     if let Some(bd) = cd.defs.get(name) {
-                        return Some(bd);
+                        return (Some(bd),None);
                     }
                     if check_base {
                         return self.find_def_in_base(cd,name,li)
                     }
-                    return None;
+                    return (None,None);
                 }
-                Some(di) => {println!("[Linking] {:?} | Ignoring scope definition: {:?}",self.cntxt,di);return None;}
-                _ => {return None;}
+                Some(di) => {println!("[Linking] {:?} | Ignoring scope definition: {:?}",self.cntxt,di);return (None,None);}
+                _ => {return (None,None);}
             }
         }
         // Check local definition
@@ -458,17 +475,17 @@ impl CompLib {
             match &li.obj {
                 Some(ObjDef::Class(d)) => {
                     if d.defs.contains_key(name) {
-                        return Some(&d.defs[name]);
+                        return (Some(&d.defs[name]),None);
                     }
                 }
                 Some(ObjDef::Module(d)) => {
                     if d.defs.contains_key(name) {
-                        return Some(&d.defs[name]);
+                        return (Some(&d.defs[name]),None);
                     }
                 }
                 Some(ObjDef::Package(d)) => {
                     if d.defs.contains_key(name) {
-                        return Some(&d.defs[name]);
+                        return (Some(&d.defs[name]),None);
                     }
                 }
                 _ => {}
@@ -476,7 +493,7 @@ impl CompLib {
         }
         for i in &li.defs {
             if i.contains_key(name) {
-                return Some(&i[name]);
+                return (Some(&i[name]),None);
             }
         }
         // Check in current link context
@@ -485,7 +502,7 @@ impl CompLib {
                 match self.objects.get(n) {
                     Some(ObjDef::Package(di)) => {
                         if di.defs.contains_key(name) {
-                            return di.defs.get(name);
+                            return (di.defs.get(name),None);
                         }
                     }
                     // TODO: support Class ?
@@ -496,8 +513,9 @@ impl CompLib {
         // TODO: Check in base class if any
         if check_base {
             if let Some(ObjDef::Class(cd)) = &li.obj {
-                if let Some(bd) = self.find_def_in_base(cd,name,li) {
-                    return Some(bd);
+                let bd = self.find_def_in_base(cd,name,li);
+                if bd.0.is_some() {
+                    return bd;
                 }
             }
         }
@@ -505,25 +523,61 @@ impl CompLib {
         for i in &li.imports {
             if let ObjDef::Package(di) = &self.objects[i] {
                 if di.defs.contains_key(name) {
-                    return Some(&di.defs[name]);
+                    return (Some(&di.defs[name]),None);
                 }
             }
         }
         // Last try: Check top
-        self.objects.get(name)
+        (self.objects.get(name),None)
     }
 
-    pub fn find_def_in_base<'a>(&'a self, cd: &DefClass, name: &String, li: &'a LocalInfo) -> Option<&'a ObjDef> {
+    pub fn find_def_in_base<'a>(&'a self, cd: &DefClass, name: &String, li: &'a LocalInfo) -> (Option<&'a ObjDef>,Option<HashMap<String,String>>) {
         let mut o = cd;
-        // println!("[Linking] {:?} | Class {:?} -> looking for base",self.cntxt,cd.name);
+        let mut pd : HashMap<String,String> = HashMap::new();
+        let mut pd_prev : HashMap<String,String>;
+        // if name=="TR" {println!("[Linking] {:?} | Class {:?} -> looking for base",self.cntxt,cd.name)};
         while let Some(bct) = &o.base {
-            // if name=="type_name" {println!("[Linking] Class {} looking for {} in base class {}", o.name, name, bct.name);}
-            match self.find_def(&bct.name,None,li,false,true) {
+            pd_prev = pd;
+            pd = HashMap::new();
+            // if name=="TR" || name=="REQ" {println!("[Linking] Class {:?} looking for {} in base class {}", o.name, name, bct.name);}
+            match self.find_def(&bct.name,None,li,false,true).0 {
                 Some(ObjDef::Class(bcd)) =>  {
-                    // if name=="type_name" {println!("[Linking] Class {} looking for {} in base class {} \n{:#?}", o.name, name, bcd.name, bcd);}
+                    // If the class is parameterized affect value to each param
+                    if bcd.params.len() > 0 {
+                        let mut cnt = 0;
+                        for p in &bct.params {
+                            if bcd.params.len() == 0 {
+                                println!("[Linking] {:?} | Too many parameters in base class {:?}", self.cntxt, bcd.name);
+                                break;
+                            }
+                            let pn =
+                                if p.key == "" {bcd.params.iter().find(|(_,v)| if let ObjDef::Param(x_) = v {x_.idx==cnt} else {false}).map(|(k,_)| k)}
+                                else { Some(&p.key) };
+                            if let Some(x) = pn {
+                                pd.insert(x.clone(), if pd_prev.contains_key(&p.val) {pd_prev[&p.val].clone()} else {p.val.clone()});
+                            }
+                            cnt += 1;
+                        }
+                        // Add unset parameters and check if default is using value set by other parameters
+                        if bcd.params.len() != bct.params.len() {
+                            for p_ in &bcd.params {
+                                if let ObjDef::Param(p) = p_.1 {
+                                    if !pd.contains_key(&p.name) {
+                                        // println!("[Linking] {:?} | Unset param {:?} : {:?}", self.cntxt, p, pd_prev.get(&p.value));
+                                        // println!("[Linking] {:?} | Unset param {:?} : {:?}\n bcd = {:?}\n bct = {:?}", self.cntxt, p, pd_prev.get(&p.value), bcd.params, bct.params);
+                                        pd.insert(p.name.clone(), if pd.contains_key(&p.value) {pd[&p.value].clone()} else {p.value.clone()});
+                                    }
+                                }
+                            }
+                        }
+                    }
                     // println!("[Linking] {:?} | Class {:?} has base {:?}",self.cntxt,cd.name,bct.name);
                     if bcd.defs.contains_key(name) {
-                        return Some(&bcd.defs[name]);
+                        return (Some(&bcd.defs[name]),Some(pd));
+                    }
+                    if bcd.params.contains_key(name) {
+                        // if name=="TR" || name=="REQ" || name=="RSP"  {println!("[Linking] Class {} ({:?}) looking for {} in base class {} ({:?} -> {:?})\n{:?}", o.name,o.params, name, bcd.name, bct.params, bcd.params,pd);}
+                        return (Some(&bcd.params[name]),Some(pd));
                     }
                     o = &bcd;
                 }
@@ -537,7 +591,7 @@ impl CompLib {
                 }
             }
         }
-        None
+        (None,None)
     }
 
 
@@ -546,72 +600,164 @@ impl CompLib {
         // println!("[Linking] {:?} | find_ident_def {}",self.cntxt,node);
         let name = &node.attr["name"];
         let scope = if node.has_scope() {Some(&node.child[0].attr["name"])} else {None};
-        return self.find_def(name,scope,li,true,check_obj);
+        return self.find_def(name,scope,li,true,check_obj).0;
     }
 
     // Check a node identifier is properly defined and check any hierarchical access to it.
     pub fn check_ident(&self, node: &AstNode, li: &LocalInfo) {
         if !node.attr.contains_key("name") {println!("[Linking] {:?} | check_ident {}",self.cntxt,node);}
+        let mut o : Option<&ObjDef> = None;
+        let mut ot : Option<ObjDef>;
+        let mut tdr = (None,None);
         match node.attr["name"].as_ref() {
-            "this"  => {}
-            "super" => {}
-            _ => match self.find_ident_def(node,li,false) {
-                Some(ObjDef::Module(_d)) => {
-                    // Check for hierarchical access
-                    if node.child.len() != 0 {
+            "this"  => o = li.obj.as_ref(),
+            "super" => {
+                if let Some(ObjDef::Class(bc)) = &li.obj {
+                    if let Some(bct) = &bc.base {
+                        o = self.find_def(&bct.name,None,li,false,true).0
                     }
                 }
-                Some(ObjDef::Class(_d)) => {
-                    // Check for hierarchical access
-                    if node.child.len() != 0 {
-                    }
+            }
+            _ => {
+                o = self.find_ident_def(node,li,false);
+            }
+        }
+        //
+        if o.is_none() {
+            println!("[Linking] {:?} | Identifier {:?} undeclared", self.cntxt, node.attr["name"]);
+            return;
+        }
+        if node.child.len() == 0 {
+            return;
+        }
+        // Get type definition before analysing childs
+        let td = match o {
+            Some(ObjDef::Member(x)) => Some(x.kind.clone()),
+            Some(ObjDef::Port(x))   => Some(x.kind.clone()),
+            // Some(x) => o.clone(),
+            _ => None
+        };
+        match &td {
+            Some(DefType::User(x)) => {
+                tdr = self.find_def(&x.name,x.scope.as_ref(),li,true,true);
+                if !tdr.0.is_none() {
+                    ot = Some(tdr.0.unwrap().clone());
+                    // println!("[Linking] {:?} | Identifier {:?} user type = {:?}", self.cntxt, node.attr["name"], tdr.0.unwrap());
+                } else {
+                    println!("[Linking] {:?} | User type {:?} from {:?} is undefined", self.cntxt,x.name, node.attr["name"]);
+                    return;
                 }
-                Some(ObjDef::Covergroup(_d)) => {
-                    // Check for hierarchical access
-                    if node.child.len() != 0 {
-                    }
+            }
+            Some(DefType::VIntf(x)) => {
+                tdr  = self.find_def(&x.name,None,li,false,true);
+                if !tdr.0.is_none() {
+                    ot = Some(tdr.0.unwrap().clone());
+                    // println!("[Linking] {:?} | Identifier {:?} Virtual Interface = {:?}", self.cntxt, node.attr["name"], tdr.0.unwrap());
+                } else {
+                    println!("[Linking] {:?} | User type {:?} undefined", self.cntxt, x.name);
+                    return;
                 }
-                Some(_d) => {
-                    // Check for hierarchical access
-                    if node.child.len() != 0 {
-                        // let t = d.get_type();
-                        // match t {
-                        //     DefType::User(x) => {
-                        //         // println!("[Linking] {:?} | Checking Node {:?} with type {:?}", self.cntxt, node.attr, x);
-                        //         let td = self.find_def(&x.name,x.scope.as_ref(),li,false);
-                        //         match td {
-                        //             // Structure : Allow access to field and potentially slice if array of struct
-                        //             Some(ObjDef::Type(DefType:: begin Struct end (_td))) => {}//println!("[Linking] {:?} | Identifier {} is a struct named {}", self.cntxt, node.attr["name"], x.name),
-                        //             // Enum type: allow function first/last/next...
-                        //             Some(ObjDef::Type(DefType::Enum(_td))) => {}
-                        //             // Typdedef of usertype -> need to fully solve the type
-                        //             Some(ObjDef::Type(DefType::User(_td))) => {}
-                        //             Some(ObjDef::Param(_td)) => {}
-                        //             // Interface/module : allow access to signal/instance/clocking block/ ...
-                        //             Some(ObjDef::Module(_td)) => {} //println!("[Linking] {:?} | Identifier {} is a module/interface named {}", self.cntxt, node.attr["name"], x.name),
-                        //             // Class
-                        //             Some(ObjDef::Class(_td)) => {}
-                        //             Some(_x) => println!("[Linking] {:?} | Identifier {} with user type {} = {:?}", self.cntxt, node.attr["name"], x.name, _x),
-                        //             _ => println!("[Linking] {:?} | No definition for user type {:?}", self.cntxt, x.name)
-                        //         }
-                        //     }
-                        //     // Virtual interface: allow access to fields of the virtual interface
-                        //     DefType::VIntf(_x) => {}
-                        //     // Should only expect slice child
-                        //     DefType::IntVector(_x) => {}
-                        //     DefType::IntAtom(_x) => {}
-                        //     // Need differentiation between the different primary type
-                        //     DefType::Primary(_x) => {}
-                        //     DefType::None => {}
-                        //     _ => println!("[Linking] {:?} | Identifier {} found with type {:?}\n\tDefinition = {:?}\n\tChilds = {:?}", self.cntxt, node.attr["name"],t,d,node.child)
-                        // }
+            }
+            Some(x) => ot = Some(ObjDef::Type(x.clone())),
+            // Some(x) =>  println!("[Linking] {:?} | Identifier {:?} type = {:?}", self.cntxt, node.attr["name"], x),
+            None => ot = Some(o.unwrap().clone()), // safe unwrap since the function exit early in case of none
+        }
+        // Might need a loop here to handle multiple typeder ?
+        if let Some(ObjDef::Type(DefType::User(x))) = &ot {
+            // println!("[Linking] {:?} | User type {:?} resolved to {:?}", self.cntxt, td, x);
+            tdr = self.find_def(&x.name,x.scope.as_ref(),li,true,true);
+            if !tdr.0.is_none() {
+                ot = Some(tdr.0.unwrap().clone());
+                // println!("[Linking] {:?} | Identifier {:?} user type = {:?}", self.cntxt, node.attr["name"], tdr.0.unwrap());
+            } else {
+                println!("[Linking] {:?} | User type {:?} from {:?} is undefined", self.cntxt,x.name, node.attr["name"]);
+                return;
+            }
+        }
+        // Check if Param
+        if let Some(ObjDef::Param(x)) = &ot {
+            if let Some(params) = &tdr.1 {
+                if params.contains_key(&x.name) {
+                    tdr = self.find_def(&params[&x.name],None,li,true,true);
+                    if !tdr.0.is_none() {
+                        ot = Some(tdr.0.unwrap().clone());
                     }
-                }
-                None => {
-                    println!("[Linking] {:?} | Identifier {:?} undeclared", self.cntxt, node.attr["name"]);
+                    // println!("[Linking] {:?} | Identifier {} has a parameterized type {} -> {:?} ", self.cntxt, node.attr["name"],x.name,tdr.0);
                 }
             }
         }
+        // Check potential child : slice / fields
+        // if node.attr["name"]=="o_tr_l" {
+        //     println!("[Linking] {:?} | Identifier {} has type {:?}\n\t=> {:?}", self.cntxt, node.attr["name"],o,ot);
+        // }
+        for nc in &node.child {
+            match nc.kind {
+                // Do not care about scope
+                AstNodeKind::Scope      => {}
+                // Slice: check that the type is an array (packed/unpacked)
+                // TODO: check that dimension are okay
+                AstNodeKind::Slice      => {}
+                AstNodeKind::Identifier => {
+                    // TODO: check if o unpacked dimension
+                    let cd = self.find_def_in_obj(ot.as_ref(),&nc.attr["name"],li);
+                    if cd.is_none() {
+                        println!("[Linking] {:?} | Identifier {} not found in {} ({})", self.cntxt, nc.attr["name"],node.attr["name"],ot.as_ref().unwrap().get_typename());
+                        // match o {
+                        //     Some(ObjDef::Member(_)) => {}
+                        //     Some(ObjDef::Port(_))   => {}
+                        //     _ => println!("[Linking] {:?} | Identifier {} not found in {}", self.cntxt, nc.attr["name"],node.attr["name"])
+                        // }
+                    }
+                }
+                AstNodeKind::MethodCall => {
+                    match o {
+                        Some(ObjDef::Member(_)) => {}
+                        Some(ObjDef::Port(_))   => {}
+                        _ => self.check_call(nc,self.find_def_in_obj(o,&nc.attr["name"],li),li)
+                    }
+                    // self.check_call(nc,self.find_def_in_obj(o,&nc.attr["name"],li),li);
+                }
+                _ => {println!("[Linking] {:?} | Identifier {} has child {:?}", self.cntxt, node.attr["name"], node.child);}
+            }
+        }
+    }
+
+    pub fn find_def_in_obj<'a>(&'a self, o: Option<&'a ObjDef>, name: &String, li: &'a LocalInfo) -> Option<&'a ObjDef> {
+
+        match o {
+            //
+            Some(ObjDef::Class(od)) => {
+                if od.defs.contains_key(name) {
+                    od.defs.get(name)
+                } else {
+                    self.find_def_in_base(od,name,li).0
+                }
+            }
+            Some(ObjDef::Module(od)) => {
+                if od.ports.contains_key(name) {
+                    od.ports.get(name)
+                } else {
+                    od.defs.get(name)
+                }
+            }
+            Some(ObjDef::Type(DefType::Struct(od))) => od.members.iter().find(|x| if let ObjDef::Member(x_) = x {x_.name==*name} else {false}),
+            // TODO
+            Some(ObjDef::Type(DefType::Primary(t))) => {
+                match t {
+                    TypePrimary::Event => {
+                        if let ObjDef::Class(od) = &self.objects["event"] {od.defs.get(name)} else {None}
+                    }
+                    _ => None
+                }
+            }
+            Some(ObjDef::Type(DefType::IntVector(_))) => {None}
+
+            _ => {
+                // println!("[Linking] {:?} | Searching for {} in {:?}",self.cntxt, name, o);
+                None
+            }
+        }
+
     }
 
     // Analyse a module/interface instance
@@ -626,7 +772,7 @@ impl CompLib {
                 "byte" | "shortint" | "int" | "longint" | "integer" | "time" => {},
                 "shortreal" | "real" | "realtime" | "string" | "void" | "chandle" | "event" => {},
                 _ => {
-                    if self.find_def(name,scope,li,false,false).is_none() {
+                    if self.find_def(name,scope,li,false,false).0.is_none() {
                         println!("[Linking] {:?} | Type {:?} undeclared", self.cntxt, node.attr["type"]);
                     }
                 }
@@ -651,7 +797,7 @@ impl CompLib {
                     let mut has_impl = false;
                     match n.kind {
                         AstNodeKind::Instance => {
-                            let mut ports : Vec<DefPort> = d.ports.values().cloned().collect();
+                            let mut ports : Vec<ObjDef> = d.ports.values().cloned().collect();
                             for nc in &n.child {
                                 match nc.kind {
                                     AstNodeKind::Port => {
@@ -673,7 +819,7 @@ impl CompLib {
                                                     println!("[Linking] {:?} |  Too many ports in instance {} of {}",self.cntxt,nc.attr["name"], node.attr["type"]);
                                                     break;
                                                 }
-                                                if let Some(i) = ports.iter().position(|x| x.name == nc.attr["name"]) {
+                                                if let Some(i) = ports.iter().position(|x| if let ObjDef::Port(p) = x {p.name == nc.attr["name"]} else {false}) {
                                                     // println!("[{:?}] Calling {} with argument name {} found at index {} of {}", self.cntxt, d.name, nc.attr["name"], i, ports.iter().fold(String::new(), |acc, x| format!("{}{},", acc,x)));
                                                     ports.remove(i);
                                                 }
@@ -694,11 +840,13 @@ impl CompLib {
                             li.add_def(n.attr["name"].clone(),ObjDef::Module(d.clone()));
                             // Check implicit connection
                             if has_impl {
-                                for p in &ports {
-                                    if let Some(_d) = self.find_def(&p.name,None,li,false,false) {
-                                        // Type checking
-                                    } else {
-                                        println!("[Linking] {:?} | Missing signal for implicit connection to {} in {}", self.cntxt, p, n.attr["name"])
+                                for p_ in &ports {
+                                    if let ObjDef::Port(p) = p_ {
+                                        if let Some(_d) = self.find_def(&p.name,None,li,false,false).0 {
+                                            // Type checking
+                                        } else {
+                                            println!("[Linking] {:?} | Missing signal for implicit connection to {} in {}", self.cntxt, p, n.attr["name"])
+                                        }
                                     }
 
                                 }
@@ -707,9 +855,10 @@ impl CompLib {
                             // Check all ports are connected
                             else if ports.len() > 0 {
                                 // Check if remaining ports are optional or not
-                                let ma :Vec<_> = ports.iter().filter(|p| p.default.is_none()).collect();
+                                let ma :Vec<_> = ports.iter().filter(|x| if let ObjDef::Port(p) = x {p.default.is_none()} else {false}).collect();
                                 if ma.len() > 0 {
-                                    println!("[Linking] {:?} | Missing {} arguments in call to {}: {}", self.cntxt, ports.len(), d.name, ma.iter().fold(String::new(), |acc, x| format!("{}{},", acc,x)));
+                                    println!("[Linking] {:?} | Missing {} arguments in call to {}", self.cntxt, ports.len(), d.name);
+                                    // println!("[Linking] {:?} | Missing {} arguments in call to {}: {}", self.cntxt, ports.len(), d.name, ma.iter().fold(String::new(), |acc, x| format!("{}{:?},", acc,x)));
                                 }
                             }
                         }
@@ -755,7 +904,7 @@ impl CompLib {
     }
 
     // Analyze a function/task call
-    pub fn check_call(&self, node: &AstNode, li: &LocalInfo) {
+    pub fn check_call(&self, node: &AstNode, obj: Option<&ObjDef>, _li: &LocalInfo) {
         // println!("[Linking] {:?} | Checking call in {:?}", self.cntxt, node.attr);
         // Check for standard defined method
         if let Some(name) = node.attr.get("name") {
@@ -763,7 +912,7 @@ impl CompLib {
                 return;
             }
         }
-        match self.find_ident_def(node,li,true) {
+        match obj {
             Some(ObjDef::Method(d)) => {
                 let mut ports = d.ports.clone();
                 for n in &node.child {

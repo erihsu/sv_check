@@ -67,8 +67,10 @@ impl DefPort {
             d = dir.clone();
         }
         *idx += 1;
+        // TODO: the check for "name" should be removed: it should not happen anymore
+        if node.attr.contains_key("name") {println!("[DefPort] Found a name instead of a child !{:#?}", node);}
         DefPort{
-            name: node.attr["name"].clone(),
+            name: "".to_string(),
             dir : d,
             kind: DefType::from(node),
             unpacked : node.attr.get("unpacked").map_or(None,|x| Some(x.clone())),
@@ -93,19 +95,45 @@ impl fmt::Display for DefPort {
 
 // -----------
 // Parameter
+// TODO: add default field and parse the child to construct the default value
 #[derive(Debug, Clone)]
 pub struct DefParam {
     pub name  : String,
     pub kind  : DefType,
+    pub value : String,
     pub idx   : i16,
+}
+
+
+pub fn param_value(node: &AstNode) -> String {
+    let mut s = "".to_owned();
+    for npc in &node.child {
+        match npc.kind {
+            AstNodeKind::Type |
+            AstNodeKind::Identifier => s.push_str(&npc.attr["name"].clone()),
+            AstNodeKind::Value => s.push_str(&npc.attr["value"].clone()),
+            // TODO
+            AstNodeKind::Concat => {},
+            AstNodeKind::StructInit => {},
+            AstNodeKind::Expr => {},
+            AstNodeKind::Branch => {},
+            AstNodeKind::SystemTask => {},
+            _ => {
+                println!("[ParamValue] Skipping param value {:?}",npc);
+            }
+        }
+    }
+    s
 }
 
 impl DefParam {
     pub fn new(node: &AstNode, idx: &mut i16) -> DefParam {
         *idx += 1;
+        // println!("[DefParam] {:?}", node.child);
         DefParam{
             name: node.attr["name"].clone(),
             kind: DefType::from(node),
+            value : param_value(node),
             idx : idx.clone()
         }
     }
@@ -144,7 +172,17 @@ impl From<&AstNode> for DefMethod {
                 AstNodeKind::Ports => {
                     for np in &nc.child {
                         let p = DefPort::new(np,&mut prev_dir, &mut prev_idx);
-                        d.ports.push(p);
+                        let mut cnt = 0;
+                        for npc in &np.child {
+                            if npc.kind==AstNodeKind::Identifier {
+                                let mut pc = p.clone();
+                                pc.name = npc.attr["name"].clone();
+                                pc.idx += cnt;
+                                d.ports.push(pc);
+                            }
+                            cnt += 1;
+                        }
+                        prev_idx += cnt - 1;
                     }
                 }
                 // Add return type
@@ -155,6 +193,7 @@ impl From<&AstNode> for DefMethod {
                 _ => {break;}
             }
         }
+        // println!("[Method] {:?}", d);
         d
     }
 }
@@ -273,7 +312,7 @@ impl DefCovergroup {
 pub struct DefModule {
     pub name   : String,
     pub params : HashMap<String,DefParam>,
-    pub ports  : HashMap<String,DefPort>,
+    pub ports  : HashMap<String,ObjDef>,
     pub defs   : HashMap<String,ObjDef>,
 }
 
@@ -307,8 +346,9 @@ pub struct DefMember {
 
 impl DefMember {
     pub fn new(node: &AstNode) -> DefMember {
+        // if node.attr.contains_key("name") {println!("[DefPort] Found a name instead of a child !{:#?}", node);}
         DefMember{
-            name     : node.attr["name"].clone(),
+            name     : if node.attr.contains_key("name") {node.attr["name"].clone()} else {"".to_string()},
             kind     : DefType::from(node),
             is_const : node.kind==AstNodeKind::Param, // TODO
             unpacked : node.attr.get("unpacked").map_or(None,|x| Some(x.clone())),
@@ -322,10 +362,10 @@ impl DefMember {
 // Class
 #[derive(Debug, Clone)]
 pub struct DefClass {
-    pub name      : String,
-    pub base      : Option<TypeUser>,
-    pub params    : HashMap<String,DefParam>,
-    pub defs: HashMap<String,ObjDef>,
+    pub name    : String,
+    pub base    : Option<TypeUser>,
+    pub params  : HashMap<String,ObjDef>,
+    pub defs    : HashMap<String,ObjDef>,
 }
 
 #[allow(dead_code)]

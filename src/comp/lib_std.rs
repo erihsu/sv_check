@@ -4,7 +4,7 @@
 use crate::comp::prototype::*;
 use crate::comp::comp_obj::{ObjDef};
 use crate::comp::comp_lib::{CompLib};
-// use crate::comp::def_type::{DefType,TypePrimary,TypeUser};
+use crate::comp::def_type::{DefType,TypeIntVector};
 
 impl CompLib {
 
@@ -34,5 +34,11 @@ impl CompLib {
         self.objects.insert(o.name.clone(),ObjDef::Class(o));
 
         //
+        o = DefClass::new("event".to_owned());
+        let mut m = DefMethod::new("triggered".to_owned(),false);
+        m.ret = Some(DefType::IntVector(TypeIntVector {name   : "bit".to_owned(), packed : None,signed : false}));
+        o.defs.insert(m.name.clone(),ObjDef::Method(m));
+        self.objects.insert(o.name.clone(),ObjDef::Class(o));
+
     }
 }
