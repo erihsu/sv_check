@@ -62,7 +62,8 @@ pub fn parse_module_body(ts : &mut TokenStream, node : &mut AstNode, cntxt : Mod
                     nt = next_t!(ts,false);
                 }
                 if nt.kind == TokenKind::SquareLeft {
-                    node_d.attr.insert("packed".to_owned(), parse_range(ts)?);
+                    ts.rewind(1);
+                    parse_opt_slice(ts,&mut node_d,true,false)?;
                 }
                 parse_var_decl_name(ts, &mut node_d,ExprCntxt::StmtList,false)?;
                 // allow list of interconnect
@@ -327,7 +328,7 @@ pub fn parse_instance(ts : &mut TokenStream) -> Result<AstNode, SvError> {
         let mut node_i = AstNode::new(AstNodeKind::Instance);
         node_i.attr.insert("name".to_owned(), t.value);
         // Test for array of instance
-        parse_opt_slice(ts, &mut node_i, true)?;
+        parse_opt_slice(ts, &mut node_i, true,false)?;
         parse_port_connection(ts,&mut node_i,false)?;
         node.child.push(node_i);
         loop_args_break_cont!(ts,"param declaration",SemiColon);
@@ -686,7 +687,7 @@ pub fn parse_primitive(ts : &mut TokenStream) -> Result<AstNode, SvError> {
         node.attr.insert("name".to_owned(), t.value);
         ts.flush(1); // consume the identifier
     }
-    parse_opt_slice(ts, &mut node, true)?;
+    parse_opt_slice(ts, &mut node, true, false)?;
     expect_t!(ts,"primitive",TokenKind::ParenLeft);
     loop {
         let mut node_p = AstNode::new(AstNodeKind::Port);

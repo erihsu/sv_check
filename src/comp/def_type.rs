@@ -64,7 +64,7 @@ impl fmt::Display for TypePrimary {
             TypePrimary::Shortreal => write!(f, "shortreal"),
             TypePrimary::Real      => write!(f, "real"),
             TypePrimary::Realtime  => write!(f, "realtime"),
-            TypePrimary::Str       => write!(f, "str"),
+            TypePrimary::Str       => write!(f, "string"),
             TypePrimary::Void      => write!(f, "void"),
             TypePrimary::CHandle   => write!(f, "chandle"),
             TypePrimary::Event     => write!(f, "event"),
@@ -162,14 +162,26 @@ impl From<&AstNode> for DefType {
                                 .map(|x| x.attr["name"].clone())
                                 .collect()
                 ),
-            AstNodeKind::Struct | AstNodeKind::Union =>
+            AstNodeKind::Struct | AstNodeKind::Union => {
+                let mut mv = Vec::new(); //Vec<ObjDef>
+                for nc in &node.child {
+                    if nc.kind==AstNodeKind::Declaration {
+                        let m = DefMember::new(nc);
+                        for ncc in &nc.child {
+                            if ncc.kind==AstNodeKind::Identifier {
+                                let mut mc = m.clone();
+                                mc.name = ncc.attr["name"].clone();
+                                mc.updt(ncc);
+                                mv.push(ObjDef::Member(mc));
+                            }
+                        }
+                    }
+                }
                 DefType::Struct(TypeStruct {
                     is_packed : node.child.iter().find(|x| x.kind==AstNodeKind::Slice).is_some(),
-                    members : node.child.iter()
-                                .filter(|x| x.kind==AstNodeKind::Declaration)
-                                .map(|x| ObjDef::Member(DefMember::new(x)))
-                                .collect()
-                }),
+                    members : mv
+                })
+            }
             AstNodeKind::VIntf => DefType::VIntf(TypeVIntf::from(node)),
             _ => {
                 if node.attr.contains_key("intf") {
@@ -180,7 +192,7 @@ impl From<&AstNode> for DefType {
                     // Implicit type
                     Some(t) => {
                         match t.as_ref() {
-                            "bit" | "logic" =>
+                            "bit" | "logic" | "reg" =>
                                 DefType::IntVector(TypeIntVector {
                                     name   : t.to_owned(),
                                     packed : node.attr.get("packed").map_or(None,|x| Some(x.clone())),
@@ -238,7 +250,10 @@ impl fmt::Display for DefType {
             DefType::Struct(_x)   => write!(f,"struct"),
             DefType::Enum(_x)     => write!(f,"enum"),
             DefType::VIntf(x)     => write!(f,"interface {}",x.name),
-            DefType::User(x)      => write!(f,"typedef {}", x.name),
+            DefType::User(x)      => {
+                if x.packed.is_some() {write!(f,"typedef {} [{}]",x.name, x.packed.as_ref().unwrap())}
+                else {write!(f,"typedef {}",x.name)}
+            }
             _ =>  write!(f, "{:?}",self)
         }
     }

@@ -18,7 +18,6 @@ pub enum ObjDef {
     Clocking(DefClocking),
     Member(DefMember),
     Port(DefPort),
-    Param(DefParam),
     Instance(String),
     EnumValue(String),
     Method(DefMethod),
@@ -60,21 +59,23 @@ impl ObjDef {
                                     match n.kind {
                                         AstNodeKind::Port => {
                                             let p = DefPort::new(n,&mut prev_dir,&mut idx_port);
-                                            let mut cnt = 0;
                                             for nc in &n.child {
                                                 if nc.kind==AstNodeKind::Identifier {
                                                     let mut pc = p.clone();
-                                                    pc.name = nc.attr["name"].clone();
-                                                    pc.idx += cnt;
+                                                    pc.updt(&mut idx_port,nc);
                                                     d.ports.insert(nc.attr["name"].clone(),ObjDef::Port(pc));
                                                 }
-                                                cnt += 1;
                                             }
-                                            idx_port += cnt - 1;
                                         }
                                         AstNodeKind::Param => {
-                                            let p = DefParam::new(n,&mut idx_param);
-                                            d.params.insert(p.name.clone(),p);
+                                            let p = DefPort::new(n, &mut PortDir::Param, &mut idx_param);
+                                            for nc in &n.child {
+                                                if nc.kind==AstNodeKind::Identifier {
+                                                    let mut pc = p.clone();
+                                                    pc.updt(&mut idx_port,nc);
+                                                    d.params.insert(nc.attr["name"].clone(),pc);
+                                                }
+                                            }
                                         }
                                         _ => {}
                                     }
@@ -126,7 +127,6 @@ impl ObjDef {
             ObjDef::Module(x)  => format!("module {}", x.name),
             ObjDef::Class(x)   => format!("class {}", x.name),
             ObjDef::Package(x) => format!("package {}", x.name),
-            ObjDef::Param(x)   => format!("param {}", x.name),
             ObjDef::Type(x)    => format!("{}", x),
             ObjDef::Member(_x) => "member".to_owned(),
             ObjDef::Port(_x) => "member".to_owned(),
@@ -145,8 +145,14 @@ impl DefModule {
             // println!("[DefModule] {} | next node = {}",self.name, n.kind);
             match n.kind {
                 AstNodeKind::Param => {
-                    let p = DefParam::new(n,&mut idx_param);
-                    self.params.insert(p.name.clone(),p);
+                    let p = DefPort::new(n,&mut PortDir::Param,&mut idx_param);
+                    for nc in &n.child {
+                        if nc.kind==AstNodeKind::Identifier {
+                            let mut pc = p.clone();
+                            pc.updt(&mut idx_port,nc);
+                            self.params.insert(nc.attr["name"].clone(),pc);
+                        }
+                    }
                 }
                 AstNodeKind::Directive => {
                     n.attr.get("include").map(
@@ -162,7 +168,7 @@ impl DefModule {
                     for nc in &n.child {
                         if nc.kind==AstNodeKind::Identifier {
                             let mut pc = p.clone();
-                            pc.name = nc.attr["name"].clone();
+                            pc.updt(&mut idx_port,nc);
                             // Check the port was declared
                             if let Some(ObjDef::Port(pa)) = self.ports.get(&pc.name) {
                                 pc.idx = pa.idx;
@@ -208,6 +214,7 @@ impl DefModule {
                     // println!("[{:?}] enum type = {}", self.name,enum_type);
                     for nc in &n.child {
                         match nc.kind {
+                            AstNodeKind::Slice  => {}
                             AstNodeKind::EnumIdent  => {
                                 self.defs.insert(nc.attr["name"].clone(),ObjDef::EnumValue("".to_owned()));
                             },
@@ -215,14 +222,14 @@ impl DefModule {
                                 let m = DefMember{
                                     name: nc.attr["name"].clone(),
                                     kind: enum_type.clone(),
-                                    unpacked : nc.attr.get("unpacked").map_or(None,|x| Some(x.clone())),
+                                    unpacked : Vec::new(),
                                     is_const: false,
                                     access: Access::Public
                                 };
                                 // println!("[{:?}] Adding enum : {:?}", self.name,m);
                                 self.defs.insert(m.name.clone(),ObjDef::Member(m));
                             }
-                            _ => println!("[DefModule] {} | Typedef: Skipping {}",self.name, nc.kind),
+                            _ => println!("[DefModule] {} | Enum: Skipping {}",self.name, nc.kind),
                         }
                     }
                 }
@@ -234,15 +241,15 @@ impl DefModule {
                                 let m = DefMember{
                                     name: nc.attr["name"].clone(),
                                     kind: d.clone(),
-                                    unpacked : nc.attr.get("unpacked").map_or(None,|x| Some(x.clone())),
+                                    unpacked : Vec::new(),
                                     is_const: false,
                                     access: Access::Public
                                 };
                                 // println!("[{:?}] Adding enum : {:?}", self.name,m);
                                 self.defs.insert(m.name.clone(),ObjDef::Member(m));
                             }
-                            AstNodeKind::Declaration => {}
-                            AstNodeKind::Slice  => {}
+                            // AstNodeKind::Declaration => {}
+                            // AstNodeKind::Slice  => {}
                             _ => println!("[DefModule] {} | Struct: Skipping {}",self.name, nc),
                         }
                     }
@@ -253,7 +260,7 @@ impl DefModule {
                     for nc in &n.child {
                         if nc.kind==AstNodeKind::Identifier {
                             let mut mc = m.clone();
-                            mc.name = nc.attr["name"].clone();
+                            mc.updt(nc);                            
                             self.defs.insert(nc.attr["name"].clone(),ObjDef::Member(mc));
                         }
                     }
@@ -401,6 +408,7 @@ impl DefPackage {
                     // println!("[{:?}] enum type = {}", self.name,enum_type);
                     for nc in &n.child {
                         match nc.kind {
+                            AstNodeKind::Slice  => {}
                             AstNodeKind::EnumIdent  => {
                                 self.defs.insert(nc.attr["name"].clone(),ObjDef::EnumValue("".to_owned()));
                             },
@@ -408,22 +416,28 @@ impl DefPackage {
                                 let m = DefMember{
                                     name     : nc.attr["name"].clone(),
                                     kind     : enum_type.clone(),
-                                    unpacked : nc.attr.get("unpacked").map_or(None,|x| Some(x.clone())),
+                                    unpacked : Vec::new(),
                                     is_const : false,
                                     access   : Access::Public
                                 };
                                 // println!("[{:?}] Adding enum : {:?}", self.name,m);
                                 self.defs.insert(m.name.clone(),ObjDef::Member(m));
                             }
-                            _ => println!("[CompObj] {} | Typedef: Skipping {}",self.name, nc.kind),
+                            _ => println!("[CompObj] {} | Enum: Skipping {}",self.name, nc.kind),
                         }
                     }
                 }
                 // AstNodeKind::Struct => {}
                 AstNodeKind::Param => {
                     // println!("[DefPackage] {} : {:#?}",self.name, n);
-                    let m = DefMember::new(n);
-                    self.defs.insert(m.name.clone(),ObjDef::Member(m));
+                    let p = DefMember::new(n);
+                    for nc in &n.child {
+                        if nc.kind==AstNodeKind::Identifier {
+                            let mut pc = p.clone();
+                            pc.updt(nc);
+                            self.defs.insert(nc.attr["name"].clone(),ObjDef::Member(pc));
+                        }
+                    }
                 },
                 AstNodeKind::Declaration => {
                     let m = DefMember::new(n);
@@ -432,6 +446,7 @@ impl DefPackage {
                         if nc.kind==AstNodeKind::Identifier {
                             let mut mc = m.clone();
                             mc.name = nc.attr["name"].clone();
+                            mc.updt(nc);
                             self.defs.insert(nc.attr["name"].clone(),ObjDef::Member(mc));
                         }
                     }
@@ -507,7 +522,14 @@ impl DefClass {
                     for nc in &n.child {
                         match nc.kind {
                             AstNodeKind::Param => {
-                                self.params.insert(nc.attr["name"].clone(),ObjDef::Param(DefParam::new(nc,&mut idx_param)));
+                                let p = DefPort::new(nc,&mut PortDir::Param,&mut idx_param);
+                                for ncc in &nc.child {
+                                    if ncc.kind==AstNodeKind::Identifier {
+                                        let mut pc = p.clone();
+                                        pc.updt(&mut idx_param,ncc);
+                                        self.params.insert(ncc.attr["name"].clone(),ObjDef::Port(pc));
+                                    }
+                                }
                             }
                             _ => println!("[Compiling] Class Params: Skipping {:?}", nc.kind)
                         }
@@ -542,6 +564,7 @@ impl DefClass {
                     // println!("[{:?}] enum type = {}", self.name,enum_type);
                     for nc in &n.child {
                         match nc.kind {
+                            AstNodeKind::Slice  => {}
                             AstNodeKind::EnumIdent  => {
                                 self.defs.insert(nc.attr["name"].clone(),ObjDef::EnumValue("".to_owned()));
                             },
@@ -549,14 +572,14 @@ impl DefClass {
                                 let m = DefMember{
                                     name     : nc.attr["name"].clone(),
                                     kind     : enum_type.clone(),
-                                    unpacked : nc.attr.get("unpacked").map_or(None,|x| Some(x.clone())),
+                                    unpacked : Vec::new(),
                                     is_const : false,
                                     access   : Access::Public
                                 };
                                 // println!("[{:?}] Adding enum : {:?}", self.name,m);
                                 self.defs.insert(m.name.clone(),ObjDef::Member(m));
                             }
-                            _ => println!("[Compiling] Class {} | Typedef: Skipping {}",self.name, nc.kind),
+                            _ => println!("[Compiling] Class {} | Enum: Skipping {}",self.name, nc.kind),
                         }
                     }
                 }
@@ -566,11 +589,14 @@ impl DefClass {
                 AstNodeKind::Param      |
                 AstNodeKind::Declaration => {
                     let m = DefMember::new(n);
-                    if m.name != "" {self.defs.insert(m.name.clone(),ObjDef::Member(m.clone()));}
+                    if m.name != "" {
+                        self.defs.insert(m.name.clone(),ObjDef::Member(m.clone()));
+                    }
                     for nc in &n.child {
                         if nc.kind==AstNodeKind::Identifier {
                             let mut mc = m.clone();
                             mc.name = nc.attr["name"].clone();
+                            mc.updt(nc);
                             self.defs.insert(nc.attr["name"].clone(),ObjDef::Member(mc));
                         }
                     }
@@ -584,7 +610,7 @@ impl DefClass {
                                     name : nc.attr["name"].clone(),
                                     kind : t.clone(),
                                     is_const : false,
-                                    unpacked : nc.attr.get("unpacked").map_or(None,|x| Some(x.clone())),
+                                    unpacked : Vec::new(),
                                     access   : Access::Public // TODO
                                 };
                                 self.defs.insert(m.name.clone(),ObjDef::Member(m));

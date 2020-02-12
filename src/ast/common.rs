@@ -141,35 +141,14 @@ pub fn parse_param_decl(ts : &mut TokenStream, is_body: bool) -> Result<AstNode,
 
     // Optional data type
     parse_data_type(ts,&mut node, 2)?;
-    // println!("{}", node);
-    t = next_t!(ts,false);
-    // Parameter name
-    if t.kind != TokenKind::Ident {
-        return Err(SvError::syntax(t, "param declaration, expecting identifier".to_owned()));
-    }
-    node.attr.insert("name".to_owned(), t.value);
-    // Optional Unpacked dimension : [x][y:z]
-    t = next_t!(ts,true);
-    if t.kind == TokenKind::SquareLeft {
-        ts.flush(0);
-        node.attr.insert("unpacked".to_owned(), parse_range(ts)?);
-        t = next_t!(ts,true);
-    }
-
-    // Optional default value i.e. "= expr"
-    if t.kind != TokenKind::OpEq {
-        ts.rewind(1);
-        return Ok(node);
-    } else {
-        ts.flush(1);
-    }
+    // Parse name
     let cntxt = if is_body {ExprCntxt::StmtList} else {ExprCntxt::ArgList};
-    if node.attr.get("type")==Some(&"type".to_string()) {
-        // TODO: actually expect only a type ...
-        node.child.push(parse_expr(ts,cntxt,true)?);
-    } else {
-        node.child.push(parse_expr(ts,cntxt,false)?);
-    }
+    let mut ni = AstNode::new(AstNodeKind::Identifier);
+    parse_var_decl_name(ts,&mut ni,cntxt.clone(),false)?;
+    node.child.push(ni);
+    // Parse extra name
+    parse_opt_ident_list(ts,&mut node,cntxt)?; // TODO : allow type when node.attr.get("type")==Some(&"type".to_string())
+
     // println!("{}", node);
     // ts.display_status("param_decl");
     Ok(node)
@@ -305,62 +284,25 @@ pub fn parse_port_decl(ts : &mut TokenStream, allow_void : bool, cntxt: ExprCntx
 /// Parse a list of signal declaration
 pub fn parse_signal_decl_list(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), SvError> {
     ts.rewind(0);
-    // ts.display_status("");
-    let mut is_first = true;
-    loop {
-        let mut node_sig = parse_signal_decl(ts,is_first)?;
-        // println!("[parse_signal_decl_list] {}", node_sig);
-        let nt = next_t!(ts,true);
-        // println!("[parse_signal_decl_list] Next token : {}", nt);
-        match nt.kind {
-            // Comma indicate a list -> continue
-            TokenKind::Comma => {
-                ts.flush(1);
-                is_first = false;
-                node.child.push(node_sig);
-            }
-            // Semi colon indicate end of statement, stop the loop
-            TokenKind::SemiColon => {
-                ts.flush(1);
-                node.child.push(node_sig);
-                break;
-            }
-            // Open parenthesis : it was a signal but an array of instance
-            TokenKind::ParenLeft if is_first => {
-                node_sig.kind = AstNodeKind::Instances;
-                let mut node_i = node_sig.clone();
-                node_i.kind = AstNodeKind::Instance;
-                node_i.attr.insert("name".to_owned(), node_sig.attr["name"].clone());
-                // TODO: move slice from node_sig to node_i
-                //Parse ports
-                ts.rewind(1);
-                parse_port_connection(ts,&mut node_i,false)?;
-                node_sig.child.push(node_i);
-                // TODO: Allow list of instance ...
-                expect_t!(ts,"instance",TokenKind::SemiColon);
-                node.child.push(node_sig);
-                break;
-            }
-            _ => return Err(SvError::syntax(nt, "signal declaration, expecting , or ;".to_owned()))
-        }
-    }
-    // println!("[parse_signal_decl_list] {}", node);
-    ts.rewind(0); // put back any token we have not used
-    // ts.display_status("");
-    Ok(())
-}
+    // ts.display_status("parse_signal_decl_list: start");
+    let mut node_sig = AstNode::new(AstNodeKind::Declaration);
+    // Parse potential net type
+    parse_net_type(ts,&mut node_sig)?;
+    // Parse data type
+    parse_data_type(ts,&mut node_sig, 1)?;
+    // Parse name
+    let mut ni = AstNode::new(AstNodeKind::Identifier);
+    parse_var_decl_name(ts,&mut ni,ExprCntxt::StmtList,false)?;
+    node_sig.child.push(ni);
+    // Continue parsing
+    parse_opt_ident_list(ts,&mut node_sig,ExprCntxt::StmtList)?;
 
-/// Parse a signal declaration
-pub fn parse_signal_decl(ts : &mut TokenStream, has_type: bool) -> Result<AstNode, SvError> {
-    let mut node = AstNode::new(AstNodeKind::Declaration);
-    if has_type {
-        // Parse potential net type
-        parse_net_type(ts,&mut node)?;
-        // Parse data type
-        parse_data_type(ts,&mut node, 1)?;
-    }
-    parse_var_decl_name(ts, &mut node,ExprCntxt::StmtList,false)?;
-    Ok(node)
+    node.child.push(node_sig);
+    // ts.display_status("parse_signal_decl_list: done");
+    ts.flush(1); // consume the semicolon (the parse_opt_ident_list will stop on semicolon)
+    // println!("[parse_signal_decl_list] {}", node);
+    // ts.rewind(0); // put back any token we have not used
+    Ok(())
 }
 
 pub fn parse_var_decl_name(ts : &mut TokenStream, node : &mut AstNode, cntxt: ExprCntxt, need_value: bool) -> Result<(), SvError> {
@@ -368,13 +310,9 @@ pub fn parse_var_decl_name(ts : &mut TokenStream, node : &mut AstNode, cntxt: Ex
     let mut t = expect_t!(ts,"variable declaration",TokenKind::Ident);
     node.attr.insert("name".to_owned(), t.value);
     // Optional Unpacked dimension : [x][y:z]
-    t = next_t!(ts,true);
-    if t.kind == TokenKind::SquareLeft {
-        ts.flush(1);
-        node.attr.insert("unpacked".to_owned(), parse_range(ts)?);
-        t = next_t!(ts,true);
-    }
+    parse_opt_slice(ts,node,true,true)?;
     // Optional Default value i.e. "= expr"
+    t = next_t!(ts,true);
     if t.kind == TokenKind::OpEq {
         ts.flush(1);
         node.child.push(parse_expr(ts,cntxt,false)?);
@@ -499,7 +437,6 @@ pub fn parse_data_type(ts : &mut TokenStream, node : &mut AstNode, allowed_flag:
             has_signing = false;
             has_width   = false;
             node.attr.insert("type".to_owned(), "enum".to_owned());
-            ts.flush(1);
             node.child.push(parse_enum(ts,false)?);
         }
         // Ident -> check next word, could be a user type
@@ -556,10 +493,8 @@ pub fn parse_data_type(ts : &mut TokenStream, node : &mut AstNode, allowed_flag:
     }
     // println!("[parse_data_type] -> has_width={} : {}", has_width, t );
     if has_width && t.kind == TokenKind::SquareLeft {
-        ts.flush(1);
-        let ws = parse_range(ts)?;
-        // Add packed dimension to the port attribute and retrieve the next token
-        node.attr.insert("packed".to_owned(), ws);
+        ts.rewind(1);
+        parse_opt_slice(ts,node,true, false)?;
     }
     //
     ts.rewind(1); // Put back last token we did not used
@@ -568,64 +503,34 @@ pub fn parse_data_type(ts : &mut TokenStream, node : &mut AstNode, allowed_flag:
     Ok(())
 }
 
-/// Parse a range
-pub fn parse_range(ts : &mut TokenStream) -> Result<String,SvError> {
-    let mut s = "[".to_owned();
-    let mut cnt_s = 1;
-    let mut cnt_p = 0;
-    let mut prev_tk = TokenKind::SquareLeft;
-    loop {
-        let t = next_t!(ts,true);
-        // println!("[parse_range]  {} (cnt s={}, p={})", t,cnt_s,cnt_p );
-        if cnt_s==0 && t.kind != TokenKind::SquareLeft {
-            if cnt_p > 0 {
-                return Err(SvError::new(SvErrorKind::Syntax, t.pos, "Unbalanced square bracket".to_owned()));
-            }
-            break;
-        }
-        match t.kind {
-            TokenKind::SquareLeft  => cnt_s += 1,
-            TokenKind::SquareRight => cnt_s -= 1,
-            TokenKind::ParenLeft   => cnt_p += 1,
-            TokenKind::ParenRight  => {
-                if cnt_p == 0 {break;}
-                cnt_p -= 1;
-            }
-            TokenKind::SemiColon => return Err(SvError::new(SvErrorKind::Syntax, t.pos, "Unexpected semi-colon in range definition".to_owned())),
-            TokenKind::Ident => {
-                if prev_tk==TokenKind::Ident {
-                    return Err(SvError::new(SvErrorKind::Syntax, t.pos, "Invalid range definition".to_owned()));
-                }
-            },
-            _ => {}
-        }
-        prev_tk = t.kind;
-        s.push_str(&t.value);
-        ts.flush(0); // Token consumed, can flush it
-    }
-    ts.rewind(0);
-    // ts.display_status("parse_range");
-    Ok(s)
-}
 
-pub fn parse_opt_slice(ts : &mut TokenStream, node: &mut AstNode, allow_range: bool) -> Result<(),SvError> {
+pub fn parse_opt_slice(ts : &mut TokenStream, node: &mut AstNode, allow_range: bool, allow_type: bool) -> Result<(),SvError> {
     let mut t;
+    // println!("[parse_opt_slice] range = {}, type {} -> {}", allow_range, allow_type, node);
+    // ts.display_status("parse_opt_slice : start");
     loop {
         t = next_t!(ts,true);
         if t.kind != TokenKind::SquareLeft {break;} else {ts.flush(1);}
         let mut n = AstNode::new(AstNodeKind::Slice);
-        n.child.push(parse_expr(ts,ExprCntxt::BracketMsb,false)?);
-        // Check if range
-        if allow_range {
-            // The expression parser ends either on : or ]
-            t = next_t!(ts,false);
-            if t.kind == TokenKind::Colon || t.kind == TokenKind::OpRange {
-                n.attr.insert("range".to_owned(),t.value);
-                n.child.push(parse_expr(ts,ExprCntxt::BracketLsb,false)?);
+        t = next_t!(ts,true);
+        if t.kind != TokenKind::SquareRight {
+            ts.rewind(1);
+            n.child.push(parse_expr(ts,ExprCntxt::BracketMsb,allow_type)?);
+            // Check if range
+            if allow_range {
+                // ts.display_status("parse_opt_slice : checking range");
+                // The expression parser ends either on : or ]
+                t = next_t!(ts,false);
+                if t.kind == TokenKind::Colon || t.kind == TokenKind::OpRange {
+                    n.attr.insert("range".to_owned(),t.value);
+                    n.child.push(parse_expr(ts,ExprCntxt::BracketLsb,false)?);
+                    ts.flush(1); // Consume the ]
+                }
+            } else {
+                expect_t!(ts,"size",TokenKind::SquareRight);
             }
-            ts.flush(1);
         } else {
-            expect_t!(ts,"size",TokenKind::SquareRight);
+            ts.flush(1);
         }
         node.child.push(n);
     }
@@ -642,7 +547,7 @@ pub fn parse_ident_hier(ts : &mut TokenStream) -> Result<AstNode, SvError> {
     parse_opt_scope(ts,&mut node)?;
     let mut t = expect_t!(ts,"identifier", TokenKind::Ident, TokenKind::KwThis);
     node.attr.insert("name".to_owned(),t.value);
-    parse_opt_slice(ts,&mut node,true)?;
+    parse_opt_slice(ts,&mut node,true,false)?;
     t = next_t!(ts,true);
     if t.kind == TokenKind::Dot {
         ts.flush(1);
@@ -663,7 +568,7 @@ pub fn parse_ident_list(ts : &mut TokenStream, node: &mut AstNode) -> Result<(),
             TokenKind::Ident if expect_ident => {
                 let mut n = AstNode::new(AstNodeKind::Identifier);
                 n.attr.insert("name".to_owned(),t.value);
-                parse_opt_slice(ts,&mut n,true)?;
+                parse_opt_slice(ts,&mut n,true, true)?; // TODO CHECKD IF TYPE IS ALLOWED
                 parse_opt_init_value(ts,&mut n,ExprCntxt::StmtList)?;
                 node.child.push(n);
                 expect_ident = false;
@@ -686,20 +591,31 @@ pub fn parse_opt_ident_list(ts : &mut TokenStream, node: &mut AstNode,cntxt: Exp
         if t.kind != TokenKind::Comma {break;}
         let tid = next_t!(ts,true);
         if tid.kind != TokenKind::Ident {break;}
-        t = next_t!(ts,true);
-        if tid.kind == TokenKind::SquareLeft {
-            println!("[parse_opt_ident_list] Found range in list -> not supported yet");
-            break;
+        // For port list we need to check if this is a type or an identifier
+        if cntxt!=ExprCntxt::StmtList {
+            t = next_t!(ts,true);
+            match t.kind {
+                // TODO
+                // SquareLeft could be a packed dimension of a custom type or the unpacked dimension of a variable
+                // For the moment suppose the unpacked dimension ...
+                TokenKind::SquareLeft => {
+                    ts.rewind(1);
+                    // println!("[parse_opt_ident_list] Found range in port list -> not supported yet\n{:?}",node);
+                    // break;
+                }
+                TokenKind::Comma      |
+                TokenKind::OpEq       |
+                TokenKind::ParenRight |
+                TokenKind::SemiColon  => {ts.rewind(1);}
+                _ => break,
+            }
         }
-        match t.kind {
-            TokenKind::Comma      |
-            TokenKind::OpEq       |
-            TokenKind::ParenRight |
-            TokenKind::SemiColon  => {ts.flush(2);ts.rewind(1);}
-            _ => break,
-        }
+        ts.flush(2);
         let mut n = AstNode::new(AstNodeKind::Identifier);
         n.attr.insert("name".to_owned(),tid.value);
+        // Optional Unpacked dimension : [x][y:z]
+        parse_opt_slice(ts,&mut n,true,true)?;
+        // Optional init value
         parse_opt_init_value(ts,&mut n,cntxt.clone())?;
         node.child.push(n);
     }
@@ -721,8 +637,9 @@ pub fn parse_opt_init_value(ts : &mut TokenStream, node: &mut AstNode, cntxt: Ex
 
 /// Parse an enum declaration
 pub fn parse_enum(ts : &mut TokenStream, is_typedef: bool) -> Result<AstNode,SvError> {
+    ts.flush(1); // Suppose enum is on the stack
     let mut node_e = AstNode::new(AstNodeKind::Enum);
-    let mut t = next_t!(ts,true);
+    let mut t = next_t!(ts,false);
     // Optionnal data type
     match t.kind {
         TokenKind::TypeIntAtom => {
@@ -741,14 +658,14 @@ pub fn parse_enum(ts : &mut TokenStream, is_typedef: bool) -> Result<AstNode,SvE
             t = next_t!(ts,true);
             // ts.display_status("");
             if t.kind == TokenKind::KwSigning {
+                ts.flush(1); // Suppose enum is on the stack
                 node_e.attr.insert("signing".to_owned(), t.value);
                 t = next_t!(ts,true);
             }
             // Check for optional dimension
             if t.kind == TokenKind::SquareLeft {
-                let ws = parse_range(ts)?;
-                // Add packed dimension to the port attribute and retrieve the next token
-                node_e.attr.insert("packed".to_owned(), ws);
+                ts.rewind(1);
+                parse_opt_slice(ts,&mut node_e,true,false)?;
                 t = next_t!(ts,true);
             }
         }
@@ -875,7 +792,7 @@ pub fn parse_struct(ts : &mut TokenStream) -> Result<AstNode,SvError> {
     ts.flush(0);
     // Check for packed dimension in packed struct
     if node.attr.contains_key("packed") {
-        parse_opt_slice(ts,&mut node,true)?;
+        parse_opt_slice(ts,&mut node,true,false)?;
     }
     // println!("{}", node);
     Ok(node)
@@ -915,13 +832,9 @@ pub fn parse_typedef(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), Sv
     t = expect_t!(ts,"typedef", TokenKind::Ident, TokenKind::Macro);
     node_def.attr.insert("name".to_owned(),t.value);
     // Optional unpacked dimension
-    t = next_t!(ts,false);
-    if t.kind == TokenKind::SquareLeft {
-        let ws = parse_range(ts)?;
-        node_def.attr.insert("unpacked".to_owned(), ws);
-        t = next_t!(ts,false);
-    }
+    parse_opt_slice(ts,&mut node_def,true,true)?;
     // Expect semi-colon
+    t = next_t!(ts,false);
     if t.kind!=TokenKind::SemiColon {
         return Err(SvError::syntax(t, "package header. Expecting ;".to_owned()));
     }
@@ -1417,7 +1330,7 @@ pub fn parse_case(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), SvErr
                 }
                 TokenKind::SquareLeft if allow_range => {
                     ts.rewind(1);
-                    parse_opt_slice(ts,&mut node_i,true)?;
+                    parse_opt_slice(ts,&mut node_i,true,false)?;
                     // TODO: check actual range and each pasrt is constant ?
                 }
                 TokenKind::KwTagged  => {
@@ -1529,7 +1442,7 @@ pub fn parse_expr(ts : &mut TokenStream, cntxt: ExprCntxt, allow_type: bool) -> 
             //
             TokenKind::SquareLeft  => {
                 ts.rewind(1);
-                parse_opt_slice(ts,&mut node_e,true)?;
+                parse_opt_slice(ts,&mut node_e,true,allow_type)?;
                 allow_ident = false;
                 allow_op    = true;
             }
@@ -1539,6 +1452,10 @@ pub fn parse_expr(ts : &mut TokenStream, cntxt: ExprCntxt, allow_type: bool) -> 
                     break;
                 }
                 return Err(SvError::syntax(t, "expression".to_owned()));
+            }
+            TokenKind::Dollar if cntxt == ExprCntxt::BracketMsb => {
+                node_e.attr.insert("value".to_owned(),"$".to_owned());
+                ts.flush(1);
             }
             TokenKind::OpRange if cntxt == ExprCntxt::BracketMsb => {ts.rewind(1);break;},
             TokenKind::Colon if cntxt == ExprCntxt::BracketMsb   => {ts.rewind(1);break;},
@@ -1577,7 +1494,7 @@ pub fn parse_expr(ts : &mut TokenStream, cntxt: ExprCntxt, allow_type: bool) -> 
                 // Allow array
                 ts.flush(1);
                 // println!("[parse_expr] new followed by {}", t);
-                parse_opt_slice(ts,&mut node_e,false)?;
+                parse_opt_slice(ts,&mut node_e,false,false)?;
                 t = next_t!(ts,true);
                 if t.kind == TokenKind::ParenLeft {
                     ts.flush(1);
@@ -1811,13 +1728,7 @@ pub fn parse_expr(ts : &mut TokenStream, cntxt: ExprCntxt, allow_type: bool) -> 
                 node_e.kind = AstNodeKind::Type;
                 node_e.attr.insert("type".to_owned(), t.value.clone());
                 ts.flush(1);
-                t = next_t!(ts,true);
-                if t.kind == TokenKind::SquareLeft {
-                    ts.flush(1);
-                    node_e.attr.insert("unpacked".to_owned(), parse_range(ts)?);
-                } else {
-                    ts.rewind(1);
-                }
+                parse_opt_slice(ts,&mut node_e,true,false)?;
                 break; // next character should be , or ) : no need to consume it, will be checked by caller
             }
             TokenKind::TypeIntAtom |
@@ -1951,9 +1862,8 @@ pub fn parse_member_or_call(ts : &mut TokenStream, is_first: bool) -> Result<Ast
     // ts.display_status("parse_member_or_call: post parse_func_call");
     // Check for array selection
     if t.kind == TokenKind::SquareLeft {
-        ts.flush(1); // Consume token
-        let s = parse_range(ts)?;
-        n.attr.insert("range".to_owned(),s);
+        ts.rewind(1);
+        parse_opt_slice(ts,&mut n,true,false)?;
         t = next_t!(ts,true);
     }
     // Check for members

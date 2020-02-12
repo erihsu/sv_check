@@ -775,7 +775,9 @@ impl<'a> TokenStream<'a> {
         } else {
             for _i in 0..nb {
                 self.buffer.pop_front();
-                self.rd_ptr -= 1;
+                if self.rd_ptr>0 {
+                    self.rd_ptr -= 1;
+                }
             }
         }
     }

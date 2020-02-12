@@ -10,21 +10,23 @@ use crate::comp::comp_obj::*;
 
 // --------------
 // Port direction
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum PortDir {
     Input,
     Output,
     Inout,
     Ref,
+    Param,
     Modport(String),
 }
 
 pub fn str_to_dir(s: &str) -> PortDir {
     match s {
-        "input"  =>  PortDir::Input,
-        "output" =>  PortDir::Output,
-        "inout"  =>  PortDir::Inout,
-        "ref"    =>  PortDir::Ref,
+        "input"     =>  PortDir::Input,
+        "output"    =>  PortDir::Output,
+        "inout"     =>  PortDir::Inout,
+        "ref"       =>  PortDir::Ref,
+        "parameter" =>  PortDir::Param,
         _ => PortDir::Modport(s.to_string()),
     }
 }
@@ -36,7 +38,22 @@ impl fmt::Display for PortDir {
             PortDir::Output     => write!(f,"output"),
             PortDir::Inout      => write!(f,"inout"),
             PortDir::Ref        => write!(f,"ref"),
+            PortDir::Param      => write!(f,"parameter"),
             PortDir::Modport(s) => write!(f,"{}",s),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum SvArrayKind {Fixed(u32), Dynamic, Queue, Dict(String)}
+
+impl fmt::Display for SvArrayKind {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            SvArrayKind::Fixed(i) => write!(f,"[{}]",i),
+            SvArrayKind::Dynamic  => write!(f,"[]"),
+            SvArrayKind::Queue    => write!(f,"[$]"),
+            SvArrayKind::Dict(s)  => write!(f,"[{}]",s),
         }
     }
 }
@@ -49,60 +66,103 @@ pub struct DefPort {
     pub name  : String,
     pub dir   : PortDir,
     pub kind  : DefType,
-    pub unpacked : Option<String>,
+    pub unpacked : Vec<SvArrayKind>,
     pub idx   : i16,
     pub default : Option<String>,
 }
 
 impl DefPort {
     pub fn new(node: &AstNode, dir: &mut PortDir, idx: &mut i16) -> DefPort {
-        let n = node.child.iter()
-                    .find(|nc| nc.kind!=AstNodeKind::Scope)
-                    .map(|x| format!("{}", x.kind));
-        let d : PortDir;
-        if let Some(mp) = node.attr.get("modport") {
-            d = str_to_dir(mp);
-        } else {
-            node.attr.get("dir").map(|x| *dir = str_to_dir(x));
-            d = dir.clone();
-        }
+        let d =
+            if node.kind == AstNodeKind::Param {
+                PortDir::Param
+            }
+            else if let Some(mp) = node.attr.get("modport") {
+                str_to_dir(mp)
+            } else {
+                node.attr.get("dir").map(|x| *dir = str_to_dir(x));
+                dir.clone()
+            };
         *idx += 1;
-        // TODO: the check for "name" should be removed: it should not happen anymore
-        if node.attr.contains_key("name") {println!("[DefPort] Found a name instead of a child !{:#?}", node);}
         DefPort{
             name: "".to_string(),
             dir : d,
+            // is_param : ,
             kind: DefType::from(node),
-            unpacked : node.attr.get("unpacked").map_or(None,|x| Some(x.clone())),
+            unpacked : Vec::new(),
+            // unpacked : node.attr.get("unpacked").map_or(None,|x| Some(x.clone())),
             idx : idx.clone(),
-            default: n
+            default: None
         }
     }
+
+    // Update a port definition with the name, unpacked dimension and default value (if any)
+    pub fn updt(&mut self, idx: &mut i16, node : &AstNode)  {
+        let mut allow_slice = true;
+        // println!("[DefPort] Port from {} ", node);
+        self.name = node.attr["name"].clone();
+        self.idx = idx.clone();
+        *idx += 1;
+        for nc in &node.child {
+            match nc.kind {
+                AstNodeKind::Slice if allow_slice => {
+                    if nc.child.len() == 0 {self.unpacked.push(SvArrayKind::Dynamic);}
+                    else if nc.child.len() > 0 {self.unpacked.push(SvArrayKind::Fixed(0));}
+                    // else if nc.attr.contains_key("range") {self.unpacked.push(SvArrayKind::Fixed(0));}
+                    else {
+                        match nc.child[0].kind {
+                            AstNodeKind::Type => self.unpacked.push(SvArrayKind::Dict(nc.child[0].attr["type"].clone())),
+                            AstNodeKind::Identifier => {
+                                // TODO: determine if the identifier is a user-type or a constant (Default to constant for the moment)
+                                self.unpacked.push(SvArrayKind::Fixed(0));
+                            }
+                            AstNodeKind::Value => {
+                                // TODO: try to parse the value as int
+                                self.unpacked.push(SvArrayKind::Fixed(0));
+                            }
+                            AstNodeKind::Expr => {
+                                if nc.child[0].attr.get("value") == Some(&"$".to_string()) {
+                                    self.unpacked.push(SvArrayKind::Queue);
+                                } else {
+                                    println!("[DefPort] Member {} | Slice childs = {:?}", self.name, nc.child)
+                                }
+                            }
+                            _ => println!("[DefMember] Member {} | Slice with attr {:?} | child kind = {}", self.name, nc.child[0].attr, nc.child[0].kind)
+                        }
+                    }
+                }
+                AstNodeKind::Value      => {self.default = Some(nc.attr["value"].clone()); allow_slice = false; }
+                AstNodeKind::Identifier => {self.default = Some(nc.attr["name"].clone());  allow_slice = false; }
+                // TODO !!!
+                AstNodeKind::Slice      |
+                AstNodeKind::Concat     |
+                AstNodeKind::StructInit |
+                AstNodeKind::Branch     |
+                AstNodeKind::SystemTask |
+                AstNodeKind::Expr       => {self.default = Some("".to_owned());  allow_slice = false; }
+                _ => {
+                    allow_slice = false;
+                    println!("[DefPort] Port {} | Skipping {:?} : {:?}",self.name, nc.kind, nc.attr)
+                }
+            }
+        }
+    }
+
 }
 
 impl fmt::Display for DefPort {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{} {:?} {}{}{}",
+        write!(f, "{} {:?} {}{:?}{}",
             self.dir,
             self.kind,
             self.name,
-            if let Some(s) = &self.unpacked {format!(" {}", s)} else {"".to_owned()},
+            self.unpacked,
+            // if let Some(s) = &self.unpacked {format!(" {}", s)} else {"".to_owned()},
             if let Some(s) = &self.default {format!(" = {}", s)} else {"".to_owned()},
         )
     }
 }
 
-
-// -----------
-// Parameter
-// TODO: add default field and parse the child to construct the default value
-#[derive(Debug, Clone)]
-pub struct DefParam {
-    pub name  : String,
-    pub kind  : DefType,
-    pub value : String,
-    pub idx   : i16,
-}
 
 
 pub fn param_value(node: &AstNode) -> String {
@@ -113,6 +173,7 @@ pub fn param_value(node: &AstNode) -> String {
             AstNodeKind::Identifier => s.push_str(&npc.attr["name"].clone()),
             AstNodeKind::Value => s.push_str(&npc.attr["value"].clone()),
             // TODO
+            AstNodeKind::Slice => {},
             AstNodeKind::Concat => {},
             AstNodeKind::StructInit => {},
             AstNodeKind::Expr => {},
@@ -126,18 +187,6 @@ pub fn param_value(node: &AstNode) -> String {
     s
 }
 
-impl DefParam {
-    pub fn new(node: &AstNode, idx: &mut i16) -> DefParam {
-        *idx += 1;
-        // println!("[DefParam] {:?}", node.child);
-        DefParam{
-            name: node.attr["name"].clone(),
-            kind: DefType::from(node),
-            value : param_value(node),
-            idx : idx.clone()
-        }
-    }
-}
 
 // ------------------
 // Function definition
@@ -172,17 +221,13 @@ impl From<&AstNode> for DefMethod {
                 AstNodeKind::Ports => {
                     for np in &nc.child {
                         let p = DefPort::new(np,&mut prev_dir, &mut prev_idx);
-                        let mut cnt = 0;
                         for npc in &np.child {
                             if npc.kind==AstNodeKind::Identifier {
                                 let mut pc = p.clone();
-                                pc.name = npc.attr["name"].clone();
-                                pc.idx += cnt;
+                                pc.updt(&mut prev_idx,npc);
                                 d.ports.push(pc);
                             }
-                            cnt += 1;
                         }
-                        prev_idx += cnt - 1;
                     }
                 }
                 // Add return type
@@ -311,7 +356,7 @@ impl DefCovergroup {
 #[derive(Debug, Clone)]
 pub struct DefModule {
     pub name   : String,
-    pub params : HashMap<String,DefParam>,
+    pub params : HashMap<String,DefPort>,
     pub ports  : HashMap<String,ObjDef>,
     pub defs   : HashMap<String,ObjDef>,
 }
@@ -340,20 +385,59 @@ pub struct DefMember {
     pub name     : String,
     pub kind     : DefType,
     pub is_const : bool,
-    pub unpacked : Option<String>,
+    pub unpacked : Vec<SvArrayKind>,
     pub access   : Access,
 }
 
 impl DefMember {
     pub fn new(node: &AstNode) -> DefMember {
-        // if node.attr.contains_key("name") {println!("[DefPort] Found a name instead of a child !{:#?}", node);}
+        // if node.attr.contains_key("name") {println!("[DefMember] Found a name instead of a child !\n{:#?}", node);}
+        // println!("[DefMember] {:#?}", node);
         DefMember{
             name     : if node.attr.contains_key("name") {node.attr["name"].clone()} else {"".to_string()},
             kind     : DefType::from(node),
             is_const : node.kind==AstNodeKind::Param, // TODO
-            unpacked : node.attr.get("unpacked").map_or(None,|x| Some(x.clone())),
+            unpacked : Vec::new(),
             access   : Access::Public // TODO
         }
+    }
+
+    // Update a port definition with the name, unpacked dimension and default value (if any)
+    pub fn updt(&mut self, node : &AstNode)  {
+        // println!("[DefMember] Member from {} ", node);
+        self.name = node.attr["name"].clone();
+        for nc in &node.child {
+            match nc.kind {
+                AstNodeKind::Slice => {
+                    if nc.child.len() == 0 {self.unpacked.push(SvArrayKind::Dynamic);}
+                    else if nc.child.len() > 0 {self.unpacked.push(SvArrayKind::Fixed(0));}
+                    // else if nc.attr.contains_key("range") {self.unpacked.push(SvArrayKind::Fixed(0));}
+                    else {
+                        match nc.child[0].kind {
+                            AstNodeKind::Type => self.unpacked.push(SvArrayKind::Dict(nc.child[0].attr["type"].clone())),
+                            AstNodeKind::Identifier => {
+                                // TODO: determine if the identifier is a user-type or a constant (Default to constant for the moment)
+                                self.unpacked.push(SvArrayKind::Fixed(0));
+                            }
+                            AstNodeKind::Value => {
+                                // TODO: try to parse the value as int
+                                self.unpacked.push(SvArrayKind::Fixed(0));
+                            }
+                            AstNodeKind::Expr => {
+                                if nc.child[0].attr.get("value") == Some(&"$".to_string()) {
+                                    self.unpacked.push(SvArrayKind::Queue);
+                                } else {
+                                    println!("[DefPort] Member {} | Slice childs = {:?}", self.name, nc.child)
+                                }
+                            }
+                            _ => println!("[DefMember] Member {} | Slice with attr {:?} | child kind = {}", self.name, nc.child[0].attr, nc.child[0].kind)
+                        }
+                    }
+                }
+                _ => break
+            }
+        }
+        // println!("[DefMember] Member {:?} ", self);
     }
 }
 
