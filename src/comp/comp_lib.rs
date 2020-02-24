@@ -254,7 +254,7 @@ impl CompLib {
                                 for tev in te {
                                     li.add_def(tev.clone(),ObjDef::EnumValue(nc.attr["name"].clone()));
                                 }
-                                li.add_def(nc.attr["name"].clone(),ObjDef::Type(d));
+                                li.add_def(nc.attr["name"].clone(),ObjDef::Type(d,Vec::new()));
                             }
                             // Expand forward declaration
                             DefType::None => {
@@ -271,7 +271,15 @@ impl CompLib {
                                     println!("[Linking] {:?} | Type {:?} undeclared", self.cntxt, nc.attr["name"]);
                                 }
                             }
-                            _ => li.add_def(nc.attr["name"].clone(),ObjDef::Type(d))
+                            _ => {
+                                let mut dim = Vec::new();
+                                if nc.child.len() > 1 {
+                                    for ncc in nc.child.iter().skip(1) {
+                                        dim.push(parse_dim(ncc));
+                                    }
+                                }
+                                li.add_def(nc.attr["name"].clone(),ObjDef::Type(d,dim));
+                            }
                         }
                         // Add typedef definition
                         ;
@@ -640,30 +648,32 @@ impl CompLib {
         }
 
         // Get type definition before analysing childs
-        let ot = self.get_type_def(o,li);
-        if ot.is_none() {return;}
-
-        // Check potential child : slice / fields
-        // if node.attr["name"]=="o_tr_l" {
-        //     println!("[Linking] {:?} | Identifier {} has type {:?}\n\t=> {:?}", self.cntxt, node.attr["name"],o,ot);
-        // }
-        self.check_childs(node,ot,li);
+        if let Some((ot,dim)) = self.get_type_def(o,li) {
+            self.check_childs(node,ot,dim,li);
+        }
 
     }
 
-    pub fn check_childs(&self, node: &AstNode, ot: Option<ObjDef>, li: &LocalInfo) {
+    pub fn check_childs(&self, node: &AstNode, ot: ObjDef, mut dim: Vec<SvArrayKind>, li: &LocalInfo) {
         for nc in &node.child {
             match nc.kind {
                 // Do not care about scope
                 AstNodeKind::Scope      => {}
                 // Slice: check that the type is an array (packed/unpacked)
                 // TODO: check that dimension are okay
-                AstNodeKind::Slice      => {}
+                AstNodeKind::Slice      => {
+                    if dim.len() > 0 {
+                        dim.remove(0); // TODO: maybe change to VecDequeue type to get a an efficient pop_front
+                    } else {
+                        // packed dimension access TODO
+                        // println!("[Linking] {:?} | Slice access {:?} to {} ({}{:?})", self.cntxt, nc.attr,node.attr["name"],ot.get_typename(),dim);
+                    }
+                }
                 AstNodeKind::Identifier => {
-                    // TODO: check if o unpacked dimension
-                    let cd = self.find_def_in_obj(ot.as_ref(),&nc.attr["name"],li);
+                    // TODO: check for unpacked dimension
+                    let cd = self.find_def_in_obj(&ot,&nc.attr["name"],li);
                     if cd.is_none() {
-                        println!("[Linking] {:?} | Identifier {} not found in {} ({})", self.cntxt, nc.attr["name"],node.attr["name"],ot.as_ref().unwrap().get_typename());
+                        println!("[Linking] {:?} | Identifier {} not found in {} ({}{:?})", self.cntxt, nc.attr["name"],node.attr["name"],ot.get_typename(),dim);
                     }
                     else if nc.child.len() > 0 {
                         // let _ctd = self.get_type_def(cd,li);
@@ -671,15 +681,34 @@ impl CompLib {
                     }
                 }
                 AstNodeKind::MethodCall => {
-                    match ot {
-                        _ => {
-                            let cd = self.find_def_in_obj(ot.as_ref(),&nc.attr["name"],li);
-                            if node.attr["name"] == "arg_a" {println!("arg_a has type {:?}",ot);}
-                            if cd.is_none() {
-                                println!("[Linking] {:?} | Method {} not found in {} ({})", self.cntxt, nc.attr["name"],node.attr["name"],ot.as_ref().unwrap().get_typename());
-                            }
-                            self.check_call(nc,cd,li);
+                    // Ignore p_sequencer stuff : need macro expand
+                    if node.attr["name"]=="p_sequencer" {return}
+                    if let Some(name) = nc.attr.get("name") {
+                        if name=="randomize" || name=="srandom" {
+                            return;
                         }
+                    }
+                    let mut cd = if dim.len()>0 {
+                            match dim[0] {
+                                SvArrayKind::Dynamic  => {if let ObjDef::Class(od) = &self.objects["!array!dyn"  ] {od.defs.get(&nc.attr["name"])} else {None} }
+                                SvArrayKind::Queue    => {if let ObjDef::Class(od) = &self.objects["!array!queue"] {od.defs.get(&nc.attr["name"])} else {None} }
+                                SvArrayKind::Dict(_)  => {if let ObjDef::Class(od) = &self.objects["!array!dict" ] {od.defs.get(&nc.attr["name"])} else {None} }
+                                _ => {
+                                    println!("[Linking] {:?} | No method {} in array {} ({}{:?})", self.cntxt, nc.attr["name"],node.attr["name"],ot.get_typename(),dim);
+                                    None
+                                }
+                            }
+                        } else {
+                            self.find_def_in_obj(&ot,&nc.attr["name"],li)
+                        };
+                    // Check generic array reduction method
+                    if cd.is_none() {
+                        cd = if let ObjDef::Class(od) = &self.objects["!array"] {od.defs.get(&nc.attr["name"])} else {None};
+                    }
+                    if cd.is_none() {
+                        println!("[Linking] {:?} | Method {} not found in {} ({}{:?})", self.cntxt, nc.attr["name"],node.attr["name"],ot.get_typename(),dim);
+                    } else {
+                        self.check_call(nc,cd,li);
                     }
                 }
                 AstNodeKind::Ports => {}
@@ -688,36 +717,36 @@ impl CompLib {
         }
     }
 
-    pub fn find_def_in_obj<'a>(&'a self, o: Option<&'a ObjDef>, name: &String, li: &'a LocalInfo) -> Option<&'a ObjDef> {
+    pub fn find_def_in_obj<'a>(&'a self, o: &'a ObjDef, name: &String, li: &'a LocalInfo) -> Option<&'a ObjDef> {
 
         match o {
             //
-            Some(ObjDef::Class(od)) => {
+            ObjDef::Class(od) => {
+                // TODO: definition for randomize/srandom
                 if od.defs.contains_key(name) {
                     od.defs.get(name)
                 } else {
                     self.find_def_in_base(od,name,li).0
                 }
             }
-            Some(ObjDef::Module(od)) => {
+            ObjDef::Module(od) => {
                 if od.ports.contains_key(name) {
                     od.ports.get(name)
                 } else {
                     od.defs.get(name)
                 }
             }
-            Some(ObjDef::Type(DefType::Struct(od))) => od.members.iter().find(|x| if let ObjDef::Member(x_) = x {x_.name==*name} else {false}),
+            ObjDef::Type(DefType::Struct(od),_) => od.members.iter().find(|x| if let ObjDef::Member(x_) = x {x_.name==*name} else {false}),
             // TODO
-            Some(ObjDef::Type(DefType::Primary(t))) => {
+            ObjDef::Type(DefType::Primary(t),_) => {
                 match t {
-                    TypePrimary::Event => {
-                        if let ObjDef::Class(od) = &self.objects["event"] {od.defs.get(name)} else {None}
-                    }
+                    TypePrimary::Event => if let ObjDef::Class(od) = &self.objects["event"]  {od.defs.get(name)} else {None},
+                    TypePrimary::Str   => if let ObjDef::Class(od) = &self.objects["string"] {od.defs.get(name)} else {None},
                     _ => None
                 }
             }
-            Some(ObjDef::Type(DefType::IntVector(_))) => {None}
-
+            ObjDef::Type(DefType::Enum(_),_) => if let ObjDef::Class(od) = &self.objects["enum"]  {od.defs.get(name)} else {None},
+            ObjDef::Type(DefType::IntVector(_),_) => {None}
             _ => {
                 // println!("[Linking] {:?} | Searching for {} in {:?}",self.cntxt, name, o);
                 None
@@ -726,77 +755,93 @@ impl CompLib {
 
     }
 
-    pub fn get_type_def(&self, o: Option<&ObjDef>, li: &LocalInfo ) -> Option<ObjDef> {
+    pub fn get_type_def(&self, o: Option<&ObjDef>, li: &LocalInfo ) -> Option<(ObjDef,Vec<SvArrayKind>)> {
         let mut tdr = (None,None);
-        let mut ot : Option<ObjDef>;
-        // let mut unpacked = Vec::new();
+        let mut ot : ObjDef;
+        let mut dim : Vec<SvArrayKind> = Vec::new();
         let td = match o {
             Some(ObjDef::Member(x)) => {
-                // unpacked = x.unpacked.clone();
+                dim = x.unpacked.clone();
                 Some(x.kind.clone())
             }
             Some(ObjDef::Port(x))   => {
-                // unpacked = x.unpacked.clone();
+                dim = x.unpacked.clone();
                 Some(x.kind.clone())
             }
             // Some(x) => o.clone(),
             _ => None
         };
+
+
         match &td {
             Some(DefType::User(x)) => {
                 tdr = self.find_def(&x.name,x.scope.as_ref(),li,true,true);
-                if !tdr.0.is_none() {
-                    ot = Some(tdr.0.unwrap().clone());
-                    // println!("[Linking] {:?} | Identifier {:?} user type = {:?}", self.cntxt, x.name, tdr.0.unwrap());
-                } else {
-                    println!("[Linking] {:?} | User type {:?} is undefined", self.cntxt,x.name);
-                    return None;
+                // if x.name=="t_svm_seq_name_a" {println!("{:?}", tdr);}
+                match tdr.0 {
+                    Some(ObjDef::Type(tdr_,dim_)) => {
+                        for x in dim_ {dim.push(x.clone());}
+                        // dim.extend(dim_.into_iter());
+                        ot = ObjDef::Type(tdr_.clone(),dim.clone());
+                    }
+                    Some(tdr_) => ot = tdr_.clone(),
+                    None => {
+                        println!("[Linking] {:?} | User type {:?} is undefined : {:?}", self.cntxt,x.name,tdr.0);
+                        return None;
+                    }
                 }
             }
             Some(DefType::VIntf(x)) => {
                 tdr  = self.find_def(&x.name,None,li,false,true);
                 if !tdr.0.is_none() {
-                    ot = Some(tdr.0.unwrap().clone());
+                    ot = tdr.0.unwrap().clone();
                     // println!("[Linking] {:?} | Identifier {:?} Virtual Interface = {:?}", self.cntxt, node.attr["name"], tdr.0.unwrap());
                 } else {
                     println!("[Linking] {:?} | User type {:?} undefined", self.cntxt, x.name);
                     return None;
                 }
             }
-            Some(x) => ot = Some(ObjDef::Type(x.clone())),
+            Some(x) => ot = ObjDef::Type(x.clone(),dim.clone()),
             // Some(x) =>  println!("[Linking] {:?} | Identifier {:?} type = {:?}", self.cntxt, node.attr["name"], x),
-            None => ot = Some(o.unwrap().clone()), // safe unwrap since the function exit early in case of none
+            None => ot = o.unwrap().clone(), // safe unwrap since the function exit early in case of none
         }
-        // Might need a loop here to handle multiple typeder ?
-        if let Some(ObjDef::Type(DefType::User(x))) = &ot {
-            println!("[Linking] {:?} | User type {:?} resolved to {:?}", self.cntxt, td, x);
+        // Might need a loop here to handle multiple typedef ?
+        if let ObjDef::Type(DefType::User(x),dim_) = &ot {
+            for x in dim_ {dim.push(x.clone());}
+            // println!("[Linking] {:?} | User type {:?} resolved to {:?}", self.cntxt, td, x);
             tdr = self.find_def(&x.name,x.scope.as_ref(),li,true,true);
-            if !tdr.0.is_none() {
-                ot = Some(tdr.0.unwrap().clone());
-                // println!("[Linking] {:?} | Identifier {:?} user type = {:?}", self.cntxt, node.attr["name"], tdr.0.unwrap());
-            } else {
-                println!("[Linking] {:?} | User type {:?} is undefined", self.cntxt,x.name);
-                return None;
+            match tdr.0 {
+                Some(ObjDef::Type(tdr_,dim_)) => {
+                    for x in dim_ {dim.push(x.clone());}
+                    ot = ObjDef::Type(tdr_.clone(),dim.clone());
+                }
+                Some(tdr_) => ot = tdr_.clone(),
+                None => {
+                    println!("[Linking] {:?} | User type {:?} is undefined : {:?}", self.cntxt,x.name,tdr.0);
+                    return None;
+                }
             }
         }
         // Check if Param
-        if let Some(ObjDef::Port(x)) = &ot {
+        if let ObjDef::Port(x) = &ot {
             if x.dir == PortDir::Param {
                 if let Some(params) = &tdr.1 {
                     if params.contains_key(&x.name) {
                         tdr = self.find_def(&params[&x.name],None,li,true,true);
-                        if !tdr.0.is_none() {
-                            ot = Some(tdr.0.unwrap().clone());
+                        match tdr.0 {
+                            Some(ObjDef::Type(tdr_,dim_)) => {
+                                for x in dim_ {dim.push(x.clone());}
+                                ot = ObjDef::Type(tdr_.clone(),dim.clone());
+                            }
+                            Some(tdr_) => ot = tdr_.clone(),
+                            None => {}
                         }
                         // println!("[Linking] {:?} | Identifier {} has a parameterized type {} -> {:?} ", self.cntxt, node.attr["name"],x.name,tdr.0);
                     }
                 }
             }
         }
-        // if unpacked.is_some() {
-        //     println!("[Linking] {:?} | {:} has unpacked {:?}", self.cntxt, ot.as_ref().unwrap().get_typename(), unpacked.unwrap());
-        // }
-        ot
+        // if dim.len()>0 {println!("[Linking] {:?} | {:?} has unpacked {:?}", self.cntxt, ot, dim);  }
+        Some((ot,dim))
     }
 
     // Analyse a module/interface instance

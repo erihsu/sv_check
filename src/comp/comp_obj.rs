@@ -22,7 +22,7 @@ pub enum ObjDef {
     EnumValue(String),
     Method(DefMethod),
     Macro(DefMacro),
-    Type(DefType),
+    Type(DefType,Vec<SvArrayKind>),
     Covergroup(DefCovergroup),
 }
 
@@ -127,7 +127,7 @@ impl ObjDef {
             ObjDef::Module(x)  => format!("module {}", x.name),
             ObjDef::Class(x)   => format!("class {}", x.name),
             ObjDef::Package(x) => format!("package {}", x.name),
-            ObjDef::Type(x)    => format!("{}", x),
+            ObjDef::Type(x,_)  => format!("{}", x),
             ObjDef::Member(_x) => "member".to_owned(),
             ObjDef::Port(_x) => "member".to_owned(),
             _ => format!("{:?}", self)
@@ -206,7 +206,7 @@ impl DefModule {
                             }
                         }
                         // Add typedef definition
-                        self.defs.insert(n.attr["name"].clone(),ObjDef::Type(d));
+                        self.defs.insert(n.attr["name"].clone(),ObjDef::Type(d,Vec::new()));
                     }
                 }
                 AstNodeKind::Enum => {
@@ -400,7 +400,7 @@ impl DefPackage {
                             }
                         }
                         // Add typedef definition
-                        self.defs.insert(n.attr["name"].clone(),ObjDef::Type(d));
+                        self.defs.insert(n.attr["name"].clone(),ObjDef::Type(d,Vec::new()));
                     }
                 }
                 AstNodeKind::Enum => {
@@ -556,7 +556,7 @@ impl DefClass {
                             }
                         }
                         // Add typedef definition
-                        self.defs.insert(n.attr["name"].clone(),ObjDef::Type(d));
+                        self.defs.insert(n.attr["name"].clone(),ObjDef::Type(d,Vec::new()));
                     }
                 }
                 AstNodeKind::Enum => {

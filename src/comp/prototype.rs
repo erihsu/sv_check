@@ -99,38 +99,12 @@ impl DefPort {
     // Update a port definition with the name, unpacked dimension and default value (if any)
     pub fn updt(&mut self, idx: &mut i16, node : &AstNode)  {
         let mut allow_slice = true;
-        // println!("[DefPort] Port from {} ", node);
         self.name = node.attr["name"].clone();
         self.idx = idx.clone();
         *idx += 1;
         for nc in &node.child {
             match nc.kind {
-                AstNodeKind::Slice if allow_slice => {
-                    if nc.child.len() == 0 {self.unpacked.push(SvArrayKind::Dynamic);}
-                    else if nc.child.len() > 0 {self.unpacked.push(SvArrayKind::Fixed(0));}
-                    // else if nc.attr.contains_key("range") {self.unpacked.push(SvArrayKind::Fixed(0));}
-                    else {
-                        match nc.child[0].kind {
-                            AstNodeKind::Type => self.unpacked.push(SvArrayKind::Dict(nc.child[0].attr["type"].clone())),
-                            AstNodeKind::Identifier => {
-                                // TODO: determine if the identifier is a user-type or a constant (Default to constant for the moment)
-                                self.unpacked.push(SvArrayKind::Fixed(0));
-                            }
-                            AstNodeKind::Value => {
-                                // TODO: try to parse the value as int
-                                self.unpacked.push(SvArrayKind::Fixed(0));
-                            }
-                            AstNodeKind::Expr => {
-                                if nc.child[0].attr.get("value") == Some(&"$".to_string()) {
-                                    self.unpacked.push(SvArrayKind::Queue);
-                                } else {
-                                    println!("[DefPort] Member {} | Slice childs = {:?}", self.name, nc.child)
-                                }
-                            }
-                            _ => println!("[DefMember] Member {} | Slice with attr {:?} | child kind = {}", self.name, nc.child[0].attr, nc.child[0].kind)
-                        }
-                    }
-                }
+                AstNodeKind::Slice if allow_slice => self.unpacked.push(parse_dim(nc)),
                 AstNodeKind::Value      => {self.default = Some(nc.attr["value"].clone()); allow_slice = false; }
                 AstNodeKind::Identifier => {self.default = Some(nc.attr["name"].clone());  allow_slice = false; }
                 // TODO !!!
@@ -144,6 +118,38 @@ impl DefPort {
                     allow_slice = false;
                     println!("[DefPort] Port {} | Skipping {:?} : {:?}",self.name, nc.kind, nc.attr)
                 }
+            }
+        }
+    }
+}
+
+pub fn parse_dim(node : &AstNode,) -> SvArrayKind {
+    if node.child.len() == 0 {SvArrayKind::Dynamic}
+    else if node.child.len() > 1 {SvArrayKind::Fixed(0)}
+    // else if node.attr.contains_key("range") {self.unpacked.push(SvArrayKind::Fixed(0));}
+    else {
+        match node.child[0].kind {
+            AstNodeKind::Type => SvArrayKind::Dict(node.child[0].attr["type"].clone()),
+            AstNodeKind::Identifier => {
+                // TODO: determine if the identifier is a user-type or a constant (Default to constant for the moment)
+                SvArrayKind::Fixed(0)
+            }
+            AstNodeKind::Value => {
+                // TODO: try to parse the value as int
+                SvArrayKind::Fixed(0)
+            }
+            AstNodeKind::Expr => {
+                if node.child[0].attr.get("value") == Some(&"$".to_string()) {
+                    SvArrayKind::Queue
+                } else {
+                    // println!("[DefPort] Port {} | Slice childs = {:?}", self.name, node.child);
+                    // TODO: expression parser to extract the actual value
+                    SvArrayKind::Fixed(0)
+                }
+            }
+            _ => {
+                println!("[parse_dim] Slice with attr {:?} | child kind = {}", node.child[0].attr, node.child[0].kind);
+                SvArrayKind::Fixed(0)
             }
         }
     }
@@ -408,35 +414,11 @@ impl DefMember {
         self.name = node.attr["name"].clone();
         for nc in &node.child {
             match nc.kind {
-                AstNodeKind::Slice => {
-                    if nc.child.len() == 0 {self.unpacked.push(SvArrayKind::Dynamic);}
-                    else if nc.child.len() > 0 {self.unpacked.push(SvArrayKind::Fixed(0));}
-                    // else if nc.attr.contains_key("range") {self.unpacked.push(SvArrayKind::Fixed(0));}
-                    else {
-                        match nc.child[0].kind {
-                            AstNodeKind::Type => self.unpacked.push(SvArrayKind::Dict(nc.child[0].attr["type"].clone())),
-                            AstNodeKind::Identifier => {
-                                // TODO: determine if the identifier is a user-type or a constant (Default to constant for the moment)
-                                self.unpacked.push(SvArrayKind::Fixed(0));
-                            }
-                            AstNodeKind::Value => {
-                                // TODO: try to parse the value as int
-                                self.unpacked.push(SvArrayKind::Fixed(0));
-                            }
-                            AstNodeKind::Expr => {
-                                if nc.child[0].attr.get("value") == Some(&"$".to_string()) {
-                                    self.unpacked.push(SvArrayKind::Queue);
-                                } else {
-                                    println!("[DefPort] Member {} | Slice childs = {:?}", self.name, nc.child)
-                                }
-                            }
-                            _ => println!("[DefMember] Member {} | Slice with attr {:?} | child kind = {}", self.name, nc.child[0].attr, nc.child[0].kind)
-                        }
-                    }
-                }
+                AstNodeKind::Slice => self.unpacked.push(parse_dim(nc)),
                 _ => break
             }
         }
+        // if self.name=="m_data" {println!("[DefMember] Member {:?} ", self);}
         // println!("[DefMember] Member {:?} ", self);
     }
 }

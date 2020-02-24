@@ -51,8 +51,10 @@ pub struct TypeIntAtom {
     pub signed : bool,
 }
 
-pub const TYPE_INT : DefType = DefType::IntAtom(TypeIntAtom{name:IntAtomName::Int,signed:true});
-pub const TYPE_STR : DefType = DefType::Primary(TypePrimary::Str);
+pub const TYPE_INT  : DefType = DefType::IntAtom(TypeIntAtom {name:IntAtomName::Int  , signed: true});
+pub const TYPE_UINT : DefType = DefType::IntAtom(TypeIntAtom {name:IntAtomName::Int  , signed: false});
+pub const TYPE_BYTE : DefType = DefType::IntAtom(TypeIntAtom {name:IntAtomName::Byte, signed: false});
+pub const TYPE_STR  : DefType = DefType::Primary(TypePrimary::Str);
 
 /// Standard defined type, non integer
 #[derive(Debug, Clone)]
