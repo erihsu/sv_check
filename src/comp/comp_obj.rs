@@ -31,14 +31,14 @@ impl ObjDef {
 
     //
     #[allow(dead_code,unused_variables)]
-    pub fn from_ast(ast: &Ast, ast_inc: & HashMap<String,Ast>, mut lib: &mut HashMap<String, ObjDef>)  {
+    pub fn from_ast(ast: &Ast, ast_inc: & HashMap<String,Box<Ast>>, mut lib: &mut HashMap<String, ObjDef>)  {
         for node in &ast.tree.child {
             // println!("[Compiling] Node {:?} ({:?}", node.kind, node.attr);
             match node.kind {
                 AstNodeKind::Directive => {
                     if let Some(i) = node.attr.get("include") {
                         ast_inc.get(i).map_or_else(
-                            || if i!="uvm_macros.svh" {println!("Include {} not found", i)},
+                            || if i!="uvm_macros.svh" {println!("[Compiling] Include {} not found", i)},
                             |a| ObjDef::from_ast(a, &ast_inc, &mut lib));
                     }
                 },
@@ -107,6 +107,8 @@ impl ObjDef {
                             d.ports.push(MacroPort::new(p));
                         }
                         lib.insert(d.name.clone(),ObjDef::Macro(d));
+                    } else if node.attr.contains_key("content") {
+                        // println!("[Compiling] Top define {:#?}", node.attr);
                     }
                 }
                 // Handle special case of type/localparams/define done out of context
@@ -137,7 +139,7 @@ impl ObjDef {
 
 impl DefModule {
     // Collect signals declaration, instance, type and function definition
-    pub fn parse_body(&mut self, node: &AstNode, ast_inc: & HashMap<String,Ast>) {
+    pub fn parse_body(&mut self, node: &AstNode, ast_inc: & HashMap<String,Box<Ast>>) {
         let mut prev_dir = PortDir::Input; // Default port direction to input
         let mut idx_port = -1 as i16;
         let mut idx_param = (self.params.len() as i16) - 1 ;
@@ -157,7 +159,7 @@ impl DefModule {
                 AstNodeKind::Directive => {
                     n.attr.get("include").map(
                         |i| ast_inc.get(i).map_or_else(
-                            || if i!="uvm_macros.svh" {println!("Include {} not found", i)},
+                            || if i!="uvm_macros.svh" {println!("[DefModule] Include {} not found", i)},
                             |a| self.parse_body(&a.tree,ast_inc)
                         )
                     );
@@ -325,7 +327,10 @@ impl DefModule {
                     self.defs.insert(n.attr["name"].clone(),ObjDef::Covergroup(d));
                 }
                 AstNodeKind::SvaProperty => {}
-                AstNodeKind::Bind => {}
+                AstNodeKind::Bind => {
+                    println!("[DefModule] {} | Bind Skipping",self.name);
+                    // println!("[DefModule] {} | Bind Skipping {}",self.name, n);
+                }
                 // Temporary: Whitelist node we can safely skip
                 // To be removed and replaced by default once eveything is working as intended
                 AstNodeKind::Timescale |
@@ -346,7 +351,7 @@ impl DefModule {
     }
 
     // TODO : get info from the For loop and name from the branch/for loop
-    pub fn get_inst(&mut self, node: &AstNode, ast_inc: & HashMap<String,Ast>) {
+    pub fn get_inst(&mut self, node: &AstNode, ast_inc: & HashMap<String,Box<Ast>>) {
         for n in &node.child {
             match n.kind {
                 AstNodeKind::Instances => {
@@ -376,7 +381,7 @@ impl DefModule {
 
 impl DefPackage {
     // Collect all definition
-    pub fn parse_body(&mut self, node: &AstNode, ast_inc: & HashMap<String,Ast>) {
+    pub fn parse_body(&mut self, node: &AstNode, ast_inc: & HashMap<String,Box<Ast>>) {
         for n in &node.child {
             // println!("[DefPackage] {} | next node = {}",self.name, n.kind);
             match n.kind {
@@ -384,7 +389,7 @@ impl DefPackage {
                 AstNodeKind::Directive => {
                     n.attr.get("include").map(
                         |i| ast_inc.get(i).map_or_else(
-                            || if i!="uvm_macros.svh" {println!("Include {} not found", i)},
+                            || if i!="uvm_macros.svh" {println!("[DefPackage] Include {} not found", i)},
                             |a| self.parse_body(&a.tree,ast_inc)
                         )
                     );
@@ -513,7 +518,7 @@ impl DefPackage {
 
 impl DefClass {
     // Collect all definition
-    pub fn parse_body(&mut self, node: &AstNode, ast_inc: & HashMap<String,Ast>) {
+    pub fn parse_body(&mut self, node: &AstNode, ast_inc: & HashMap<String,Box<Ast>>) {
         for n in &node.child {
             // println!("[Compiling] Class {} | next node = {}",self.name, n.kind);
             match n.kind {
@@ -540,7 +545,7 @@ impl DefClass {
                 AstNodeKind::Directive => {
                     n.attr.get("include").map(
                         |i| ast_inc.get(i).map_or_else(
-                            || if i!="uvm_macros.svh" {println!("Include {} not found", i)},
+                            || if i!="uvm_macros.svh" {println!("[DefClass] Include {} not found", i)},
                             |a| self.parse_body(&a.tree,ast_inc)
                         )
                     );
@@ -606,6 +611,7 @@ impl DefClass {
                     for nc in &n.child {
                         match nc.kind {
                             AstNodeKind::Identifier => {
+                                // if nc.attr["name"]=="vif" {println!("{:?}", n);}
                                 let m = DefMember{
                                     name : nc.attr["name"].clone(),
                                     kind : t.clone(),

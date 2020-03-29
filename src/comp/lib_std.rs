@@ -203,5 +203,30 @@ impl CompLib {
         o.defs.insert(m.name.clone(),ObjDef::Method(m));
         self.objects.insert(o.name.clone(),ObjDef::Class(o));
 
+        //
+        o = DefClass::new("covergroup".to_owned());
+        m = DefMethod::new("sample".to_owned(),false);
+        m.ret = Some(DefType::Primary(TypePrimary::Void));
+        // Temporary port definition with default value to support basic overload
+        m.ports.push(DefPort{name:"_".to_owned(), dir:PortDir::Input, kind:TYPE_INT, idx: 0, unpacked: Vec::new(), default: Some("0".to_string())});
+        o.defs.insert(m.name.clone(),ObjDef::Method(m));
+        m = DefMethod::new("start".to_owned(),false);
+        m.ret = Some(DefType::Primary(TypePrimary::Void));
+        o.defs.insert(m.name.clone(),ObjDef::Method(m));
+        m = DefMethod::new("stop".to_owned(),false);
+        m.ret = Some(DefType::Primary(TypePrimary::Void));
+        o.defs.insert(m.name.clone(),ObjDef::Method(m));
+        m = DefMethod::new("get_coverage".to_owned(),false);
+        m.ret = Some(DefType::Primary(TypePrimary::Void));
+        o.defs.insert(m.name.clone(),ObjDef::Method(m));
+        m = DefMethod::new("get_inst_coverage".to_owned(),false);
+        m.ret = Some(DefType::Primary(TypePrimary::Void));
+        o.defs.insert(m.name.clone(),ObjDef::Method(m));
+        m = DefMethod::new("set_inst_name".to_owned(),false);
+        m.ret = Some(DefType::Primary(TypePrimary::Void));
+        m.ports.push(DefPort{name:"name".to_owned(), dir:PortDir::Input, kind:TYPE_STR, idx: 0, unpacked: Vec::new(), default: None});
+        o.defs.insert(m.name.clone(),ObjDef::Method(m));
+        self.objects.insert(o.name.clone(),ObjDef::Class(o));
+
     }
 }

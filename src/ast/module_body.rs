@@ -88,7 +88,7 @@ pub fn parse_module_body(ts : &mut TokenStream, node : &mut AstNode, cntxt : Mod
             }
             TokenKind::KwTypedef => parse_typedef(ts,node)?,
             TokenKind::TypeGenvar => {
-                ts.flush(0);
+                ts.flush_rd();
                 loop {
                     let nt = next_t!(ts,false);
                     match nt.kind {
@@ -191,13 +191,13 @@ pub fn parse_module_body(ts : &mut TokenStream, node : &mut AstNode, cntxt : Mod
             TokenKind::KwTimeunit | TokenKind::KwTimeprec => parse_timescale(ts,node)?,
             //
             TokenKind::KwGenerate if cntxt==ModuleCntxt::Top => {
-                ts.flush(0);
+                ts.flush_rd();
                 parse_module_body(ts,node,ModuleCntxt::Generate)?;
             }
             TokenKind::KwFor  => parse_for(ts,node,true)?,
             TokenKind::KwIf   => parse_if_else(ts,node, true)?,
             TokenKind::KwBegin => {
-                ts.flush(0);
+                ts.flush_rd();
                 let mut n = AstNode::new(AstNodeKind::Block);
                 parse_label(ts,&mut n,"block".to_owned())?;
                 parse_module_body(ts,&mut n, ModuleCntxt::Block)?;
@@ -226,7 +226,7 @@ pub fn parse_module_body(ts : &mut TokenStream, node : &mut AstNode, cntxt : Mod
             break;
         }
     }
-    // ts.flush(0);
+    // ts.flush_rd();
     Ok(())
     // Err(SvError {kind:SvErrorKind::NotSupported, pos: t.pos, txt: "Module body".to_owned()})
 }
@@ -282,7 +282,8 @@ pub fn parse_assign_c(ts : &mut TokenStream) -> Result<AstNode, SvError> {
     }
     expect_t!(ts,"continuous assignment",TokenKind::OpEq);
     node.child.push(parse_expr(ts,ExprCntxt::Stmt,false)?);
-    ts.flush(0); // Parse expression let the last character in the buffer -> this was a ;
+    // Consume last token (the semicolon)
+    ts.flush(1); // Consume last token
     // println!("[parse_assign_c] {}", node);
     Ok(node)
 }
@@ -305,7 +306,7 @@ pub fn parse_assign_bnb(ts : &mut TokenStream) -> Result<AstNode, SvError> {
     }
     //
     node.child.push(parse_expr(ts,ExprCntxt::Stmt,false)?);
-    ts.flush(0); // consume the ;
+    ts.flush_rd(); // consume the ;
     // println!("[parse_assign_c] {}", node);
     Ok(node)
 }
@@ -356,7 +357,7 @@ pub fn parse_always(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), SvE
     n.attr.insert("kind".to_owned(),t0.value.clone());
     // println!("[parse_always] Node {}\nFirst Token {}",n, t);
     if t.kind == TokenKind::At {
-        ts.flush(0);
+        ts.flush_rd();
         match t0.kind {
             TokenKind::KwAlwaysL |
             TokenKind::KwAlwaysC => return Err(SvError::new(SvErrorKind::Syntax, t.pos,
@@ -409,7 +410,7 @@ pub fn parse_sensitivity(ts : &mut TokenStream, is_process: bool) -> Result<AstN
         let mut n = AstNode::new(AstNodeKind::Event);
         if t.kind == TokenKind::KwEdge {
             n.attr.insert("edge".to_owned(),t.value );
-            ts.flush(0); // consume keyword
+            ts.flush_rd(); // consume keyword
         }
         // Capture event name
         n.child.push(parse_ident_hier(ts)?);
@@ -487,11 +488,11 @@ pub fn parse_stmt(ts : &mut TokenStream, node: &mut AstNode, is_block: bool) -> 
                 }
             },
             TokenKind::KwEnd if is_block => {
-                ts.flush(0);
+                ts.flush_rd();
                 break;
             },
             TokenKind::KwBegin => {
-                ts.flush(0);
+                ts.flush_rd();
                 let mut n = AstNode::new(AstNodeKind::Block);
                 parse_label(ts,&mut n,"block".to_owned())?;
                 parse_stmt(ts,&mut n, true)?;
@@ -530,12 +531,13 @@ pub fn parse_if_else(ts : &mut TokenStream, node: &mut AstNode, is_gen: bool) ->
     }
     expect_t!(ts,"if statement",TokenKind::ParenLeft);
     node_if.child.push(parse_expr(ts,ExprCntxt::Arg,false)?);
-    ts.flush(0); // No need to check last token, with this context parse expr only go out on close parenthesis
+    ts.flush(1); // Consume last token
     // Check for begin
     let mut is_block = false;
     let mut t = next_t!(ts,true);
     if t.kind == TokenKind::KwBegin {
         is_block = true;
+        ts.flush(1);
         parse_label(ts,&mut node_if,"block".to_owned())?;
     } else {
         ts.rewind(0);
@@ -564,6 +566,7 @@ pub fn parse_if_else(ts : &mut TokenStream, node: &mut AstNode, is_gen: bool) ->
                 is_block = t.kind == TokenKind::KwBegin;
                 // println!("[parse_if_else] Else token : is_block {}, is_gen {}", is_block, is_gen);
                 if is_block {
+                    ts.flush(1);
                     parse_label(ts,&mut node_else,"block".to_owned())?;
                 }
                 if is_gen {
@@ -585,7 +588,7 @@ pub fn parse_if_else(ts : &mut TokenStream, node: &mut AstNode, is_gen: bool) ->
 }
 
 pub fn parse_for(ts : &mut TokenStream, node: &mut AstNode, is_generate: bool) -> Result<(), SvError> {
-    ts.flush(0);
+    ts.flush_rd();
     let mut t = next_t!(ts,false);
     if t.kind!=TokenKind::ParenLeft {
         return Err(SvError::syntax(t,"for. Expecting (".to_owned()));
@@ -612,13 +615,14 @@ pub fn parse_for(ts : &mut TokenStream, node: &mut AstNode, is_generate: bool) -
         node_hdr.child.push(ns);
         loop_args_break_cont!(ts,"for test arguments",ParenRight);
     }
-    ts.flush(0); // Clear parenthesis
+    ts.flush_rd(); // Clear parenthesis
     node_for.child.push(node_hdr);
     // Check for begin
     let mut cntxt_body = ModuleCntxt::ForStmt;
     t = next_t!(ts,true);
     let is_block = t.kind == TokenKind::KwBegin;
     if is_block {
+        ts.flush(1); // Consume begin keyword
         cntxt_body = ModuleCntxt::Block;
         parse_label(ts,&mut node_for,"block".to_owned())?;
     }

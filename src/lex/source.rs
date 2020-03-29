@@ -6,12 +6,12 @@ use crate::lex::position::Position;
 use std::{fs,path,io, mem, str, iter};
 
 #[cfg(not(target_os = "windows"))]
-fn path_display<P: AsRef<path::Path>>(p: P) -> String {
+pub fn path_display<P: AsRef<path::Path>>(p: P) -> String {
     p.as_ref().display().to_string()
 }
 
 #[cfg(target_os = "windows")]
-fn path_display<P: AsRef<path::Path>>(p: P) -> String {
+pub fn path_display<P: AsRef<path::Path>>(p: P) -> String {
     const VERBATIM_PREFIX: &str = r#"\\?\"#;
     let p = p.as_ref().display().to_string();
     if p.starts_with(VERBATIM_PREFIX) {

@@ -2,9 +2,12 @@
 // Copyright (c) 2019, clams@mail.com
 
 use crate::lex::token::TokenKind;
-use crate::lex::token_stream::TokenStream;
-use crate::ast::astnode::{AstNode, AstNodeKind};
-use crate::ast::class::{parse_func,parse_class_stmt_or_block};
+use crate::lex::token_stream::{TokenStream};
+use crate::ast::{
+    MacroDef,
+    astnode::{AstNode, AstNodeKind},
+    class::{parse_func,parse_class_stmt_or_block}
+};
 use crate::error::{SvErrorKind, SvError};
 
 macro_rules! next_t {
@@ -46,7 +49,7 @@ macro_rules! loop_args_break_cont {
 macro_rules! parse_opt_params {
     ($ts:expr, $node:expr, $t:expr) => {
         if $t.kind==TokenKind::Hash {
-            $ts.flush(0); // Consume the hash token
+            $ts.flush_rd(); // Consume the hash token
             let mut node_p = AstNode::new(AstNodeKind::Params);
             parse_port_connection($ts,&mut node_p,true)?;
             $node.child.push(node_p);
@@ -56,7 +59,7 @@ macro_rules! parse_opt_params {
     ($ts:expr, $node:expr) => {
         let t = next_t!($ts,true);
         if t.kind==TokenKind::Hash {
-            $ts.flush(0); // Consume the hash token
+            $ts.flush_rd(); // Consume the hash token
             let mut node_p = AstNode::new(AstNodeKind::Params);
             parse_port_connection($ts,&mut node_p,true)?;
             $node.child.push(node_p);
@@ -134,7 +137,7 @@ pub fn parse_param_decl(ts : &mut TokenStream, is_body: bool) -> Result<AstNode,
     match t.kind {
         TokenKind::KwParam | TokenKind::KwLParam  => {
             node.attr.insert("kind".to_owned(), format!("{:?}",t.kind ) );
-            ts.flush(0);
+            ts.flush_rd();
         },
         _ => {}
     }
@@ -173,7 +176,7 @@ pub fn parse_port_decl(ts : &mut TokenStream, allow_void : bool, cntxt: ExprCntx
     match t.kind {
         TokenKind::KwInput | TokenKind::KwOutput | TokenKind::KwInout | TokenKind::KwRef => {
             node.attr.insert("dir".to_owned(), t.value);
-            ts.flush(0);
+            ts.flush_rd();
         }
         // Interface / User-defined type
         TokenKind::Ident => {
@@ -190,7 +193,7 @@ pub fn parse_port_decl(ts : &mut TokenStream, allow_void : bool, cntxt: ExprCntx
                     }
                     node.attr.insert("intf".to_owned(), t.value);
                     node.attr.insert("modport".to_owned(), nnt.value);
-                    ts.flush(0);
+                    ts.flush_rd();
                 }
                 // Another ident : No modport, nt is the port name, rewind it
                 TokenKind::Ident => {
@@ -231,7 +234,7 @@ pub fn parse_port_decl(ts : &mut TokenStream, allow_void : bool, cntxt: ExprCntx
                     }
                     node.attr.insert("intf".to_owned(), t.value);
                     node.attr.insert("modport".to_owned(), nnt.value);
-                    ts.flush(0);
+                    ts.flush_rd();
                 }
                 // Another ident : No modport, nt is the port name, rewind it
                 TokenKind::Ident => ts.rewind(1),
@@ -670,7 +673,7 @@ pub fn parse_enum(ts : &mut TokenStream, is_typedef: bool) -> Result<AstNode,SvE
             }
         }
         TokenKind::Ident => {
-            ts.flush(0);
+            ts.flush_rd();
             node_e.attr.insert("type".to_owned(),t.value);
             t = next_t!(ts,false);
         }
@@ -679,10 +682,10 @@ pub fn parse_enum(ts : &mut TokenStream, is_typedef: bool) -> Result<AstNode,SvE
     }
     // Expect opening brace for definition or ; in case of forward declaration
     match t.kind {
-        TokenKind::CurlyLeft => ts.flush(0), // Consume all character up to the opening curly brace
+        TokenKind::CurlyLeft => ts.flush_rd(), // Consume all character up to the opening curly brace
         TokenKind::SemiColon if is_typedef => {
             node_e.attr.insert("forward".to_owned(),"".to_owned());
-            ts.flush(0);
+            ts.flush_rd();
             return Ok(node_e);
         }
         _ => return Err(SvError::syntax(t, "enum. Expecting {".to_owned()))
@@ -736,12 +739,12 @@ pub fn parse_struct(ts : &mut TokenStream) -> Result<AstNode,SvError> {
     t = next_t!(ts,true);
     // Optional packed keyword
     if t.kind==TokenKind::KwPacked {
-        ts.flush(0);
+        ts.flush_rd();
         node.attr.insert("packed".to_owned(),"".to_owned());
         t = next_t!(ts,true);
         // Optional signing
         if t.kind==TokenKind::KwSigning {
-            ts.flush(0);
+            ts.flush_rd();
             node.attr.insert("signing".to_owned(), t.value);
             t = next_t!(ts,true);
         }
@@ -789,7 +792,7 @@ pub fn parse_struct(ts : &mut TokenStream) -> Result<AstNode,SvError> {
         //
     }
     // Loop stop on } so can safely flush everything
-    ts.flush(0);
+    ts.flush_rd();
     // Check for packed dimension in packed struct
     if node.attr.contains_key("packed") {
         parse_opt_slice(ts,&mut node,true,false)?;
@@ -800,7 +803,7 @@ pub fn parse_struct(ts : &mut TokenStream) -> Result<AstNode,SvError> {
 
 /// Parse typedef
 pub fn parse_typedef(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), SvError> {
-    ts.flush(0);
+    ts.flush(1); // Consume the typedef keyword
     let mut t = next_t!(ts,true);
     let mut node_def = AstNode::new(AstNodeKind::Typedef);
     match t.kind {
@@ -834,10 +837,7 @@ pub fn parse_typedef(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), Sv
     // Optional unpacked dimension
     parse_opt_slice(ts,&mut node_def,true,true)?;
     // Expect semi-colon
-    t = next_t!(ts,false);
-    if t.kind!=TokenKind::SemiColon {
-        return Err(SvError::syntax(t, "package header. Expecting ;".to_owned()));
-    }
+    expect_t!(ts,"typedef", TokenKind::SemiColon);
     node.child.push(node_def);
     Ok(())
 }
@@ -860,14 +860,14 @@ pub fn parse_port_connection(ts : &mut TokenStream, node: &mut AstNode, is_param
         match t.kind {
             TokenKind::Dot => {
                 allow_list = false;
-                ts.flush(0); // Consume the dot
+                ts.flush(1); // Consume the dot
                 let mut nt = expect_t!(ts,"port name",TokenKind::Ident);
                 let mut node_p = AstNode::new( if is_param {AstNodeKind::Param} else {AstNodeKind::Port});
                 node_p.attr.insert("name".to_owned(), nt.value);
                 nt = next_t!(ts,true);
                 match nt.kind {
                     TokenKind::ParenLeft => {
-                        ts.flush(0); // Consume the (
+                        ts.flush(1); // Consume the (
                         node_p.attr.insert("pos".to_owned(), format!("{}",cnt));
                         node_p.child.push(parse_expr(ts,ExprCntxt::Arg,is_param)?);
                         ts.flush(1); // Consume right parenthesis
@@ -886,7 +886,7 @@ pub fn parse_port_connection(ts : &mut TokenStream, node: &mut AstNode, is_param
                 }
             },
             TokenKind::DotStar if allow_dot_star => {
-                ts.flush(0); // Consume the (
+                ts.flush(1); // Consume the .*
                 allow_dot_star = false;
                 let mut node_p = AstNode::new( if is_param {AstNodeKind::Param} else {AstNodeKind::Port});
                 node_p.attr.insert("name".to_owned(), t.value);
@@ -914,7 +914,7 @@ pub fn parse_port_connection(ts : &mut TokenStream, node: &mut AstNode, is_param
         loop_args_break_cont!(ts,"port connection",ParenRight);
     }
     // println!("parse_port_connection: {}", node);
-    ts.flush(0);
+    ts.flush_rd();
     Ok(())
 }
 
@@ -938,7 +938,6 @@ pub fn parse_has_begin(ts : &mut TokenStream, node: &mut AstNode) -> Result<bool
 
 /// Parse the optional label after a begin keyword, and update
 pub fn parse_label(ts : &mut TokenStream, node: &mut AstNode, attr_name: String) -> Result<bool, SvError> {
-    ts.flush(1); // Consume the begin keyword
     let mut t = next_t!(ts,true);
     // println!("[parse_label] Token = : {}", t);
     // Check for named block
@@ -962,7 +961,7 @@ pub fn check_label(ts : &mut TokenStream, name: &str) -> Result<(), SvError> {
         // println!("[parse_label] Token = : {}", t);
         // Check for named block
         if t.kind == TokenKind::Colon {
-            ts.flush(0);
+            ts.flush_rd();
             t = next_t!(ts,false);
             if t.kind!=TokenKind::Ident && t.kind!=TokenKind::KwNew {
                 return Err(SvError::syntax(t, "label".to_owned()));
@@ -1027,12 +1026,9 @@ pub fn parse_macro(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), SvEr
         "`end_keywords"        => {}
         // Directive with one parameter
         "`ifndef" | "`ifdef" | "`elsif" | "`undef" => {
-            t = next_t!(ts,true);
-            if t.kind!=TokenKind::Ident {
-                return Err(SvError::syntax(t, "ifdef directive".to_owned()))
-            }
+            t = expect_t!(ts,"Directive",TokenKind::Ident);
             node_m.attr.insert("param".to_owned(), t.value);
-            ts.flush(0);
+            ts.flush_rd();
         }
         "`begin_keywords" => {
             t = expect_t!(ts,"type",TokenKind::Str);
@@ -1048,102 +1044,93 @@ pub fn parse_macro(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), SvEr
         }
         // Include directive : `include <file> , `include "file" or `include `mymacro
         "`include" => {
-            t = next_t!(ts,true);
+            t = next_t!(ts,true);        
             match t.kind {
-                TokenKind::Macro => {node_m.attr.insert("include".to_owned(),t.value);},
-                TokenKind::Str => {
-                    ts.add_inc(&t.value);
-                    node_m.attr.insert("include".to_owned(),t.value);
-                },
+                TokenKind::Macro => {}, // TO BE REMOVED
+                TokenKind::Str => {},
                 TokenKind::OpLT => {
                     t = next_t!(ts,true);
                     if t.kind!=TokenKind::Ident {
                         return Err(SvError::syntax(t, "include directive".to_owned()));
                     }
-                    ts.add_inc(&t.value);
-                    node_m.attr.insert("include".to_owned(),t.value);
-                    t = next_t!(ts,true);
-                    if t.kind!=TokenKind::OpGT {
-                        return Err(SvError::syntax(t, "include directive".to_owned()));
-                    }
+                    expect_t!(ts,"include directive",TokenKind::OpGT);
                 }
                 _ => return Err(SvError::syntax(t, "include directive".to_owned()))
             }
-            ts.flush(0);
+            let fname = t.value;
+            // TO BE REMOVED
+            ts.add_inc(&fname);
+            node_m.attr.insert("include".to_owned(),fname.clone());
+
+            // In case of include check if it has any define to be added to the tokenstream
+            if ts.project.ast_inc.contains_key(&fname) {
+                for (k,v) in ts.project.ast_inc[&fname].defines.clone() {
+                    // println!("[Include] {:?} -> {:?}", k,v);
+                    // println!("[parse_macro] Include Define {} ", k);
+                    ts.project.defines.insert(k,v);
+                }
+                // ts.project.ast_inc[&fname].defines.iter().for_each(|(k, v)| ts.project.defines.insert(k.to_string(),v));
+            } else {
+                ts.project.compile_inc(fname, t.pos)?;
+            }
+            ts.flush_rd();
         }
         // Define directive : first token is the name, followed by optional argument and then the content is all token until EOL
         "`define" => {
-            node_m.kind = AstNodeKind::Define;
             t = next_t!(ts,true);
             if t.kind!=TokenKind::Ident {
                 return Err(SvError::syntax(t, "ifdef directive".to_owned()))
             }
-            node_m.attr.insert("name".to_owned(),t.value);
-            let mut line_num = t.pos.line;
-            ts.flush(0);
+            // Check if macro is already defined
+            let name = format!("`{}", t.value);
+            // TODO: temporary disable of macro redefined warning until compilation directive are properly handle
+            // if ts.project.defines.contains_key(&name) {println!("[parse_macro] {} : line {} | Macro {} already defined", ts.source.get_filename(),t.pos,t.value);}
+            let line_num = t.pos.line;
+            ts.flush(1);
+            // Try next token: if new line, it was an empty defined: add it ot the list and rewind
             t = next_t!(ts,true);
+            // println!("[parse_macro] Token following define {:?} = {:?} (line_num={})", name, t,line_num);
+            // ts.display_status("define start");
             if t.pos.line != line_num {
+                // println!("[parse_macro] Define {} ", name);
+                ts.project.defines.insert(name,None);
                 ts.rewind(0);
             } else {
-                ts.flush(0);
+                let mut macro_def = MacroDef::new();
                 if t.kind == TokenKind::ParenLeft {
+                    ts.flush(1);
                     t = next_t!(ts,true);
                     if t.kind == TokenKind::Ident {
                         loop {
                             t = next_t!(ts,false);
                             match t.kind {
                                 TokenKind::Ident => {
-                                    let mut node_p = AstNode::new(AstNodeKind::Param);
-                                    node_p.attr.insert("name".to_owned(),t.value);
+                                    let port_name = t.value;
                                     // Optional Default value i.e. "= expr"
                                     t = next_t!(ts,true);
                                     if t.kind == TokenKind::OpEq {
                                         ts.flush(1);
-                                        node_p.child.push(parse_expr(ts,ExprCntxt::ArgList,false)?);
-                                    } else {ts.rewind(1);}
-                                    node_m.child.push(node_p);
+                                        let def_val = ts.collect_until(true)?;
+                                        macro_def.ports.push((port_name,def_val));
+                                    } else {
+                                        ts.rewind(1);
+                                        macro_def.ports.push((port_name,Vec::new()));
+                                    }
                                     loop_args_break_cont!(ts,"macro arguments",ParenRight);
                                 }
-                                TokenKind::LineCont => line_num += 1,
+                                TokenKind::LineCont => {},
                                 _ =>  return Err(SvError::syntax(t,"define. Expecting port name/expression".to_owned())),
                             }
                         }
-                    } else {ts.rewind(0);}
-                }
-                let mut content = "".to_owned();
-                loop {
-                    // t = next_t!(ts,true);
-                    if let Some(x) = ts.next_non_comment(true) {
-                        match x {
-                            Ok(t) => {
-                                // println!("[parse_macro] Define {} content: next = {}. Current line = {} vs {}", node_m.attr["name"], t, line_num, t.pos.line);
-                                if t.pos.line != line_num {
-                                    node_m.attr.insert("content".to_owned(),content);
-                                    ts.rewind(0);
-                                    // println!("[parse_macro] Define content = {:?}", node_m);
-                                    break;
-                                } else if t.kind == TokenKind::LineCont {
-                                    content.push('\n');
-                                    line_num += 1;
-                                } else {
-                                    // TODO add each token as a child to ease string interpolation
-                                    // Maybe also need to properly handle space characters ...
-                                    content.push(' ');
-                                    content.push_str(&t.value);
-                                }
-                                ts.flush(0);
-
-                            }
-                            Err(t) => return Err(t),
-                        }
-                    }
-                    // Reach end of file
-                    else {
-                        node_m.attr.insert("content".to_owned(),content);
-                        break;
                     }
                 }
+                ts.rewind(0);
+                macro_def.body = ts.collect_until(false)?;
+                // println!("[parse_macro] Define {} = {:#?}", name, macro_def);
+                // println!("[parse_macro] Define {} ", name);
+                ts.project.defines.insert(name,Some(macro_def));
             }
+            // ts.display_status("define end");
         }
         "`pragma" => {
             t = expect_t!(ts,"type",TokenKind::Ident);
@@ -1162,7 +1149,7 @@ pub fn parse_macro(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), SvEr
                 return Err(SvError::syntax(t,"default_nettype. Expecting net type (wire/tri/...) or none".to_owned()));
             }
             node_m.attr.insert("nettype".to_owned(),t.value);
-            ts.flush(0);
+            ts.flush_rd();
         }
         "`timescale" => {
             node_m.attr.insert("unit".to_owned(),parse_time(ts)?);
@@ -1180,21 +1167,23 @@ pub fn parse_macro(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), SvEr
         }
         // User define macro
         _ => {
-            node_m.kind = AstNodeKind::MacroCall;
-            t = next_t!(ts,true);
-            if t.kind == TokenKind::ParenLeft {
-                ts.flush(0);
-                // Parse until closing parenthesis
-                loop {
-                    node_m.child.push(parse_expr(ts,ExprCntxt::ArgList,true)?);
-                    t = next_t!(ts,false);
-                    if t.kind == TokenKind::ParenRight {
-                        break;
-                    }
-                }
-            } else {
-                ts.rewind(0);
-            }
+            println!("[parse_macro] {} : line {} | Use of unknown macro {} ", ts.source.get_filename(),t.pos,t.value);
+            // if ts.project.defines.contains_key(&t.value) {println!("[parse_macro] {} : line {} | Use of unknown macro {} ", ts.source.get_filename(),t.pos,t.value);}
+            // node_m.kind = AstNodeKind::MacroCall;
+            // t = next_t!(ts,true);
+            // if t.kind == TokenKind::ParenLeft {
+            //     ts.flush_rd();
+            //     // Parse until closing parenthesis
+            //     loop {
+            //         node_m.child.push(parse_expr(ts,ExprCntxt::ArgList,true)?);
+            //         t = next_t!(ts,false);
+            //         if t.kind == TokenKind::ParenRight {
+            //             break;
+            //         }
+            //     }
+            // } else {
+            //     ts.rewind(0);
+            // }
         }
 
     }
@@ -1301,11 +1290,11 @@ pub fn parse_case(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), SvErr
     t = next_t!(ts,true);
     match t.kind {
         TokenKind::KwMatch => {
-            ts.flush(0);
+            ts.flush_rd();
             node_c.attr.insert("matching".to_owned(),t.value);
         }
         TokenKind::KwInside if node_c.attr["kind"]=="case" => {
-            ts.flush(0);
+            ts.flush_rd();
             node_c.attr.insert("matching".to_owned(),t.value);
         }
         _ => ts.rewind(0)
@@ -1357,7 +1346,7 @@ pub fn parse_case(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), SvErr
         // println!("[parse_case] case item node {}", node_i);
         node_c.child.push(node_i);
     }
-    ts.flush(0);
+    ts.flush_rd();
     // println!("[parse_case] {}", node_c);
     node.child.push(node_c);
     Ok(())
@@ -1389,7 +1378,7 @@ pub fn parse_expr(ts : &mut TokenStream, cntxt: ExprCntxt, allow_type: bool) -> 
             // Count parenthesis/braces to check if it is balanced
             TokenKind::TickCurly if is_first  => parse_struct_init(ts, &mut node_e)?,
             TokenKind::CurlyLeft => {
-                ts.flush(0);
+                ts.flush_rd();
                 allow_op = true;
                 // println!("[parse_expr] CurlyLeft, (cntxt={:?}, first={}, allow ident={} / op={} ) \n Last = {:?}",cntxt, is_first, allow_ident,allow_op,node_e.child.last());
                 if  cntxt == ExprCntxt::FieldList {
@@ -1714,7 +1703,7 @@ pub fn parse_expr(ts : &mut TokenStream, cntxt: ExprCntxt, allow_type: bool) -> 
                 node_e.child.push(parse_expr(ts,ExprCntxt::Question,false)?);
                 ts.flush(1); // Consume the :
                 // Parse second expression
-                node_e.child.push(parse_expr(ts,cntxt.clone(),false)?);
+                node_e.child.push(parse_expr(ts,cntxt,false)?);
                 break;
             }
             //
@@ -1782,7 +1771,7 @@ pub fn parse_member_or_call(ts : &mut TokenStream, is_first: bool) -> Result<Ast
         // println!("[parse_member_or_call] static method call from parameterized class : next token = {}", t);
         match t.kind {
             TokenKind::Scope => {
-                ns.attr.insert("name".to_owned(),name.clone());
+                ns.attr.insert("name".to_owned(),name);
                 ts.flush(1);
                 parse_opt_scope(ts,&mut ns)?;
                 n.child.push(ns);
@@ -1793,7 +1782,7 @@ pub fn parse_member_or_call(ts : &mut TokenStream, is_first: bool) -> Result<Ast
             TokenKind::Comma | TokenKind::ParenRight => {
                 n = ns;
                 n.kind = AstNodeKind::Type;
-                n.attr.insert("name".to_owned(),name.clone());
+                n.attr.insert("name".to_owned(),name);
                 ts.rewind(1);
                 return Ok(n);
             }
@@ -1801,7 +1790,7 @@ pub fn parse_member_or_call(ts : &mut TokenStream, is_first: bool) -> Result<Ast
             TokenKind::Ident => {
                 n = ns; // Might need to update some attr of ns ? Kind ?
                 n.kind = AstNodeKind::Declaration;
-                n.attr.insert("name".to_owned(),name.clone());
+                n.attr.insert("name".to_owned(),name);
                 ts.rewind(1);
                 parse_var_decl_name(ts, &mut n,ExprCntxt::StmtList,false)?;
                 loop {
@@ -1827,7 +1816,7 @@ pub fn parse_member_or_call(ts : &mut TokenStream, is_first: bool) -> Result<Ast
     else if t.kind == TokenKind::Scope {
         ts.flush(1);
         let mut ns = AstNode::new(AstNodeKind::Scope);
-        ns.attr.insert("name".to_owned(),name.clone());
+        ns.attr.insert("name".to_owned(),name);
         parse_opt_scope(ts,&mut ns)?;
         n.child.push(ns);
         t = next_t!(ts,false);
@@ -1937,7 +1926,7 @@ pub fn parse_func_call(ts : &mut TokenStream, node: &mut AstNode, is_param: bool
         match t.kind {
             TokenKind::Dot => {
                 allow_list = false;
-                ts.flush(0); // Consume the dot
+                ts.flush_rd(); // Consume the dot
                 let mut nt = expect_t!(ts,"function argument name",TokenKind::Ident);
                 let mut node_p = AstNode::new(AstNodeKind::Port);
                 node_p.attr.insert("name".to_owned(), nt.value);
@@ -2105,7 +2094,7 @@ pub fn parse_assert(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), SvE
         ts.rewind(0);
     }
     node.child.push(n);
-    return Ok(())
+    Ok(())
 }
 
 /// Parse constraint block

@@ -31,7 +31,7 @@ pub enum TokenKind {
     TypeString, TypeCHandle, TypeVoid, TypeEvent,
     SystemTask, // $...
     Casting,    // type'
-    Macro,      // `my_macro
+    Macro,MacroCall,      // `my_macro
     CompDir,  // `ifdef/`ifndef/`elsif/`else/`endif
     IdentInterpolated, // ``macro_ident
     Ident,      // Any valid identifier
@@ -236,6 +236,7 @@ impl fmt::Display for TokenKind {
             TokenKind::IdentInterpolated => write!(f, "IdentInterpolated"),
             TokenKind::Casting           => write!(f, "Casting"        ),
             TokenKind::Macro             => write!(f, "Macro"          ),
+            TokenKind::MacroCall         => write!(f, "MacroCall"      ),
             TokenKind::CompDir           => write!(f, "Compilation Dir."),
             TokenKind::Comment           => write!(f, "Comment"        ),
             TokenKind::Attribute         => write!(f, "Attribute"      ),

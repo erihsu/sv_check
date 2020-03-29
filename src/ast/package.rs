@@ -77,7 +77,7 @@ pub fn parse_package(ts : &mut TokenStream) -> Result<AstNode, SvError> {
             }
             TokenKind::KwTypedef => parse_typedef(ts,&mut node)?,
             TokenKind::TypeGenvar => {
-                ts.flush(0);
+                ts.flush_rd();
                 loop {
                     let nt = next_t!(ts,false);
                     match nt.kind {

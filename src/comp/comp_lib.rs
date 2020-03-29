@@ -10,7 +10,7 @@ use crate::ast::astnode::{AstNode,AstNodeKind};
 
 use crate::comp::comp_obj::{ObjDef};
 use crate::comp::prototype::*;
-use crate::comp::def_type::{DefType,TypeVIntf,TypePrimary,TYPE_INT};
+use crate::comp::def_type::{DefType,TypeVIntf,TypePrimary,TypeUser,TYPE_INT,TYPE_STR};
 use crate::comp::lib_uvm::get_uvm_lib;
 
 type LinkCntxt = (AstNodeKind,String);
@@ -51,7 +51,7 @@ impl CompLib {
 
     // Create a library containing definition of all object compiled
     // Try to fix any missing reference, analyze hierarchical access, ...
-    pub fn new(name: String, ast_list: Vec<Ast>, ast_inc: HashMap<String,Ast>) -> CompLib {
+    pub fn new(name: String, ast_list: Vec<Ast>, ast_inc: HashMap<String,Box<Ast>>) -> CompLib {
         let mut lib = CompLib {name, objects:HashMap::new(), cntxt:Vec::new()};
         // let mut missing_scope : HashSet<String> = HashSet::new();
 
@@ -73,7 +73,7 @@ impl CompLib {
         lib
     }
 
-    pub fn check_ast(&mut self, node: &AstNode, ast_inc: & HashMap<String,Ast>, li: &mut LocalInfo, new_cntxt: bool) {
+    pub fn check_ast(&mut self, node: &AstNode, ast_inc: & HashMap<String,Box<Ast>>, li: &mut LocalInfo, new_cntxt: bool) {
         let mut port_dir = PortDir::Input; // Default port direction to input
         let mut port_idx = -1 as i16;
         if new_cntxt {
@@ -121,26 +121,56 @@ impl CompLib {
                     li.defs.push(HashMap::new());
                     // Extract indices from the foreach
                     if nc.attr.get("kind")==Some(&"foreach".to_string()) {
-                        // println!("[Linking] {:?} | Loop Foreach\n {}", self.cntxt, nc.child[0]);
                         let mut ncc = &nc.child[0]; // Foreach loop always have at least one child
+                        let mut dim = Vec::new();
+                        if ncc.kind==AstNodeKind::Identifier {
+                            match self.find_def(&ncc.attr["name"],None,li,false,false).0 {
+                                Some(ObjDef::Member(x)) => dim = x.unpacked.clone(),
+                                Some(ObjDef::Port(x))   => dim = x.unpacked.clone(),
+                                _ => {}
+                            }
+                        }
+                        // println!("[Linking] {:?} | Foreach loop item {} has dimension {:?}", self.cntxt,ncc.attr["name"],dim);
                         loop {
                             // Check if no child: should never happen ...
                             if ncc.child.is_empty() {break;}
-                            // When found the slice extract all identifier
-                            if ncc.kind == AstNodeKind::Slice {
-                                // println!("[Linking] {:?} | Loop Foreach\n {}", self.cntxt, ncc);
-                                for x in &ncc.child {
-                                    if x.kind != AstNodeKind::Identifier {
-                                        println!("[Linking] {:?} | Unable to extract foreach variables in: {}", self.cntxt, ncc);
-                                        break;
+                            match ncc.kind {
+                                // TODO: handle identifier to extract dimension
+                                AstNodeKind::Identifier => {},
+                                // When found the slice extract all identifier
+                                AstNodeKind::Slice => {
+                                    // println!("[Linking] {:?} | Loop Foreach\n {}", self.cntxt, ncc);
+                                    for x in &ncc.child {
+                                        if x.kind != AstNodeKind::Identifier {
+                                            println!("[Linking] {:?} | Unable to extract foreach variables in: {}", self.cntxt, ncc);
+                                            break;
+                                        }
+                                        let mut t= TYPE_INT;
+                                        if dim.len()>0 {
+                                            t = match &dim[0] {
+                                                SvArrayKind::Dict(s) => {
+                                                    match s.as_ref() {
+                                                        "string" => TYPE_STR,
+                                                        "int" => TYPE_INT,
+                                                        _ => DefType::User(TypeUser {name: s.to_string(), scope: None, packed : None, params : Vec::new()})
+                                                    }
+                                                }
+                                                _ => TYPE_INT
+                                            };
+                                            dim.remove(0);
+                                        // } else {
+                                        //     println!("[Linking] {:?} | Too much dimension in {}", self.cntxt, nc);
+                                        }
+                                        let mb = DefMember{
+                                            name: x.attr["name"].clone(),
+                                            kind: t,
+                                            unpacked : Vec::new(), is_const: false, access: Access::Public};
+
+                                        li.add_def(mb.name.clone(),ObjDef::Member(mb));
                                     }
-                                    let mb = DefMember{
-                                        name: x.attr["name"].clone(),
-                                        kind: TYPE_INT,
-                                        unpacked : Vec::new(), is_const: false, access: Access::Public};
-                                    li.add_def(mb.name.clone(),ObjDef::Member(mb));
+                                    break;
                                 }
-                                break;
+                                _ => {}
                             }
                             ncc = &ncc.child[0];
                         }
@@ -159,11 +189,12 @@ impl CompLib {
                 AstNodeKind::Directive => {
                     nc.attr.get("include").map(
                         |i| ast_inc.get(i).map_or_else(
-                            || if i!="uvm_macros.svh" {println!("Include {} not found", i)},
+                            || if i!="uvm_macros.svh" {println!("[Linking] Include {} not found", i)},
                             |a| self.check_ast(&a.tree,ast_inc,li,false)
                         )
                     );
-                },                  // Update local info
+                },                  
+                // Update local info
                 AstNodeKind::Import => {
                     // Import DPI function/task
                     if nc.attr.contains_key("dpi") {
@@ -207,7 +238,7 @@ impl CompLib {
                             let mut mc = m.clone();
                             mc.name = ncc.attr["name"].clone();
                             mc.updt(ncc);
-                            // if mc.name=="arg_a" {println!("[Linking] {:?} | {:?} | {:?}", self.cntxt, mc, ncc);}
+                            // if mc.name=="tmp" {println!("[Linking] {:?} | {:?} | {:?}\n{:#?}", self.cntxt, mc, ncc,nc);}
                             li.add_def(ncc.attr["name"].clone(),ObjDef::Member(mc));
                         }
                     }
@@ -463,7 +494,7 @@ impl CompLib {
     // TODO: evaluate a cache version of find_def
     // Find a definition from a string
     pub fn find_def<'a>(&'a self, name: &String, scope: Option<&String>,li: &'a LocalInfo, check_base: bool, check_obj: bool) ->  (Option<&'a ObjDef>,Option<HashMap<String,String>>) {
-        // if name == "type_name" {println!("[Linking] {:?} | searching for {} : scope = {:?}, check_base={}, check_obj={}",self.cntxt,name,scope,check_base,check_obj);}
+        // if name == "T_CMP" {println!("[find_def] {:?} | searching for {} : scope = {:?}, check_base={}, check_obj={}",self.cntxt,name,scope,check_base,check_obj);}
         if let Some(scope_name) = scope {
             if let Some(ObjDef::Package(di)) = &self.objects.get(scope_name) {
                 return (di.defs.get(name),None);
@@ -490,11 +521,17 @@ impl CompLib {
                     if d.defs.contains_key(name) {
                         return (Some(&d.defs[name]),None);
                     }
+                    if d.params.contains_key(name) {
+                        return (Some(&d.params[name]),None);
+                    }
                 }
                 Some(ObjDef::Module(d)) => {
                     if d.defs.contains_key(name) {
                         return (Some(&d.defs[name]),None);
                     }
+                    // if d.params.contains_key(name) {
+                    //     return (Some(&d.params[name]),None);
+                    // }
                 }
                 Some(ObjDef::Package(d)) => {
                     if d.defs.contains_key(name) {
@@ -643,6 +680,7 @@ impl CompLib {
             println!("[Linking] {:?} | Identifier {:?} undeclared", self.cntxt, node.attr["name"]);
             return;
         }
+        // if node.attr["name"]=="tr" {println!("[Linking] {:?} | tr type = {:?}", self.cntxt, o.unwrap());}
         if node.child.len() == 0 {
             return;
         }
@@ -747,6 +785,7 @@ impl CompLib {
             }
             ObjDef::Type(DefType::Enum(_),_) => if let ObjDef::Class(od) = &self.objects["enum"]  {od.defs.get(name)} else {None},
             ObjDef::Type(DefType::IntVector(_),_) => {None}
+            ObjDef::Covergroup(_) => if let ObjDef::Class(od) = &self.objects["covergroup"]  {od.defs.get(name)} else {None},
             _ => {
                 // println!("[Linking] {:?} | Searching for {} in {:?}",self.cntxt, name, o);
                 None
@@ -759,6 +798,7 @@ impl CompLib {
         let mut tdr = (None,None);
         let mut ot : ObjDef;
         let mut dim : Vec<SvArrayKind> = Vec::new();
+        // let mut debug = false;
         let td = match o {
             Some(ObjDef::Member(x)) => {
                 dim = x.unpacked.clone();
@@ -766,17 +806,18 @@ impl CompLib {
             }
             Some(ObjDef::Port(x))   => {
                 dim = x.unpacked.clone();
+                // debug =  x.name=="tr";
                 Some(x.kind.clone())
             }
             // Some(x) => o.clone(),
             _ => None
         };
 
-
+        // if debug {println!("[get_type_def] pre-match td = {:?}", td);}
         match &td {
             Some(DefType::User(x)) => {
                 tdr = self.find_def(&x.name,x.scope.as_ref(),li,true,true);
-                // if x.name=="t_svm_seq_name_a" {println!("{:?}", tdr);}
+                // if debug {println!("[get_type_def] user type resolved to {:?}", tdr);}
                 match tdr.0 {
                     Some(ObjDef::Type(tdr_,dim_)) => {
                         for x in dim_ {dim.push(x.clone());}
@@ -804,11 +845,35 @@ impl CompLib {
             // Some(x) =>  println!("[Linking] {:?} | Identifier {:?} type = {:?}", self.cntxt, node.attr["name"], x),
             None => ot = o.unwrap().clone(), // safe unwrap since the function exit early in case of none
         }
-        // Might need a loop here to handle multiple typedef ?
-        if let ObjDef::Type(DefType::User(x),dim_) = &ot {
-            for x in dim_ {dim.push(x.clone());}
-            // println!("[Linking] {:?} | User type {:?} resolved to {:?}", self.cntxt, td, x);
-            tdr = self.find_def(&x.name,x.scope.as_ref(),li,true,true);
+        // if debug {println!("[get_type_def] user-type ot = {:?}", ot);}
+        // Resolve typedef / param type in a loop to handle multiple level of definition
+        let mut type_name = "".to_string();
+        loop {
+            let mut updated = false;
+            match &ot {
+                ObjDef::Type(DefType::User(x),dims) => {
+                    type_name = x.name.clone();
+                    for d in dims {dim.push(d.clone());}
+                    updated = true;
+                    tdr = self.find_def(&x.name,x.scope.as_ref(),li,true,true);
+                }
+                ObjDef::Port(x) if x.dir == PortDir::Param => {
+                    type_name = x.name.clone();
+                    // if debug {println!("[get_type_def] params check : tdr {:?}", tdr);}
+                    if let Some(params) = &tdr.1 {
+                        if params.contains_key(&x.name) {
+                            updated = true;
+                            tdr = self.find_def(&params[&x.name],None,li,true,true);
+                        }
+                    } else if let Some(def_val) = &x.default {
+                        // if debug {println!("[get_type_def] default value -> {:?}", def_val);}
+                        updated = true;
+                        tdr = self.find_def(&def_val,None,li,true,true);
+                    }
+                }
+                _ => {}
+            }
+            if !updated {break;}
             match tdr.0 {
                 Some(ObjDef::Type(tdr_,dim_)) => {
                     for x in dim_ {dim.push(x.clone());}
@@ -816,30 +881,13 @@ impl CompLib {
                 }
                 Some(tdr_) => ot = tdr_.clone(),
                 None => {
-                    println!("[Linking] {:?} | User type {:?} is undefined : {:?}", self.cntxt,x.name,tdr.0);
+                    println!("[Linking] {:?} | User type {:?} is undefined", self.cntxt,type_name);
                     return None;
                 }
             }
+            // if debug {println!("[get_type_def] type resolved to {:?}", ot);}
         }
-        // Check if Param
-        if let ObjDef::Port(x) = &ot {
-            if x.dir == PortDir::Param {
-                if let Some(params) = &tdr.1 {
-                    if params.contains_key(&x.name) {
-                        tdr = self.find_def(&params[&x.name],None,li,true,true);
-                        match tdr.0 {
-                            Some(ObjDef::Type(tdr_,dim_)) => {
-                                for x in dim_ {dim.push(x.clone());}
-                                ot = ObjDef::Type(tdr_.clone(),dim.clone());
-                            }
-                            Some(tdr_) => ot = tdr_.clone(),
-                            None => {}
-                        }
-                        // println!("[Linking] {:?} | Identifier {} has a parameterized type {} -> {:?} ", self.cntxt, node.attr["name"],x.name,tdr.0);
-                    }
-                }
-            }
-        }
+
         // if dim.len()>0 {println!("[Linking] {:?} | {:?} has unpacked {:?}", self.cntxt, ot, dim);  }
         Some((ot,dim))
     }
@@ -989,7 +1037,7 @@ impl CompLib {
 
     // Analyze a function/task call
     pub fn check_call(&self, node: &AstNode, obj: Option<&ObjDef>, _li: &LocalInfo) {
-        // println!("[Linking] {:?} | Checking call in {:?}", self.cntxt, node.attr);
+        // if node.attr.get("name")==Some(&"from_name".to_string()) {println!("[Linking] {:?} | Checking call in {:#?}", self.cntxt, node);}
         // Check for standard defined method
         if let Some(name) = node.attr.get("name") {
             if name=="randomize" || name=="srandom" {
@@ -1000,35 +1048,32 @@ impl CompLib {
             Some(ObjDef::Method(d)) => {
                 let mut ports = d.ports.clone();
                 for n in &node.child {
-                    match n.kind {
-                        AstNodeKind::Ports => {
-                            // println!("[Linking] {:?} | Call to Port {:?}", self.cntxt, d.name);
-                            for p in &n.child {
-                                if ports.len() == 0 {
-                                    println!("[Linking] {:?} | Too many arguments in call to {}: {:?}", self.cntxt, d.name, p);
-                                    break;
+                    if n.kind == AstNodeKind::Ports {
+                        // println!("[Linking] {:?} | Call to Port {:?}", self.cntxt, d.name);
+                        for p in &n.child {
+                            if ports.len() == 0 {
+                                println!("[Linking] {:?} | Too many arguments in call to {}: {:?}", self.cntxt, d.name, p);
+                                break;
+                            }
+                            // When unamed, port are taken in order
+                            if p.attr["name"] == "" {
+                                ports.remove(0);
+                            } else {
+                                if let Some(i) = ports.iter().position(|x| x.name == p.attr["name"]) {
+                                    // println!("[Linking] {:?} | Calling {} with argument name {} found at index {} of {}", self.cntxt, d.name, p.attr["name"], i, ports.iter().fold(String::new(), |acc, x| format!("{}{},", acc,x)));
+                                    ports.remove(i);
                                 }
-                                // When unamed, port are taken in order
-                                if p.attr["name"] == "" {
-                                    ports.remove(0);
-                                } else {
-                                    if let Some(i) = ports.iter().position(|x| x.name == p.attr["name"]) {
-                                        // println!("[Linking] {:?} | Calling {} with argument name {} found at index {} of {}", self.cntxt, d.name, p.attr["name"], i, ports.iter().fold(String::new(), |acc, x| format!("{}{},", acc,x)));
-                                        ports.remove(i);
-                                    }
-                                    else {
-                                        println!("[Linking] {:?} | Calling {} with unknown argument name {} in {}", self.cntxt, d.name, p.attr["name"], ports.iter().fold(String::new(), |acc, x| format!("{}{},", acc,x)));
-                                    }
+                                else {
+                                    println!("[Linking] {:?} | Calling {} with unknown argument name {} in {}", self.cntxt, d.name, p.attr["name"], ports.iter().fold(String::new(), |acc, x| format!("{}{},", acc,x)));
                                 }
                             }
                         }
-                        _ => {} // Ignore all other node
                     }
                 }
-                if ports.len() > 0 {
+                if !ports.is_empty() {
                     // Check if remaining ports are optional or not
                     let ma :Vec<_> = ports.iter().filter(|p| p.default.is_none()).collect();
-                    if ma.len() > 0 {
+                    if !ma.is_empty() {
                         println!("[Linking] {:?} | Missing {} arguments in call to {}: {}", self.cntxt, ports.len(), d.name, ma.iter().fold(String::new(), |acc, x| format!("{}{},", acc,x)));
                     }
                 }
@@ -1046,16 +1091,16 @@ impl CompLib {
                 // println!("[Linking] {:?} | Found macro {:?}", self.cntxt, d)
                 let mut ports = d.ports.clone();
                 for nc in &node.child {
-                    if ports.len() == 0 {
+                    if ports.is_empty() {
                         println!("[Linking] {:?} | Too many arguments in call to {}: {}", self.cntxt, d.name, nc);
                         break;
                     }
                     ports.remove(0);
                 }
-                if ports.len() > 0 {
+                if !ports.is_empty() {
                     // Check if remaining ports are optional or not
-                    let ma :Vec<_> = ports.iter().filter(|p| p.is_opt==false).collect();
-                    if ma.len() > 0 {
+                    let ma :Vec<_> = ports.iter().filter(|p| !p.is_opt).collect();
+                    if !ma.is_empty() {
                         println!("[Linking] {:?} | Missing {} arguments in call to {}: {}", self.cntxt, ports.len(), d.name, ma.iter().fold(String::new(), |acc, x| format!("{}{},", acc,x)));
                     }
                 }

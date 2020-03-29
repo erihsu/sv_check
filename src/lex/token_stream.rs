@@ -2,19 +2,23 @@
 // Copyright (c) 2019, clams@mail.com
 
 use crate::error::*;
+use crate::project::Project;
 use crate::lex::position::Position;
 use crate::lex::token::*;
 use crate::lex::source::Source;
 
-use std::collections::VecDeque;
+use std::collections::{VecDeque, HashMap};
 
-pub struct TokenStream<'a> {
+
+
+pub struct TokenStream<'a,'b> {
     pub source: &'a mut Source,
     last_char: char,
     last_pos : Position,
     buffer : VecDeque<Token>,
-    rd_ptr : u8,
+    rd_ptr : usize,
     pub inc_files : Vec<String>,
+    pub project : &'b mut Project,
 }
 
 /// Enum for the state machine parsing number
@@ -24,13 +28,14 @@ enum NumParseState {Start, Base, IntStart, Int, Dec, Exp}
 #[derive(PartialEq, Debug)]
 enum NumBase {Binary, Octal, Hexa, Decimal}
 
-impl<'a> TokenStream<'a> {
+impl<'a,'b> TokenStream<'a,'b> {
 
     // Create a token stream with for a source code
-    pub fn new(src: &'a mut Source) -> TokenStream<'a> {
+    pub fn new(src: &'a mut Source, project: &'b mut Project) -> TokenStream<'a,'b> {
         TokenStream {
             source: src,
             last_char : ' ',
+            project : project,
             last_pos : Position::new() ,
             buffer   : VecDeque::new() ,
             rd_ptr   : 0,
@@ -117,11 +122,18 @@ impl<'a> TokenStream<'a> {
                     }
                 }
                 if is_casting {TokenKind::Casting}
-                else if second_char=='`' && first_char=='`' {TokenKind::IdentInterpolated}
+                else if second_char=='`' && first_char=='`' {
+                    s = s.chars().skip(2).collect();
+                    TokenKind::IdentInterpolated
+                }
                 else {
                     match s.as_ref() {
                         "`ifndef" | "`ifdef" | "`elsif" | "`else"  | "`endif" => TokenKind::CompDir,
-                        _ => TokenKind::Macro
+                        "`undefineall" | "`resetall" | "`celldefine" | "`endcelldefine" |
+                        "`nounconnected_drive" | "`end_keywords" | "`undef" | "`begin_keywords" |
+                        "`unconnected_drive" | "`define" | "`pragma" | "`default_nettype" |
+                        "`timescale" | "`line" | "`include"  => TokenKind::Macro,
+                        _ => TokenKind::MacroCall
                     }
                 }
             }
@@ -154,19 +166,22 @@ impl<'a> TokenStream<'a> {
 
     /// Get all characters until end of string
     fn parse_string(&mut self, is_macro: bool) -> Result<Token,SvError> {
-        let mut s = if is_macro {"`\"".to_owned()} else {"".to_owned()};
+        // TODO: Macro interpolated string to be handled
+        let mut s = if is_macro {"".to_owned()} else {"".to_owned()};
+        // let mut s = "".to_owned();
         let p = self.last_pos;
         let mut cpp = ' ';
         while let Some(c) = self.source.get_char() {
             s.push(c);
             if c == '"' && (self.last_char != '\\' || cpp == '\\') {
-                if !is_macro {s.pop();}
+                s.pop();
                 break;
             }
             cpp = self.last_char;
             self.last_char = c;
         }
         self.last_char = ' ';
+        // if is_macro {println!("Macro String = {}", s);}
         Ok(Token::new(TokenKind::Str,s,p))
     }
 
@@ -336,7 +351,7 @@ impl<'a> TokenStream<'a> {
                     break
                 }
             }
-            if fsm==NumParseState::IntStart && !c.is_whitespace() && fsm==NumParseState::IntStart {
+            if fsm==NumParseState::IntStart && !c.is_whitespace() {
                 fsm_next = NumParseState::Int;
             }
             fsm = fsm_next.clone();
@@ -736,13 +751,13 @@ impl<'a> TokenStream<'a> {
 
     pub fn next_non_comment(&mut self, peek: bool) -> Option<Result<Token,SvError>> {
         // println!("Buffer = {:?} , rd_ptr = {}", self.buffer, self.rd_ptr);
-        if self.buffer.len() as u8>self.rd_ptr || (!peek && !self.buffer.is_empty()) {
+        if self.buffer.len()>self.rd_ptr || (!peek && !self.buffer.is_empty()) {
             if !peek {
                 if self.rd_ptr>0 {self.rd_ptr -= 1;}
                 return Some(Ok(self.buffer.pop_front()?));
             }
             else {
-                let t = self.buffer.get(self.rd_ptr as usize)?;
+                let t = self.buffer.get(self.rd_ptr)?;
                 self.rd_ptr += 1;
                 return Some(Ok(t.clone()));
             }
@@ -762,37 +777,49 @@ impl<'a> TokenStream<'a> {
                     }
                 }
                 Some(Err(t)) => return Some(Err(t)),
-                None => return None
+                None => {
+                    if self.buffer.len() > self.rd_ptr || (!peek && !self.buffer.is_empty()) {
+                        if !peek {
+                            if self.rd_ptr>0 {self.rd_ptr -= 1;}
+                            return Some(Ok(self.buffer.pop_front()?));
+                        }
+                        else {
+                            let t = self.buffer.get(self.rd_ptr)?;
+                            self.rd_ptr += 1;
+                            return Some(Ok(t.clone()));
+                        }
+                    }
+                    return None
+                }
             };
         }
     }
 
-    pub fn flush(&mut self, nb : u8) {
+    pub fn flush(&mut self, nb : usize) {
         // println!("Flushing: Buffer size = {:?} , rd_ptr = {}", self.buffer, self.rd_ptr);
-        if nb==0 || nb>=self.buffer.len() as u8 {
+        if nb==0 || nb>=self.buffer.len() {
             self.buffer.clear();
             self.rd_ptr = 0;
         } else {
-            for _i in 0..nb {
-                self.buffer.pop_front();
-                if self.rd_ptr>0 {
-                    self.rd_ptr -= 1;
-                }
-            }
+            self.buffer.drain(0..nb);
+            if nb >= self.rd_ptr {self.rd_ptr = 0;} else {self.rd_ptr -= nb;}            
         }
+    }
+
+    pub fn flush_rd(&mut self) {
+        self.buffer.drain(0..self.rd_ptr);
+        self.rd_ptr = 0;
     }
 
     // Flush to keep nb element
-    pub fn flush_keep(&mut self, mut nb : u8) {
-        let l = self.buffer.len() as u8;
+    pub fn flush_keep(&mut self, mut nb : usize) {
+        let l = self.buffer.len();
         nb = l - nb;
-        for _i in 0..nb {
-            self.buffer.pop_front();
-        }
-        self.rewind(0);
+        self.buffer.drain(0..nb);
+        self.rd_ptr = 0;
     }
 
-    pub fn rewind(&mut self, nb : u8) {
+    pub fn rewind(&mut self, nb : usize) {
         self.rd_ptr = if nb==0 || self.rd_ptr < nb {0} else {self.rd_ptr - nb};
     }
 
@@ -815,6 +842,10 @@ impl<'a> TokenStream<'a> {
                     TokenKind::KwEnd   => cnt_b -= 1,
                     _ => {}
                 }
+                if t.kind==tk_end && cnt_p<=0 && cnt_b<=0 && cnt_c<=0 {
+                    self.last_pos = self.source.pos;
+                    return Ok(());
+                }
             }
         }
         loop {
@@ -835,7 +866,10 @@ impl<'a> TokenStream<'a> {
                     // println!("Skipping {} (cnt {}/{}/{})", t,cnt_p,cnt_b,cnt_c);
                 }
                 Some(Err(t)) => return Err(t),
-                None => return Err(SvError::eof())
+                None => {
+                    // TODO: handle macro case where buffer is filled after macro expansion
+                    return Err(SvError::eof())
+                }
             };
         }
         // println!("[skip_until] File = {:#?} new pos = {}", self.source.filename, self.source.pos);
@@ -843,7 +877,114 @@ impl<'a> TokenStream<'a> {
         Ok(())
     }
 
-    ///
+    pub fn peek_until(&mut self, tk_end: TokenKind) -> Result<(),SvError> {
+        // Count the (), {} and begin/end
+        let mut cnt_p = 0;
+        let mut cnt_c = 0;
+        let mut cnt_b = 0;
+        let mut rd_stream = self.buffer.is_empty();
+        // self.display_status("[peek_until] start");
+        loop {
+            let t;
+            if !rd_stream && self.rd_ptr < self.buffer.len() {
+                t = self.buffer[self.rd_ptr].clone();
+            } else {
+                rd_stream = true;
+                match self.next() {
+                    Some(Ok(x)) => {
+                        self.buffer.push_back(x.clone());
+                        t = x.clone();
+                    }
+                    Some(Err(e)) => return Err(e),
+                    None => return Err(SvError::eof()),
+                }
+            };
+            // Increment read pointer in all cases since the token is always in thebuffer
+            self.rd_ptr += 1;
+            match t.kind {
+                TokenKind::ParenLeft  => cnt_p += 1,
+                TokenKind::ParenRight => cnt_p -= 1,
+                TokenKind::CurlyLeft  => cnt_c += 1,
+                TokenKind::CurlyRight => cnt_c -= 1,
+                TokenKind::KwBegin => cnt_b += 1,
+                TokenKind::KwEnd   => cnt_b -= 1,
+                _ => {}
+            }
+            if t.kind==tk_end && cnt_p<=0 && cnt_b<=0 && cnt_c<=0 {
+                self.last_pos = self.source.pos;
+                // self.display_status("[peek_until] done");
+                return Ok(());
+            }
+        }
+    }
+
+    pub fn collect_until(&mut self, is_list: bool) -> Result<Vec<Token>,SvError> {
+        let mut v = Vec::new();
+        let mut line_num = self.last_pos.line;
+        // Count the (), {} and begin/end
+        let mut cnt_p = 0;
+        let mut cnt_c = 0;
+        let mut cnt_b = 0;
+        // Check buffer first
+        while !self.buffer.is_empty() {
+            if let Some(t) = self.buffer.pop_front() {
+                // println!("Buffer = {:?} ({})", t,line_num);
+                // Update line number if we went back in the buffer
+                if t.pos.line<line_num {line_num = t.pos.line;}
+                match t.kind {
+                    TokenKind::ParenLeft  => cnt_p += 1,
+                    TokenKind::ParenRight => cnt_p -= 1,
+                    TokenKind::CurlyLeft  => cnt_c += 1,
+                    TokenKind::CurlyRight => cnt_c -= 1,
+                    TokenKind::KwBegin => cnt_b += 1,
+                    TokenKind::KwEnd   => cnt_b -= 1,
+                    _ => {}
+                }
+                if t.pos.line != line_num || (is_list && cnt_p<=0 && cnt_b<=0 && cnt_c<=0  && (t.kind==TokenKind::Comma || t.kind==TokenKind::ParenRight)) {
+                    self.buffer.push_back(t);
+                    self.last_pos = self.source.pos;
+                    return Ok(v);
+                }
+                else if t.kind== TokenKind::LineCont {
+                    line_num += 1;
+                } else {
+                    v.push(t);
+                }
+            }
+        }
+        while let Ok(t) = self.get_next_token() {
+            // println!("Stream = {:?} ({})", t,line_num);
+            match t.kind {
+                TokenKind::ParenLeft  => cnt_p += 1,
+                TokenKind::ParenRight => cnt_p -= 1,
+                TokenKind::CurlyLeft  => cnt_c += 1,
+                TokenKind::CurlyRight => cnt_c -= 1,
+                TokenKind::KwBegin => cnt_b += 1,
+                TokenKind::KwEnd   => cnt_b -= 1,
+                TokenKind::Comment => {
+                    if t.value.ends_with("\\") {line_num+=1;}
+                    continue;
+                }
+                TokenKind::Attribute => continue,
+                _ => {}
+            }
+            if t.pos.line != line_num || (is_list && cnt_p<=0 && cnt_b<=0 && cnt_c<=0  && (t.kind==TokenKind::Comma || t.kind==TokenKind::ParenRight)) {
+                self.buffer.push_back(t);
+                break;
+            }
+            else if t.kind== TokenKind::LineCont {
+                line_num += 1;
+            } else {
+                v.push(t);
+            }
+            // println!("Skipping {} (cnt {}/{}/{})", t,cnt_p,cnt_b,cnt_c);
+        }
+        // println!("[collect_until] File = {:#?} new pos = {} -> {:?}", self.source.filename, self.source.pos, v);
+        self.last_pos = self.source.pos;
+        Ok(v)
+    }
+
+    //
     pub fn add_inc(&mut self, fname: &str) {
         self.inc_files.push(fname.to_string());
     }
@@ -858,14 +999,137 @@ impl<'a> TokenStream<'a> {
         println!("{}", s);
     }
 
+    pub fn macro_expand(&mut self, t: Token, pos: Position, top: bool, macro_body: &mut std::vec::IntoIter<Token>, args_caller: &HashMap<String,Vec<Token>>) -> Option<Result<Token,SvError>> {
+        match t.value.as_ref() {
+            "`__FILE__" => Some(Ok(Token::new(TokenKind::Str,self.source.get_filename(),pos))),
+            "`__LINE__" => Some(Ok(Token::new(TokenKind::Integer, pos.line.to_string() ,pos))),
+            _ => {
+                let macro_name = t.value.clone();
+                let def = self.project.defines.get(&macro_name);
+                if def.is_none() {
+                    println!("[macro_expand] {} : line {} | Empty macro {} ", self.source.get_filename(),pos,macro_name);
+                    return None;
+                }
+                if def.unwrap().is_none() {
+                    println!("[macro_expand] {} : line {} | Unknown macro {} ", self.source.get_filename(),pos,macro_name);
+                    return None;
+                }
+                let macro_def = def.unwrap().as_ref().unwrap().clone();
+                let mut body = macro_def.body.clone().into_iter();
+                let mut args = HashMap::new();
+                // Check for macro param
+                if !macro_def.ports.is_empty() {
+                    // println!("[macro_expand] {} : line {} | macro {} has ports : {:?}", self.source.get_filename(),pos,macro_name,macro_def.ports);
+                    let mut cnt_a : isize = -1;
+                    let mut cnt_p = 0;
+                    let mut cnt_c = 0;
+                    let mut v = Vec::new();
+                    loop {
+                        let t;
+                        if top {
+                            if let Ok(nt) = self.get_next_token() {t = nt.clone();}
+                            else {break;}
+                        } else {
+                            if let Some(nt) = macro_body.next() {t = nt.clone();}
+                            else {break;}
+                        };
+                        // println!("[macro_expand] {} : macro {} | cnt: arg={}, ()={}, {{}}={} | token = {}", self.source.get_filename(),macro_name,cnt_a,cnt_p,cnt_c,t);
+                        match t.kind {
+                            TokenKind::Comment => {}
+                            TokenKind::ParenLeft  => { if cnt_a==-1 { cnt_a += 1; } else { cnt_p += 1; v.push(t);}}
+                            TokenKind::ParenRight if cnt_p!=0 => { cnt_p -= 1; v.push(t);}
+                            TokenKind::CurlyLeft  => { cnt_c += 1; v.push(t); }
+                            TokenKind::CurlyRight => { cnt_c -= 1; v.push(t); }
+                            TokenKind::ParenRight if cnt_p==0 => {
+                                let arg_name = macro_def.ports[cnt_a as usize].0.clone();
+                                args.insert(arg_name,v);
+                                break;
+                            }
+                            TokenKind::Comma if cnt_p==0 && cnt_c==0 => {
+                                let arg_name = macro_def.ports[cnt_a as usize].0.clone();
+                                // println!("[macro_expand] {} : macro {} port {} = {:?}", self.source.get_filename(),macro_name,arg_name,v);
+                                if v.len() == 0 {
+                                    println!("[macro_expand] {} : macro {} port {} is empty : default length = {}", self.source.get_filename(),macro_name,arg_name,v.len());
+                                }
+                                args.insert(arg_name,v);
+                                cnt_a += 1;
+                                if (cnt_a as usize)==macro_def.ports.len() {break;}
+                                v = Vec::new();
+                            }
+                            _ if cnt_a == -1 => {return Some(Err(SvError::syntax(t,"Macro call parameter".to_string())));}
+                            // Replace identifier by argument value
+                            TokenKind::Ident if args_caller.contains_key(&t.value) => {
+                                // println!("[macro_expand] {} : macro {} port {} token {} replaced by {:?}", self.source.get_filename(),macro_name,macro_def.ports[cnt_a as usize].0,t.value,args_caller[&t.value]);
+                                for at in args_caller[&t.value].clone() {
+                                    v.push(at);
+                                }
+                            }
+                            _ => {v.push(t);}
+                        }
+                    }
+                    // TODO: handle default value
+                    while (cnt_a as usize) < macro_def.ports.len()-1 {
+                        cnt_a += 1;
+                        let (arg_name,dt) = macro_def.ports[cnt_a as usize].clone();
+                        if dt.len() == 0 {
+                            return Some(Err(SvError::syntax(t,format!("macro call. Only {} parameters over {}. No default value for {}.", cnt_a+1,macro_def.ports.len(),arg_name))));
+                        } else {
+                            args.insert(arg_name,dt);
+                        }
+                    }
+                    // println!("[macro_expand] {} : macro {} arguments = \n{:#?}", self.source.get_filename(),macro_name,args);
+                }
+                // if top {println!("[macro_expand] {} : macro {} -> ", self.source.get_filename(),macro_name);}
+                // let mut s = "".to_string();
+                while let Some(bt) = body.next() {
+                    match bt.kind {
+                        TokenKind::MacroCall => {
+                            if let Some(Err(e)) = self.macro_expand(bt, pos, false,&mut body, &args) {
+                                return Some(Err(e));
+                            }
+                        }
+                        // Replace identifier by argument value
+                        TokenKind::IdentInterpolated => {
+                            if args.contains_key(&bt.value) {
+                                for at in args[&bt.value].clone() {
+                                    self.buffer.push_back(Token{kind:at.kind,value:at.value,pos:pos});
+                                }
+                            } else {
+                                return Some(Err(SvError::syntax(bt,format!("macro call. Parameter not found: {:?}",args.keys()))));
+                            }
+                        }
+                        TokenKind::Ident if args.contains_key(&bt.value) => {
+                            // println!("[macro_expand] Replacing {} by {:?}", bt.value, args[&bt.value]);
+                            for at in args[&bt.value].clone() {
+                                // if at.kind==TokenKind::Str {s = format!("{} \"{}\"",s, at.value);} else {s = format!("{} {}",s, at.value);}
+                                self.buffer.push_back(Token{kind:at.kind,value:at.value,pos:pos});
+                            }
+                        }
+                        _ => {
+                            // if bt.kind==TokenKind::Str {s = format!("{} \"{}\"",s, bt.value);} else {s = format!("{} {}",s, bt.value);}
+                            self.buffer.push_back(Token{kind:bt.kind,value:bt.value,pos:pos});
+                        }
+                    }
+                }
+                // if s.len() != 0 {println!("{}", s);}
+                None
+            }
+        }
+    }
 }
 
-impl<'a> Iterator for TokenStream<'a> {
+impl<'a,'b> Iterator for TokenStream<'a,'b> {
     type Item = Result<Token,SvError>;
 
     fn next(&mut self) -> Option<Result<Token,SvError>> {
         match self.get_next_token() {
             Err(e) => if e.kind != SvErrorKind::Null {Some(Err(e))} else {None},
+            Ok(t) if t.kind==TokenKind::MacroCall => {
+                let b = Vec::new(); // Empty body: unused since top caller
+                let a = HashMap::new(); // Empty argument list: unused since top caller
+                let pos = t.pos.clone();
+                self.macro_expand(t, pos, true, &mut b.into_iter(), &a)
+            }
             Ok(t) => Some(Ok(t))
         }
     }

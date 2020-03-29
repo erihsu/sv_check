@@ -9,11 +9,13 @@ use std::fmt;
 #[derive(PartialEq, Clone, Debug)]
 pub enum SvErrorKind {
     Null,
+    Io,
     Eof,
     Token,
     Syntax,
     NotSupported,
 }
+
 #[derive(Debug)]
 pub struct SvError {
     pub kind: SvErrorKind,
@@ -46,9 +48,16 @@ impl fmt::Display for SvError {
         match &self.kind {
             SvErrorKind::Null         => write!(f, "End of file reached."),
             SvErrorKind::Eof          => write!(f, "Unexpected end of file !"),
+            SvErrorKind::Io           => write!(f, "{}", self.txt),
             SvErrorKind::Token        => write!(f, "line {} -- Unable to parse token \"{}\" !",self.pos, self.txt),
             SvErrorKind::Syntax       => write!(f, "line {} -- {} !",self.pos, self.txt),
             SvErrorKind::NotSupported => write!(f, "line {} -- Unsuported syntax : {} !",self.pos, self.txt),
         }
+    }
+}
+
+impl From<std::io::Error> for SvError {
+    fn from(cause: std::io::Error) -> SvError {
+        SvError{kind:SvErrorKind::Io, pos: Position::new(), txt:format!("{:?}", cause) }
     }
 }

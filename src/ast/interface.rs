@@ -68,7 +68,7 @@ pub fn parse_interface(ts : &mut TokenStream) -> Result<AstNode, SvError> {
             }
             TokenKind::KwTypedef => parse_typedef(ts,&mut node_b)?,
             TokenKind::TypeGenvar => {
-                ts.flush(0);
+                ts.flush_rd();
                 loop {
                     let nt = next_t!(ts,false);
                     match nt.kind {
@@ -140,7 +140,7 @@ pub fn parse_interface(ts : &mut TokenStream) -> Result<AstNode, SvError> {
             // TokenKind::KwGenerate if cntxt==ModuleCntxt::Top => parse_module_body(ts,node_b,ModuleCntxt::Generate)?,
             TokenKind::KwFor  => parse_for(ts,&mut node_b,true)?,
             TokenKind::KwIf   => {
-                ts.flush(0);
+                ts.flush_rd();
                 parse_if_else(ts,&mut node_b, true)?;
             }
             // End of loop depends on context
@@ -160,14 +160,14 @@ pub fn parse_interface(ts : &mut TokenStream) -> Result<AstNode, SvError> {
             }
         }
     }
-    // ts.flush(0);
+    // ts.flush_rd();
     node.child.push(node_b);
     Ok(node)
 }
 
 /// Parse an always block
 pub fn parse_modport(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), SvError> {
-    ts.flush(0); // Suppose modport keyword is now consumed
+    ts.flush_rd(); // Suppose modport keyword is now consumed
     let mut node_mp = AstNode::new(AstNodeKind::Modport);
     // Expect identifier for the modport name
     let mut t = next_t!(ts,false);

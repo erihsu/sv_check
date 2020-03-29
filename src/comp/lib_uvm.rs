@@ -16,17 +16,28 @@ pub fn get_uvm_lib() -> ObjDef {
         idx: 0,unpacked: Vec::new(), default: None});
     p.defs.insert("run_test".to_owned(),ObjDef::Method(m));
     m = DefMethod::new("uvm_report_fatal".to_owned(),false);
-    m.ports.push(DefPort{name:"id".to_owned()       , dir:PortDir::Input, kind:TYPE_STR, idx: 0, unpacked: Vec::new(), default: None});
-    m.ports.push(DefPort{name:"message".to_owned()  , dir:PortDir::Input, kind:TYPE_STR, idx: 1, unpacked: Vec::new(), default: None});
-    m.ports.push(DefPort{name:"verbosity".to_owned(), dir:PortDir::Input, kind:TYPE_STR, idx: 2, unpacked: Vec::new(), default: Some("UVM_NONE".to_owned())});
-    m.ports.push(DefPort{name:"file".to_owned()     , dir:PortDir::Input, kind:TYPE_STR, idx: 3, unpacked: Vec::new(), default: Some("".to_owned())});
-    m.ports.push(DefPort{name:"line".to_owned()     , dir:PortDir::Input, kind:TYPE_STR, idx: 4, unpacked: Vec::new(), default: Some("".to_owned())});
+    m.ports.push(DefPort{name:"id".to_owned()          , dir:PortDir::Input, kind:TYPE_STR, idx: 0, unpacked: Vec::new(), default: None});
+    m.ports.push(DefPort{name:"message".to_owned()     , dir:PortDir::Input, kind:TYPE_STR, idx: 1, unpacked: Vec::new(), default: None});
+    m.ports.push(DefPort{name:"verbosity".to_owned()   , dir:PortDir::Input, kind:TYPE_INT, idx: 2, unpacked: Vec::new(), default: Some("UVM_NONE".to_owned())});
+    m.ports.push(DefPort{name:"file".to_owned()        , dir:PortDir::Input, kind:TYPE_STR, idx: 3, unpacked: Vec::new(), default: Some("".to_owned())});
+    m.ports.push(DefPort{name:"line".to_owned()        , dir:PortDir::Input, kind:TYPE_INT, idx: 4, unpacked: Vec::new(), default: Some("0".to_owned())});
+    m.ports.push(DefPort{name:"context_name".to_owned(), dir:PortDir::Input, kind:TYPE_STR, idx: 5, unpacked: Vec::new(), default: Some("".to_owned())});
+    m.ports.push(DefPort{name:"report_enabled_checked".to_owned(), dir:PortDir::Input, kind:TYPE_INT, idx: 6, unpacked: Vec::new(), default: Some("0".to_owned())});
     p.defs.insert("uvm_report_fatal".to_owned(),ObjDef::Method(m.clone()));
     m.name = "uvm_report_error".to_owned();
     p.defs.insert(m.name.clone(),ObjDef::Method(m.clone()));
     m.name = "uvm_report_warning".to_owned();
     p.defs.insert(m.name.clone(),ObjDef::Method(m.clone()));
     m.name = "uvm_report_info".to_owned();
+    p.defs.insert(m.name.clone(),ObjDef::Method(m));
+    m = DefMethod::new("uvm_report_enabled".to_owned(),false);
+    m.ports.push(DefPort{name:"verbosity".to_owned(), dir:PortDir::Input, kind:TYPE_INT, idx: 0, unpacked: Vec::new(), default: None});
+    m.ports.push(DefPort{name:"severity".to_owned() , dir:PortDir::Input, kind:DefType::User(TypeUser::new("uvm_severity".to_owned())), idx: 1, unpacked: Vec::new(), default: Some("UVM_NONE".to_owned())});
+    m.ports.push(DefPort{name:"id".to_owned()       , dir:PortDir::Input, kind:TYPE_STR, idx: 2, unpacked: Vec::new(), default: Some("".to_owned())});
+    p.defs.insert(m.name.clone(),ObjDef::Method(m));
+    m = DefMethod::new("uvm_is_match".to_owned(),false);
+    m.ports.push(DefPort{name:"expr".to_owned(), dir:PortDir::Input, kind:TYPE_STR, idx: 0, unpacked: Vec::new(), default: None});
+    m.ports.push(DefPort{name:"str".to_owned() , dir:PortDir::Input, kind:TYPE_STR, idx: 1, unpacked: Vec::new(), default: None});
     p.defs.insert(m.name.clone(),ObjDef::Method(m));
     // Enum
     p.defs.insert("UVM_NONE".to_owned()         , ObjDef::EnumValue("UVM_NONE".to_owned()         ));
@@ -46,6 +57,27 @@ pub fn get_uvm_lib() -> ObjDef {
     p.defs.insert("UVM_WRITE".to_owned()        , ObjDef::EnumValue("UVM_WRITE".to_owned()        ));
     p.defs.insert("UVM_LITTLE_ENDIAN".to_owned(), ObjDef::EnumValue("UVM_LITTLE_ENDIAN".to_owned()));
     p.defs.insert("UVM_NO_COVERAGE".to_owned()  , ObjDef::EnumValue("UVM_NO_COVERAGE".to_owned()  ));
+    p.defs.insert("UVM_INFO".to_owned()   , ObjDef::EnumValue("UVM_INFO".to_owned()  ));
+    p.defs.insert("UVM_WARNING".to_owned(), ObjDef::EnumValue("UVM_WARNING".to_owned()  ));
+    p.defs.insert("UVM_ERROR".to_owned()  , ObjDef::EnumValue("UVM_ERROR".to_owned()  ));
+    p.defs.insert("UVM_FATAL".to_owned()  , ObjDef::EnumValue("UVM_FATAL".to_owned()  ));
+    // parameter value
+    p.defs.insert("UVM_SETINT".to_owned(), ObjDef::EnumValue("UVM_SETINT".to_owned()));
+    p.defs.insert("UVM_SETOBJ".to_owned(), ObjDef::EnumValue("UVM_SETOBJ".to_owned()));
+    p.defs.insert("UVM_SETSTR".to_owned(), ObjDef::EnumValue("UVM_SETSTR".to_owned()));
+    p.defs.insert("UVM_COPY".to_owned(), ObjDef::EnumValue("UVM_COPY".to_owned()));
+    p.defs.insert("UVM_NOCOPY".to_owned(), ObjDef::EnumValue("UVM_NOCOPY".to_owned()));
+    p.defs.insert("UVM_COMPARE".to_owned(), ObjDef::EnumValue("UVM_COMPARE".to_owned()));
+    p.defs.insert("UVM_NOCOMPARE".to_owned(), ObjDef::EnumValue("UVM_NOCOMPARE".to_owned()));
+    p.defs.insert("UVM_PRINT".to_owned(), ObjDef::EnumValue("UVM_PRINT".to_owned()));
+    p.defs.insert("UVM_NOPRINT".to_owned(), ObjDef::EnumValue("UVM_NOPRINT".to_owned()));
+    p.defs.insert("UVM_RECORD".to_owned(), ObjDef::EnumValue("UVM_RECORD".to_owned()));
+    p.defs.insert("UVM_NORECORD".to_owned(), ObjDef::EnumValue("UVM_NORECORD".to_owned()));
+    p.defs.insert("UVM_PACK".to_owned(), ObjDef::EnumValue("UVM_PACK".to_owned()));
+    p.defs.insert("UVM_NOPACK".to_owned(), ObjDef::EnumValue("UVM_NOPACK".to_owned()));
+    p.defs.insert("UVM_READONLY".to_owned(), ObjDef::EnumValue("UVM_READONLY".to_owned()));
+    p.defs.insert("UVM_UNPACK".to_owned(), ObjDef::EnumValue("UVM_UNPACK".to_owned()));
+    p.defs.insert("UVM_CHECK_FIELDS".to_owned(), ObjDef::EnumValue("UVM_CHECK_FIELDS".to_owned()));
     // Macro
     let mut mc = DefMacro::new("`uvm_info".to_owned());
     mc.ports.push(MacroPort{name:"ID".to_owned(),is_opt: false});
@@ -101,8 +133,15 @@ pub fn get_uvm_lib() -> ObjDef {
     m = DefMethod::new("new".to_owned(),false);
     m.ports.push(DefPort{name:"name".to_owned()  , dir:PortDir::Input, kind:TYPE_STR, idx: 0, unpacked: Vec::new(), default: Some("".to_owned())});
     o.defs.insert(m.name.clone(),ObjDef::Method(m));
+    m = DefMethod::new("set_name".to_owned(),false);
+    m.ports.push(DefPort{name:"name".to_owned()  , dir:PortDir::Input, kind:TYPE_STR, idx: 0, unpacked: Vec::new(), default: None});
+    o.defs.insert(m.name.clone(),ObjDef::Method(m));
     m = DefMethod::new("print".to_owned(),false);
     m.ports.push(DefPort{name:"printer".to_owned()  , dir:PortDir::Input, kind:DefType::User(TypeUser::new("uvm_printer".to_owned())), idx: 0, unpacked: Vec::new(), default: Some("null".to_owned())});
+    o.defs.insert(m.name.clone(),ObjDef::Method(m));
+    m = DefMethod::new("compare".to_owned(),false);
+    m.ports.push(DefPort{name:"rhs".to_owned()  , dir:PortDir::Input, kind:DefType::User(TypeUser::new("uvm_object".to_owned())), idx: 0, unpacked: Vec::new(), default: None});
+    m.ports.push(DefPort{name:"comparer".to_owned()  , dir:PortDir::Input, kind:DefType::User(TypeUser::new("uvm_comparer".to_owned())), idx: 1, unpacked: Vec::new(), default: Some("null".to_owned())});
     o.defs.insert(m.name.clone(),ObjDef::Method(m));
     m = DefMethod::new("get_name".to_owned(),false);
     m.ret = Some(TYPE_STR);
@@ -112,6 +151,13 @@ pub fn get_uvm_lib() -> ObjDef {
     o.defs.insert(m.name.clone(),ObjDef::Method(m));
     m = DefMethod::new("clone".to_owned(),false);
     m.ret = Some(DefType::User(TypeUser::new("uvm_object".to_owned())));
+    o.defs.insert(m.name.clone(),ObjDef::Method(m));
+    let mb = DefMember{ name: "__m_uvm_status_container".to_owned(), kind: DefType::User(TypeUser::new("uvm_status_container".to_owned())), unpacked : Vec::new(), is_const: false, access: Access::Public};
+    o.defs.insert(mb.name.clone(),ObjDef::Member(mb));
+    m = DefMethod::new("__m_uvm_field_automation".to_owned(),false);
+    m.ports.push(DefPort{name:"tmp_data__".to_owned(), dir:PortDir::Input, kind:DefType::User(TypeUser::new("uvm_object".to_owned())), idx: 0, unpacked: Vec::new(), default: None});
+    m.ports.push(DefPort{name:"what__".to_owned()    , dir:PortDir::Input, kind:TYPE_INT                                             , idx: 1, unpacked: Vec::new(), default: None});
+    m.ports.push(DefPort{name:"str__".to_owned()     , dir:PortDir::Input, kind:TYPE_STR                                             , idx: 2, unpacked: Vec::new(), default: None});
     o.defs.insert(m.name.clone(),ObjDef::Method(m));
     p.defs.insert(o.name.clone(),ObjDef::Class(o));
     //
@@ -127,6 +173,9 @@ pub fn get_uvm_lib() -> ObjDef {
     m.ports.push(DefPort{name:"name".to_owned()  , dir:PortDir::Input, kind:TYPE_STR, idx: 0, unpacked: Vec::new(), default: None});
     m.ports.push(DefPort{name:"parent".to_owned(), dir:PortDir::Input, kind:DefType::User(TypeUser::new("uvm_component".to_owned())), idx: 1, unpacked: Vec::new(), default: None});
     o.defs.insert("new".to_owned(),ObjDef::Method(m));
+    m = DefMethod::new("set_name".to_owned(),false);
+    m.ports.push(DefPort{name:"name".to_owned()  , dir:PortDir::Input, kind:TYPE_STR, idx: 0, unpacked: Vec::new(), default: None});
+    o.defs.insert(m.name.clone(),ObjDef::Method(m));
     m = DefMethod::new("get_parent".to_owned(),false);
     m.ret = Some(DefType::User(TypeUser::new("uvm_component".to_owned())));
     o.defs.insert(m.name.clone(),ObjDef::Method(m));
@@ -176,6 +225,10 @@ pub fn get_uvm_lib() -> ObjDef {
     o.defs.insert(m.name.clone(),ObjDef::Method(m));
     m = DefMethod::new("get_objection_count".to_owned(),false);
     m.ports.push(DefPort{name:"obj".to_owned()        , dir:PortDir::Input, kind: DefType::User(TypeUser::new("uvm_object".to_owned())), idx: 0, unpacked: Vec::new(), default: Some("null".to_owned())});
+    m.ret = Some(TYPE_INT);
+    o.defs.insert(m.name.clone(),ObjDef::Method(m));
+    m = DefMethod::new("is".to_owned(),false);
+    m.ports.push(DefPort{name:"phase".to_owned() , dir:PortDir::Input, kind: DefType::User(TypeUser::new("uvm_phase".to_owned())), idx: 0, unpacked: Vec::new(), default: None});
     m.ret = Some(TYPE_INT);
     o.defs.insert(m.name.clone(),ObjDef::Method(m));
     m = DefMethod::new("raise_objection".to_owned(),false);
@@ -228,7 +281,7 @@ pub fn get_uvm_lib() -> ObjDef {
     p.defs.insert(o.name.clone(),ObjDef::Class(o));
     //
     o = DefClass::new("uvm_sequence".to_owned());
-    o.base = Some(TypeUser::new("uvm_sequence_item".to_owned()));
+    o.base = Some(TypeUser::new("uvm_sequence_base".to_owned()));
     cp = DefPort {name:"REQ".to_owned(), dir: PortDir::Param,kind: DefType::Primary(TypePrimary::Type),  default: Some("uvm_sequence_item".to_owned()), idx: 0, unpacked: Vec::new()};
     o.params.insert(cp.name.clone(),ObjDef::Port(cp));
     cp = DefPort {name:"RSP".to_owned(), dir: PortDir::Param,kind: DefType::Primary(TypePrimary::Type),  default: Some("REQ".to_owned()), idx: 1, unpacked: Vec::new()};
@@ -240,7 +293,10 @@ pub fn get_uvm_lib() -> ObjDef {
     o.defs.insert(mb.name.clone(),ObjDef::Member(mb));
     mb = DefMember{ name: "rsp".to_owned(), kind: DefType::User(TypeUser::new("RSP".to_owned())), unpacked : Vec::new(), is_const: false, access: Access::Public};
     o.defs.insert(mb.name.clone(),ObjDef::Member(mb));
-    // should be uvm_sequence_base ...
+    p.defs.insert(o.name.clone(),ObjDef::Class(o));
+    //
+    o = DefClass::new("uvm_sequence_base".to_owned());
+    o.base = Some(TypeUser::new("uvm_sequence_item".to_owned()));
     m = DefMethod::new("pre_start".to_owned(),false);
     o.defs.insert(m.name.clone(),ObjDef::Method(m));
     m = DefMethod::new("start".to_owned(),false);
@@ -249,6 +305,17 @@ pub fn get_uvm_lib() -> ObjDef {
     m.ports.push(DefPort{name:"this_priority".to_owned(), dir:PortDir::Input, kind:TYPE_INT, idx: 2, unpacked: Vec::new(), default: Some("-1".to_owned())});
     m.ports.push(DefPort{name:"call_pre_post".to_owned(), dir:PortDir::Input, kind:DefType::IntVector(TypeIntVector {name: "bit".to_owned(),packed: None, signed: false}), idx: 3, unpacked: Vec::new(), default: Some("1".to_owned())});
     o.defs.insert(m.name.clone(),ObjDef::Method(m));
+    m = DefMethod::new("start_item".to_owned(),false);
+    m.ports.push(DefPort{name:"item".to_owned()  , dir:PortDir::Input, kind:DefType::User(TypeUser::new("uvm_sequence_item".to_owned())), idx: 0, unpacked: Vec::new(), default: None});
+    m.ports.push(DefPort{name:"set_priority".to_owned()  , dir:PortDir::Input, kind:TYPE_INT, idx: 1, unpacked: Vec::new(), default: Some("-1".to_string())});
+    m.ports.push(DefPort{name:"sequencer".to_owned()  , dir:PortDir::Input, kind:DefType::User(TypeUser::new("uvm_sequencer_base".to_owned())), idx: 2, unpacked: Vec::new(), default: Some("null".to_string())});
+    o.defs.insert(m.name.clone(),ObjDef::Method(m));
+    m = DefMethod::new("finish_item".to_owned(),false);
+    m.ports.push(DefPort{name:"item".to_owned()  , dir:PortDir::Input, kind:DefType::User(TypeUser::new("uvm_sequence_item".to_owned())), idx: 0, unpacked: Vec::new(), default: None});
+    m.ports.push(DefPort{name:"set_priority".to_owned()  , dir:PortDir::Input, kind:TYPE_INT, idx: 1, unpacked: Vec::new(), default: Some("-1".to_string())});
+    o.defs.insert(m.name.clone(),ObjDef::Method(m));
+    mb = DefMember{ name: "do_not_randomize".to_owned(), kind: TYPE_INT, unpacked : Vec::new(), is_const: false, access: Access::Public};
+    o.defs.insert(mb.name.clone(),ObjDef::Member(mb));
     p.defs.insert(o.name.clone(),ObjDef::Class(o));
     //
     o = DefClass::new("uvm_sequence_item".to_owned());
@@ -273,7 +340,13 @@ pub fn get_uvm_lib() -> ObjDef {
     m.ports.push(DefPort{name:"response".to_owned()      , dir:PortDir::Input, kind:TYPE_STR, idx: 0, unpacked: Vec::new(), default: None});
     m.ports.push(DefPort{name:"transaction_id".to_owned(), dir:PortDir::Input, kind:TYPE_INT, idx: 1, unpacked: Vec::new(), default: Some("-1".to_owned())});
     o.defs.insert("get_response".to_owned(),ObjDef::Method(m));
+    m = DefMethod::new("set_item_context".to_owned(),false);
+    m.ports.push(DefPort{name:"parent_seq".to_owned()      , dir:PortDir::Input, kind:DefType::User(TypeUser::new("uvm_sequence_base".to_owned())), idx: 0, unpacked: Vec::new(), default: None});
+    m.ports.push(DefPort{name:"sequencer".to_owned(), dir:PortDir::Input, kind:DefType::User(TypeUser::new("uvm_sequencer_base".to_owned())), idx: 1, unpacked: Vec::new(), default: Some("null".to_owned())});
+    o.defs.insert(m.name.clone(),ObjDef::Method(m));
     m = DefMethod::new("get_sequencer".to_owned(),false);
+    o.defs.insert(m.name.clone(),ObjDef::Method(m));
+    m = DefMethod::new("m_set_p_sequencer".to_owned(),false);
     o.defs.insert(m.name.clone(),ObjDef::Method(m));
     m = DefMethod::new("set_sequencer".to_owned(),false);
     m.ports.push(DefPort{name:"sequencer".to_owned()  , dir:PortDir::Input, kind:DefType::User(TypeUser::new("uvm_sequencer_base".to_owned())), idx: 0, unpacked: Vec::new(), default: None});
@@ -385,13 +458,21 @@ pub fn get_uvm_lib() -> ObjDef {
     p.defs.insert(o.name.clone(),ObjDef::Class(o));
     //
     o = DefClass::new("uvm_event".to_owned());
+    cp = DefPort {name:"T".to_owned(), dir: PortDir::Param,kind: DefType::Primary(TypePrimary::Type), default: Some("uvm_object".to_owned()), idx: 0, unpacked: Vec::new()};
+    o.params.insert(cp.name.clone(),ObjDef::Port(cp));
+    m = DefMethod::new("trigger".to_owned(),true);
+    m.ports.push(DefPort{name:"data".to_owned()   ,dir:PortDir::Input, kind:DefType::User(TypeUser::new("T".to_owned())), idx: 0, unpacked:Vec::new(), default: Some("null".to_owned())});
+    o.defs.insert(m.name.clone(),ObjDef::Method(m));
+    m = DefMethod::new("wait_trigger_data".to_owned(),true);
+    m.ports.push(DefPort{name:"data".to_owned()   ,dir:PortDir::Output, kind:DefType::User(TypeUser::new("T".to_owned())), idx: 0, unpacked:Vec::new(), default: None});
+    o.defs.insert(m.name.clone(),ObjDef::Method(m));
     p.defs.insert(o.name.clone(),ObjDef::Class(o));
     //
     o = DefClass::new("uvm_object_wrapper".to_owned());
     p.defs.insert(o.name.clone(),ObjDef::Class(o));
     //
     o = DefClass::new("uvm_report_server".to_owned());
-    m = DefMethod::new("get_severity_count".to_owned(),true);
+    m = DefMethod::new("get_severity_count".to_owned(),false);
     m.ret = Some(TYPE_INT);
     m.ports.push(DefPort{name:"severity".to_owned()   ,dir:PortDir::Input, kind:DefType::User(TypeUser::new("uvm_severity".to_owned())), idx: 0, unpacked:Vec::new(), default: None});
     o.defs.insert(m.name.clone(),ObjDef::Method(m));
@@ -697,6 +778,46 @@ pub fn get_uvm_lib() -> ObjDef {
     // Ports
     o = DefClass::new("uvm_seq_item_pull_port".to_owned());
     o.base = Some(TypeUser::new("uvm_port_base".to_owned()));
+    p.defs.insert(o.name.clone(),ObjDef::Class(o));
+
+    //
+    o = DefClass::new("uvm_status_container".to_owned());
+    m = DefMethod::new("m_do_cycle_check".to_owned(),false);
+    m.ports.push(DefPort{name:"scope".to_owned()  , dir:PortDir::Input, kind:DefType::User(TypeUser::new("uvm_object".to_owned())), idx: 0, unpacked: Vec::new(), default: None});
+    o.defs.insert(m.name.clone(),ObjDef::Method(m));
+    m = DefMethod::new("do_field_check".to_owned(),false);
+    m.ports.push(DefPort{name:"field".to_owned()  , dir:PortDir::Input, kind:TYPE_STR, idx: 0, unpacked: Vec::new(), default: None});
+    m.ports.push(DefPort{name:"obj".to_owned()  , dir:PortDir::Input, kind:DefType::User(TypeUser::new("uvm_object".to_owned())), idx: 1, unpacked: Vec::new(), default: None});
+    o.defs.insert(m.name.clone(),ObjDef::Method(m));
+    mb = DefMember{ name: "m_uvm_cycle_scopes".to_owned(), kind: DefType::User(TypeUser::new("uvm_object".to_owned())), unpacked : vec![SvArrayKind::Queue], is_const: false, access: Access::Public};
+    o.defs.insert(mb.name.clone(),ObjDef::Member(mb));
+    mb = DefMember{ name: "scope".to_owned(), kind: DefType::User(TypeUser::new("uvm_scope_stack".to_owned())), unpacked : vec![SvArrayKind::Queue], is_const: false, access: Access::Public};
+    o.defs.insert(mb.name.clone(),ObjDef::Member(mb));
+    mb = DefMember{ name: "stringv".to_owned(), kind: TYPE_STR, unpacked : vec![SvArrayKind::Queue], is_const: false, access: Access::Public};
+    o.defs.insert(mb.name.clone(),ObjDef::Member(mb));
+    mb = DefMember{ name: "comparer".to_owned(), kind: DefType::User(TypeUser::new("uvm_comparer".to_owned())), unpacked : vec![SvArrayKind::Queue], is_const: false, access: Access::Public};
+    o.defs.insert(mb.name.clone(),ObjDef::Member(mb));
+    mb = DefMember{ name: "packer".to_owned(), kind: DefType::User(TypeUser::new("uvm_packer".to_owned())), unpacked : vec![SvArrayKind::Queue], is_const: false, access: Access::Public};
+    o.defs.insert(mb.name.clone(),ObjDef::Member(mb));
+    mb = DefMember{ name: "recorder".to_owned(), kind: DefType::User(TypeUser::new("uvm_recorder".to_owned())), unpacked : vec![SvArrayKind::Queue], is_const: false, access: Access::Public};
+    o.defs.insert(mb.name.clone(),ObjDef::Member(mb));
+    mb = DefMember{ name: "printer".to_owned(), kind: DefType::User(TypeUser::new("uvm_printer".to_owned())), unpacked : vec![SvArrayKind::Queue], is_const: false, access: Access::Public};
+    o.defs.insert(mb.name.clone(),ObjDef::Member(mb));
+    mb = DefMember{ name: "bitstream".to_owned(), kind: DefType::User(TypeUser::new("uvm_bitstream_t".to_owned())), unpacked : vec![SvArrayKind::Queue], is_const: false, access: Access::Public};
+    o.defs.insert(mb.name.clone(),ObjDef::Member(mb));
+    mb = DefMember{ name: "print_matches".to_owned(), kind: TYPE_INT, unpacked : vec![SvArrayKind::Queue], is_const: false, access: Access::Public};
+    o.defs.insert(mb.name.clone(),ObjDef::Member(mb));
+    mb = DefMember{ name: "status".to_owned(), kind: TYPE_INT, unpacked : vec![SvArrayKind::Queue], is_const: false, access: Access::Public};
+    o.defs.insert(mb.name.clone(),ObjDef::Member(mb));
+    p.defs.insert(o.name.clone(),ObjDef::Class(o));
+    //
+    o = DefClass::new("uvm_enum_wrapper".to_owned());
+    cp = DefPort {name:"T".to_owned(), dir:PortDir::Input, kind: DefType::Primary(TypePrimary::Type),  default: Some("uvm_active_passive_enum".to_owned()), idx: 0, unpacked: Vec::new()};
+    o.params.insert(cp.name.clone(),ObjDef::Port(cp));
+    m = DefMethod::new("from_name".to_owned(),false);
+    m.ports.push(DefPort{name:"name".to_owned()  , dir:PortDir::Input, kind:TYPE_STR, idx: 0, unpacked: Vec::new(), default: None});
+    m.ports.push(DefPort{name:"value".to_owned()  , dir:PortDir::Input, kind:DefType::User(TypeUser::new("T".to_owned())), idx: 1, unpacked: Vec::new(), default: None});
+    o.defs.insert(m.name.clone(),ObjDef::Method(m));
     p.defs.insert(o.name.clone(),ObjDef::Class(o));
 
     ObjDef::Package(p)

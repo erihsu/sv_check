@@ -9,20 +9,37 @@ mod module_body;
 mod package;
 mod interface;
 mod class;
+pub mod uvm_macro;
+
+use std::collections::HashMap;
+
 
 use astnode::*;
 use common::*;
 use module_hdr::*;
 use module_body::*;
-use crate::lex::token::*;
-use crate::lex::token_stream::*;
+use crate::lex::{
+    token::*,
+    token_stream::*
+};
 use crate::error::*;
 
+#[derive(Debug,  Clone)]
+pub struct MacroDef {
+    pub ports : Vec<(String,Vec<Token>)>,
+    pub body  : Vec<Token>,
+}
+
+impl MacroDef {
+    pub fn new() -> MacroDef { MacroDef{ports:Vec::new(),body:Vec::new()}}
+}
+
+pub type Defines = HashMap<String,Option<MacroDef>>;
 
 #[derive(Debug, Clone)]
 pub struct Ast {
-    pub tree  : AstNode,
-    token_buf : Vec<Token>
+    pub tree    : AstNode,
+    pub defines : Defines,
 }
 
 impl Ast {
@@ -30,7 +47,7 @@ impl Ast {
     pub fn new() -> Ast {
         Ast {
             tree: AstNode::new(AstNodeKind::Root),
-            token_buf: Vec::new(),
+            defines: HashMap::new(),
         }
     }
 
@@ -47,7 +64,7 @@ impl Ast {
                             TokenKind::Macro => parse_macro(ts,&mut self.tree)?,
                             TokenKind::CompDir => parse_macro(ts,&mut self.tree)?,
                             TokenKind::KwModule => {
-                                ts.flush(0);
+                                ts.flush_rd();
                                 let mut node_m = AstNode::new(AstNodeKind::Module);
                                 parse_module_hdr(ts,&mut node_m)?;
                                 let mut node_b = AstNode::new(AstNodeKind::Body);
@@ -57,14 +74,14 @@ impl Ast {
                                 self.tree.child.push(node_m);
                             },
                             TokenKind::KwIntf => {
-                                ts.flush(0);
+                                ts.flush_rd();
                                 match interface::parse_interface(ts) {
                                     Ok(n) => self.tree.child.push(n),
                                     Err(e) => return Err(e)
                                 }
                             },
                             TokenKind::KwPackage => {
-                                ts.flush(0);
+                                ts.flush_rd();
                                 match package::parse_package(ts) {
                                     Ok(n) => self.tree.child.push(n),
                                     Err(e) => return Err(e)
@@ -92,13 +109,15 @@ impl Ast {
                             // Display all un-implemented token (TEMP)
                             _ => {
                                 println!("[Warning] {:?} -- Root skipping {}",ts.source.get_filename(), t);
-                                ts.flush(0);
+                                ts.flush_rd();
                             }
                         }
                     }
                     Err(t) => return Err(t),
                 }
             } else {
+                self.defines = ts.project.defines.clone();
+                // println!("Macro: {:#?}", self.defines);
                 return Ok(());
             }
         }
