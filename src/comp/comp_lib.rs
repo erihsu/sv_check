@@ -445,6 +445,9 @@ impl CompLib {
                 // Whitelist
                 AstNodeKind::Value  |
                 AstNodeKind::Timescale  => {}
+                AstNodeKind::Bind  => {
+                    // println!("[Linking] {:?} | Binding ignored {:?} ({} childs) : {:?}", self.cntxt, nc.kind, nc.child.len(), nc.attr);
+                }
                 _ => {println!("[Linking] {:?} | Skipping {:?} ({} childs) : {:?}", self.cntxt, nc.kind, nc.child.len(), nc.attr);}
             }
         }
@@ -585,7 +588,7 @@ impl CompLib {
         let mut o = cd;
         let mut pd : HashMap<String,String> = HashMap::new();
         let mut pd_prev : HashMap<String,String>;
-        // if name=="TR" {println!("[Linking] {:?} | Class {:?} -> looking for base",self.cntxt,cd.name)};
+        // if name=="set_verbosity" {println!("[Linking] {:?} | Class {:?} -> looking for base",self.cntxt,cd.name)};
         while let Some(bct) = &o.base {
             pd_prev = pd;
             pd = HashMap::new();

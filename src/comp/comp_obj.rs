@@ -328,7 +328,7 @@ impl DefModule {
                 }
                 AstNodeKind::SvaProperty => {}
                 AstNodeKind::Bind => {
-                    println!("[DefModule] {} | Bind Skipping",self.name);
+                    // println!("[DefModule] {} | Bind Skipping",self.name);
                     // println!("[DefModule] {} | Bind Skipping {}",self.name, n);
                 }
                 // Temporary: Whitelist node we can safely skip

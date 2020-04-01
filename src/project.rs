@@ -160,7 +160,7 @@ impl Project {
                 println!("[Error] File {:?} not found", fname);
             }
         }
-        println!("[Info] Parsing Done");
+        // println!("[Info] Parsing Done");
         // Compile/link
         // let _lib = CompLib::new("my_lib".to_owned(),self.ast_list, self.ast_inc);
     }

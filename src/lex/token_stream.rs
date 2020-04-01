@@ -1081,6 +1081,7 @@ impl<'a,'b> TokenStream<'a,'b> {
                 }
                 // if top {println!("[macro_expand] {} : macro {} -> ", self.source.get_filename(),macro_name);}
                 // let mut s = "".to_string();
+                let mut prev_was_inc = false;
                 while let Some(bt) = body.next() {
                     match bt.kind {
                         TokenKind::MacroCall => {
@@ -1106,6 +1107,20 @@ impl<'a,'b> TokenStream<'a,'b> {
                             }
                         }
                         _ => {
+                            if prev_was_inc && bt.kind==TokenKind::Str {
+                                if self.project.ast_inc.contains_key(&bt.value) {
+                                    // println!("[macro_expand] Found include {} : updating defines", bt.value);
+                                    for (k,v) in self.project.ast_inc[&bt.value].defines.clone() {
+                                        self.project.defines.insert(k,v);
+                                    }
+                                } else {
+                                    // println!("[macro_expand] Found include {} : compiling", bt.value);
+                                    if let Err(e) = self.project.compile_inc(bt.value.clone(), t.pos) {
+                                        return Some(Err(e));
+                                    }
+                                }
+                            }
+                            prev_was_inc = bt.kind == TokenKind::Macro && bt.value=="`include";
                             // if bt.kind==TokenKind::Str {s = format!("{} \"{}\"",s, bt.value);} else {s = format!("{} {}",s, bt.value);}
                             self.buffer.push_back(Token{kind:bt.kind,value:bt.value,pos:pos});
                         }
