@@ -586,18 +586,29 @@ impl CompLib {
 
     pub fn find_def_in_base<'a>(&'a self, cd: &DefClass, name: &String, li: &'a LocalInfo) -> (Option<&'a ObjDef>,Option<HashMap<String,String>>) {
         let mut o = cd;
+        // TODO: change type to support typdefinition with parameters
         let mut pd : HashMap<String,String> = HashMap::new();
         let mut pd_prev : HashMap<String,String>;
-        // if name=="set_verbosity" {println!("[Linking] {:?} | Class {:?} -> looking for base",self.cntxt,cd.name)};
+        // if name=="____" {println!("[Linking] {:?} | Class {:?} -> looking for base",self.cntxt,cd.name)};
         while let Some(bct) = &o.base {
             pd_prev = pd;
             pd = HashMap::new();
-            // if name=="TR" || name=="REQ" 
-            // {println!("[Linking] Class {:?} looking for {} in base class {}", o.name, name, bct.name);}
-            match self.find_def(&bct.name,None,li,false,true).0 {
+            let bcn =
+                if pd_prev.contains_key(&bct.name) {pd_prev[&bct.name].clone()}
+                else if o.params.contains_key(&bct.name) {
+                    if let ObjDef::Port(cp) = &o.params[&bct.name] {
+                        if let Some(bcnd) = &cp.default {bcnd.clone()}
+                        else {bct.name.clone()}
+                    }
+                    else {bct.name.clone()}
+                }
+                else {bct.name.clone()};
+            // if name=="____" {println!("[Linking] Class {:?} looking for {} in base class {} with params {:?}", o.name, name, bcn, bct.params);}
+            match self.find_def(&bcn,None,li,false,true).0 {
                 Some(ObjDef::Class(bcd)) =>  {
                     // If the class is parameterized affect value to each param
                     if bcd.params.len() > 0 {
+                        // if name=="____" {println!("  Params = {:?}", bcd.params);}
                         let mut cnt = 0;
                         for p in &bct.params {
                             if bcd.params.len() == 0 {
@@ -610,6 +621,7 @@ impl CompLib {
                             if let Some(x) = pn {
                                 pd.insert(x.clone(), if pd_prev.contains_key(&p.val) {pd_prev[&p.val].clone()} else {p.val.clone()});
                             }
+                            // if name=="____" {println!("pd = {:?}", pd);}
                             cnt += 1;
                         }
                         // Add unset parameters and check if default is using value set by other parameters
@@ -617,7 +629,7 @@ impl CompLib {
                             for p_ in &bcd.params {
                                 if let ObjDef::Port(p) = p_.1 {
                                     if !pd.contains_key(&p.name) {
-                                        // println!("[Linking] {:?} | Unset param {:?} : {:?}", self.cntxt, p, pd_prev.get(&p.value));
+                                        // if name=="____" {println!("  Unset param {:?}: prev={:?}",  p.name, pd_prev.get(&p.name));}
                                         // println!("[Linking] {:?} | Unset param {:?} : {:?}\n bcd = {:?}\n bct = {:?}", self.cntxt, p, pd_prev.get(&p.value), bcd.params, bct.params);
                                         if let Some(d) = &p.default {
                                             pd.insert(p.name.clone(), if pd.contains_key(d) {pd[d].clone()} else {d.clone()});

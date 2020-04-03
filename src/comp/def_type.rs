@@ -83,7 +83,7 @@ pub struct TypeStruct {
 }
 
 
-//
+// TODO: KeYVal is used to stored param default value: it should not be a string, but something to handle parameterized param
 #[derive(Debug, Clone)]
 pub struct KeyVal {pub key:String, pub val:String}
 type VecKeyVal = Vec<KeyVal>;

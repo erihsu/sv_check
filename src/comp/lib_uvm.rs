@@ -297,6 +297,8 @@ pub fn get_uvm_lib() -> ObjDef {
     //
     o = DefClass::new("uvm_sequence_base".to_owned());
     o.base = Some(TypeUser::new("uvm_sequence_item".to_owned()));
+    cp = DefPort {name:"BASE".to_owned(), dir: PortDir::Param,kind: DefType::Primary(TypePrimary::Type), default: Some("uvm_sequence".to_owned()), idx: 0, unpacked: Vec::new()};
+    o.params.insert(cp.name.clone(),ObjDef::Port(cp));
     m = DefMethod::new("pre_start".to_owned(),false);
     o.defs.insert(m.name.clone(),ObjDef::Method(m));
     m = DefMethod::new("start".to_owned(),false);
@@ -614,13 +616,9 @@ pub fn get_uvm_lib() -> ObjDef {
     p.defs.insert(o.name.clone(),ObjDef::Class(o));
     //
     o = DefClass::new("uvm_reg_sequence".to_owned());
-    o.base = Some(TypeUser::new("uvm_sequence".to_owned()));
-    // o.base = Some(TypeUser::new("BASE".to_owned()));
+    o.base = Some(TypeUser::new("BASE".to_owned()));
     cp = DefPort {name:"BASE".to_owned(), dir: PortDir::Param,kind: DefType::Primary(TypePrimary::Type), default: Some("uvm_sequence".to_owned()), idx: 0, unpacked: Vec::new()};
     o.params.insert(cp.name.clone(),ObjDef::Port(cp));
-    // m_verbosity: Not true, but just to avoid error until we know how to follow properly the inheritance tree
-    mb = DefMember{ name: "m_verbosity".to_owned(), kind: TYPE_STR, unpacked : Vec::new(), is_const: false, access: Access::Public};
-    o.defs.insert(mb.name.clone(),ObjDef::Member(mb));
     m = DefMethod::new("write_reg".to_owned(),false);
     m.ports.push(DefPort{name:"rg".to_owned()       , dir:PortDir::Input , kind:TYPE_STR, idx: 0, unpacked: Vec::new(), default: None});
     m.ports.push(DefPort{name:"status".to_owned()   , dir:PortDir::Output, kind:TYPE_STR, idx: 1, unpacked: Vec::new(), default: None});
