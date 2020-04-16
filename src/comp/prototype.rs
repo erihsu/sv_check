@@ -327,13 +327,31 @@ pub type DefClocking = Vec<String>;
 // Package definition
 #[derive(Debug, Clone)]
 pub struct DefPackage {
-    pub name       : String,
-    pub defs: HashMap<String,ObjDef>,
+    pub name : String,
+    pub defs : HashMap<String,ObjDef>,
 }
 
 impl DefPackage {
     pub fn new(name: String) -> DefPackage {
         DefPackage {
+            name,
+            defs: HashMap::new(),
+        }
+    }
+}
+
+// ------------------
+// Block definition
+// TODO: Add some field for loop/if info
+#[derive(Debug, Clone)]
+pub struct DefBlock {
+    pub name : String,
+    pub defs : HashMap<String,ObjDef>,
+}
+
+impl DefBlock {
+    pub fn new(name: String) -> DefBlock {
+        DefBlock {
             name,
             defs: HashMap::new(),
         }

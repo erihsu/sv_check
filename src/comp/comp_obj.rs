@@ -5,8 +5,11 @@ use std::collections::{HashMap};
 
 use crate::ast::Ast;
 use crate::ast::astnode::{AstNode,AstNodeKind};
-use crate::comp::prototype::*;
-use crate::comp::def_type::{DefType,TypeUser,TypeVIntf};
+use crate::comp::{
+    comp_lib::CompLib,
+    prototype::*,
+    def_type::{DefType,TypeUser,TypeVIntf}
+};
 
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
@@ -14,6 +17,7 @@ pub enum ObjDef {
     Module(DefModule), //
     Class(DefClass),
     Package(DefPackage),
+    Block(DefBlock),
     Modport(DefModport),
     Clocking(DefClocking),
     Member(DefMember),
@@ -31,7 +35,7 @@ impl ObjDef {
 
     //
     #[allow(dead_code,unused_variables)]
-    pub fn from_ast(ast: &Ast, ast_inc: & HashMap<String,Box<Ast>>, mut lib: &mut HashMap<String, ObjDef>)  {
+    pub fn from_ast(ast: &Ast, ast_inc: & HashMap<String,Box<Ast>>, mut lib: &mut CompLib)  {
         for node in &ast.tree.child {
             // println!("[Compiling] Node {:?} ({:?}", node.kind, node.attr);
             match node.kind {
@@ -81,23 +85,23 @@ impl ObjDef {
                                     }
                                 }
                             }
-                            _ => d.parse_body(&node_m,ast_inc)
+                            _ => d.parse_body(&node_m,ast_inc, &mut lib.binds)
                         }
                     }
                     // println!("[ObjDef] {:?}", d);
-                    lib.insert(d.name.clone(),ObjDef::Module(d));
+                    lib.objects.insert(d.name.clone(),ObjDef::Module(d));
                 }
                 AstNodeKind::Package   => {
                     let mut d = DefPackage::new(node.attr["name"].clone());
                     // println!("[Compiling] Package {}", node.attr["name"]);
                     d.parse_body(&node,ast_inc);
-                    lib.insert(d.name.clone(),ObjDef::Package(d));
+                    lib.objects.insert(d.name.clone(),ObjDef::Package(d));
                 }
                 AstNodeKind::Class   => {
                     let mut d = DefClass::new(node.attr["name"].clone());
                     // println!("[Compiling] Class {}", node.attr["name"]);
                     d.parse_body(&node,ast_inc);
-                    lib.insert(d.name.clone(),ObjDef::Class(d));
+                    lib.objects.insert(d.name.clone(),ObjDef::Class(d));
                 }
                 AstNodeKind::Define => {
                     if !node.child.is_empty() {
@@ -106,7 +110,7 @@ impl ObjDef {
                         for p in &node.child {
                             d.ports.push(MacroPort::new(p));
                         }
-                        lib.insert(d.name.clone(),ObjDef::Macro(d));
+                        lib.objects.insert(d.name.clone(),ObjDef::Macro(d));
                     } else if node.attr.contains_key("content") {
                         // println!("[Compiling] Top define {:#?}", node.attr);
                     }
@@ -139,7 +143,7 @@ impl ObjDef {
 
 impl DefModule {
     // Collect signals declaration, instance, type and function definition
-    pub fn parse_body(&mut self, node: &AstNode, ast_inc: & HashMap<String,Box<Ast>>) {
+    pub fn parse_body(&mut self, node: &AstNode, ast_inc: & HashMap<String,Box<Ast>>, binds  : &mut HashMap<String, Vec<String> >) {
         let mut prev_dir = PortDir::Input; // Default port direction to input
         let mut idx_port = -1 as i16;
         let mut idx_param = (self.params.len() as i16) - 1 ;
@@ -160,7 +164,7 @@ impl DefModule {
                     n.attr.get("include").map(
                         |i| ast_inc.get(i).map_or_else(
                             || if i!="uvm_macros.svh" {println!("[DefModule] Include {} not found", i)},
-                            |a| self.parse_body(&a.tree,ast_inc)
+                            |a| self.parse_body(&a.tree,ast_inc, binds)
                         )
                     );
                 },
@@ -274,20 +278,19 @@ impl DefModule {
                                 // TODO: collect parameter info and add it to the instance definition
                             }
                             AstNodeKind::Instance => {
-                                self.defs.insert(nc.attr["name"].clone(),ObjDef::Instance(nc.attr["name"].clone()));
+                                self.defs.insert(nc.attr["name"].clone(),ObjDef::Instance(n.attr["type"].clone()));
                             }
                             _ => println!("[DefModule] {} | Instances: Skipping = {} | {:?}",self.name, n.kind, n.attr)
                         }
                     }
                 }
                 // Branch / For loop : check for instances only
-                AstNodeKind::Branch  => {
-                    // println!("[DefModule] {:?} | Branch : {:?}", self.name, n.attr);
-                    self.get_inst(n,ast_inc);
-                }
+                AstNodeKind::Branch  |
                 AstNodeKind::LoopFor => {
-                    // println!("[DefModule] {:?} | LoopFor : {:?}", self.name, n.attr);
-                    self.get_inst(n,ast_inc);
+                    // println!("[DefModule] {:?} | Branch : {:?}", self.name, n.attr);
+                    let blk = self.get_block_inst(n,ast_inc, binds);
+                    // TODO: check name conflict
+                    self.defs.insert(blk.name.clone(),ObjDef::Block(blk));
                 }
                 //
                 AstNodeKind::Task |
@@ -328,6 +331,7 @@ impl DefModule {
                 }
                 AstNodeKind::SvaProperty => {}
                 AstNodeKind::Bind => {
+                    self.parse_bind(n, binds);
                     // println!("[DefModule] {} | Bind Skipping",self.name);
                     // println!("[DefModule] {} | Bind Skipping {}",self.name, n);
                 }
@@ -350,19 +354,50 @@ impl DefModule {
         }
     }
 
+    // Extract info from a bind statement
+    pub fn parse_bind(&mut self, node: &AstNode, binds  : &mut HashMap<String, Vec<String> >) {
+        let mut path = Vec::new();
+        path.push(self.name.clone());
+        let mut t = "".to_string();
+        for n in &node.child {
+            match n.kind {
+                AstNodeKind::Identifier => {
+                    path.push(n.attr["name"].clone());
+                    let mut nc = n;
+                    while let Some(ncc) = nc.child.get(0) {
+                        path.push(ncc.attr["name"].clone());
+                        nc = ncc;
+                    }
+                }
+                AstNodeKind::Instances => {
+                    t = n.attr["type"].clone();
+                }
+                _ => println!("[DefModule] {} | Binding : skipping child {}",self.name, n)
+            }
+        }
+        // println!("[DefModule] {} | Binding {} to {:?}",self.name, t, path);
+        binds.insert(t,path);
+    }
+
     // TODO : get info from the For loop and name from the branch/for loop
-    pub fn get_inst(&mut self, node: &AstNode, ast_inc: & HashMap<String,Box<Ast>>) {
+    pub fn get_block_inst(&mut self, node: &AstNode, ast_inc: & HashMap<String,Box<Ast>>, binds  : &mut HashMap<String, Vec<String> >) -> DefBlock {
+        // println!("[DefModule] {} | get_block_inst on {:?}",self.name, node.attr);
+        let blkname =
+            if node.attr.contains_key("block") && node.attr["block"].len()>0 {node.attr["block"].clone()}
+            else {format!("blk_{}_{}", if node.attr.contains_key("kind") {node.attr["kind"].clone()} else {"loop".to_string()} ,self.defs.len())};
+        let mut blk = DefBlock::new(blkname);
         for n in &node.child {
             match n.kind {
                 AstNodeKind::Instances => {
+                    // println!("[get_block_inst] {:?} | Instance {:?}", self.name, n.attr);
                     for nc in &n.child {
                         match nc.kind {
                             AstNodeKind::Params => {
                                 // TODO: collect parameter info and add it to the instance definition
                             }
                             AstNodeKind::Instance => {
-                                // println!("[get_inst] {:?} | Instance {}", self.name, nc.attr["name"]);
-                                self.defs.insert(nc.attr["name"].clone(),ObjDef::Instance(nc.attr["name"].clone()));
+                                // println!("[get_block_inst] {:?} | Instance {}", self.name, nc.attr["name"]);
+                                blk.defs.insert(nc.attr["name"].clone(),ObjDef::Instance(n.attr["type"].clone()));
                             }
                             _ => println!("[DefModule] {} | Instances: Skipping = {} | {:?}",self.name, n.kind, n.attr)
                         }
@@ -370,11 +405,16 @@ impl DefModule {
                 }
                 AstNodeKind::Branch  |
                 AstNodeKind::LoopFor => {
-                    self.get_inst(n,ast_inc);
+                    let sub_blk = self.get_block_inst(n,ast_inc, binds);
+                    // TODO: check name conflict
+                    blk.defs.insert(sub_blk.name.clone(),ObjDef::Block(sub_blk));
                 }
+                AstNodeKind::Bind => self.parse_bind(n, binds),
                 _ => {}
             }
         }
+        // println!("[DefModule] {} | {:?}",self.name, blk);
+        blk
     }
 }
 

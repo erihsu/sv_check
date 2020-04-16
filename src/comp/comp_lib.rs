@@ -19,6 +19,7 @@ type LinkCntxt = (AstNodeKind,String);
 pub struct CompLib {
     pub name   : String,
     pub objects: HashMap<String, ObjDef>,
+    pub binds  : HashMap<String, Vec<String> >,
     cntxt : Vec<LinkCntxt>
 }
 
@@ -52,7 +53,7 @@ impl CompLib {
     // Create a library containing definition of all object compiled
     // Try to fix any missing reference, analyze hierarchical access, ...
     pub fn new(name: String, ast_list: Vec<Ast>, ast_inc: HashMap<String,Box<Ast>>) -> CompLib {
-        let mut lib = CompLib {name, objects:HashMap::new(), cntxt:Vec::new()};
+        let mut lib = CompLib {name, objects:HashMap::new(), binds:HashMap::new(), cntxt:Vec::new()};
         // let mut missing_scope : HashSet<String> = HashSet::new();
 
         // Create a top object for type/localparam definition without scope
@@ -61,8 +62,12 @@ impl CompLib {
 
         // Extract object definition from all ASTs
         for ast in &ast_list {
-            ObjDef::from_ast(&ast, &ast_inc, &mut lib.objects);
+            ObjDef::from_ast(&ast, &ast_inc, &mut lib);
+            // ObjDef::from_ast(&ast, &ast_inc, &mut lib.objects);
         }
+
+        // Reduce all bind path to a single type
+        lib.solve_bind();
 
         // Second pass : check types and signals are defined, module instance are correct ...
         for ast in ast_list {
@@ -91,7 +96,7 @@ impl CompLib {
                     if let Some((_,v)) = self.cntxt.get(0) {
                         scope = Some(v.clone());
                     }
-                    if let Some(x) = self.find_def(&nc.attr["name"],scope.as_ref(),li,false,false).0 {
+                    if let Some(x) = self.find_def(&nc.attr["name"],scope.as_ref(),li,false,false,false).0 {
                         li.obj = Some(x.clone());
                     } else {
                         li.obj = None;
@@ -124,7 +129,7 @@ impl CompLib {
                         let mut ncc = &nc.child[0]; // Foreach loop always have at least one child
                         let mut dim = Vec::new();
                         if ncc.kind==AstNodeKind::Identifier {
-                            match self.find_def(&ncc.attr["name"],None,li,false,false).0 {
+                            match self.find_def(&ncc.attr["name"],None,li,false,false,false).0 {
                                 Some(ObjDef::Member(x)) => dim = x.unpacked.clone(),
                                 Some(ObjDef::Port(x))   => dim = x.unpacked.clone(),
                                 _ => {}
@@ -249,7 +254,7 @@ impl CompLib {
                         name: self.cntxt.last().unwrap().1.clone(),
                         kind : t, is_const: false, unpacked: Vec::new(), access: Access::Local};
                     if let DefType::User(k) = &m.kind {
-                        if self.find_def(&k.name,k.scope.as_ref(),li,false,false).0.is_none() {
+                        if self.find_def(&k.name,k.scope.as_ref(),li,false,false,false).0.is_none() {
                             println!("[Linking] {:?} | Type {:?} undeclared", self.cntxt, k.name);
                         }
                     }
@@ -294,7 +299,7 @@ impl CompLib {
                                 if let Some((_,v)) = self.cntxt.get(0) {
                                     scope = Some(v.clone());
                                 }
-                                if let Some(fd) = self.find_def(&nc.attr["name"],scope.as_ref(),li,false,true).0 {
+                                if let Some(fd) = self.find_def(&nc.attr["name"],scope.as_ref(),li,false,true,false).0 {
                                     // println!("[Linking] {:?} | Forward declaration for {} = {:?}", self.cntxt, nc.attr["name"],fd);
                                     let fdc = fd.clone();
                                     li.add_def(nc.attr["name"].clone(),fdc);
@@ -496,13 +501,14 @@ impl CompLib {
 
     // TODO: evaluate a cache version of find_def
     // Find a definition from a string
-    pub fn find_def<'a>(&'a self, name: &String, scope: Option<&String>,li: &'a LocalInfo, check_base: bool, check_obj: bool) ->  (Option<&'a ObjDef>,Option<HashMap<String,String>>) {
+    // Also output a hashmap containing parameters value for class (TODO: also support the instance case)
+    pub fn find_def<'a>(&'a self, name: &String, scope: Option<&String>,li: &'a LocalInfo, check_base: bool, check_obj: bool, check_bind: bool) ->  (Option<&'a ObjDef>,Option<HashMap<String,String>>) {
         // if name == "T_CMP" {println!("[find_def] {:?} | searching for {} : scope = {:?}, check_base={}, check_obj={}",self.cntxt,name,scope,check_base,check_obj);}
         if let Some(scope_name) = scope {
             if let Some(ObjDef::Package(di)) = &self.objects.get(scope_name) {
                 return (di.defs.get(name),None);
             }
-            match self.find_def(scope_name,None,li,false,check_obj).0 {
+            match self.find_def(scope_name,None,li,false,check_obj, false).0 {
                 Some(ObjDef::Class(cd)) => {
                     if let Some(bd) = cd.defs.get(name) {
                         return (Some(bd),None);
@@ -563,7 +569,7 @@ impl CompLib {
                 }
             }
         }
-        // TODO: Check in base class if any
+        // Check in base class if any
         if check_base {
             if let Some(ObjDef::Class(cd)) = &li.obj {
                 let bd = self.find_def_in_base(cd,name,li);
@@ -580,10 +586,30 @@ impl CompLib {
                 }
             }
         }
+        // Check bindings: at this pint binding were resolved and should be only one element: a type
+        if check_bind {
+            if let Some((AstNodeKind::Module,module_name)) = self.cntxt.last() {
+                if let Some(b) = self.binds.get(module_name) {
+                    // println!("[Linking] {:?} | Found binding to {:?}", self.cntxt, b);
+                    if let Some(b0) = b.first() {
+                        if let Some(ObjDef::Module(d)) = self.objects.get(b0) {
+                            if d.defs.contains_key(name) {
+                                return (Some(&d.defs[name]),None);
+                            }
+                            println!("[Linking] {:?} | {:?} not found in bind context {:?} ", self.cntxt, name, b);
+                        } else {
+                            println!("[Linking] {:?} | Binding type {:?} not defined", self.cntxt, b);
+                        }
+                    }
+                }
+            }
+        }
         // Last try: Check top
         (self.objects.get(name),None)
     }
 
+    // Find a definition in the base class
+    // Also output a hashmap containing parameters value
     pub fn find_def_in_base<'a>(&'a self, cd: &DefClass, name: &String, li: &'a LocalInfo) -> (Option<&'a ObjDef>,Option<HashMap<String,String>>) {
         let mut o = cd;
         // TODO: change type to support typdefinition with parameters
@@ -604,7 +630,7 @@ impl CompLib {
                 }
                 else {bct.name.clone()};
             // if name=="____" {println!("[Linking] Class {:?} looking for {} in base class {} with params {:?}", o.name, name, bcn, bct.params);}
-            match self.find_def(&bcn,None,li,false,true).0 {
+            match self.find_def(&bcn,None,li,false,true, false).0 {
                 Some(ObjDef::Class(bcd)) =>  {
                     // If the class is parameterized affect value to each param
                     if bcd.params.len() > 0 {
@@ -670,7 +696,8 @@ impl CompLib {
         // println!("[Linking] {:?} | find_ident_def {}",self.cntxt,node);
         let name = &node.attr["name"];
         let scope = if node.has_scope() {Some(&node.child[0].attr["name"])} else {None};
-        return self.find_def(name,scope,li,true,check_obj).0;
+        let check_bind = node.child.len() > 0 && scope.is_none();
+        return self.find_def(name,scope,li,true,check_obj,check_bind).0;
     }
 
     // Check a node identifier is properly defined and check any hierarchical access to it.
@@ -682,7 +709,7 @@ impl CompLib {
             "super" => {
                 if let Some(ObjDef::Class(bc)) = &li.obj {
                     if let Some(bct) = &bc.base {
-                        o = self.find_def(&bct.name,None,li,false,true).0
+                        o = self.find_def(&bct.name,None,li,false,true,false).0
                     }
                 }
             }
@@ -782,6 +809,17 @@ impl CompLib {
                     self.find_def_in_base(od,name,li).0
                 }
             }
+            ObjDef::Instance(inst) => {
+                if let Some(ObjDef::Module(od)) = self.objects.get(inst) {
+                    if od.ports.contains_key(name) {
+                        od.ports.get(name)
+                    } else {
+                        od.defs.get(name)
+                    }
+                } else {
+                    None
+                }
+            }
             ObjDef::Module(od) => {
                 if od.ports.contains_key(name) {
                     od.ports.get(name)
@@ -831,7 +869,7 @@ impl CompLib {
         // if debug {println!("[get_type_def] pre-match td = {:?}", td);}
         match &td {
             Some(DefType::User(x)) => {
-                tdr = self.find_def(&x.name,x.scope.as_ref(),li,true,true);
+                tdr = self.find_def(&x.name,x.scope.as_ref(),li,true,true,false);
                 // if debug {println!("[get_type_def] user type resolved to {:?}", tdr);}
                 match tdr.0 {
                     Some(ObjDef::Type(tdr_,dim_)) => {
@@ -847,7 +885,7 @@ impl CompLib {
                 }
             }
             Some(DefType::VIntf(x)) => {
-                tdr  = self.find_def(&x.name,None,li,false,true);
+                tdr  = self.find_def(&x.name,None,li,false,true,false);
                 if !tdr.0.is_none() {
                     ot = tdr.0.unwrap().clone();
                     // println!("[Linking] {:?} | Identifier {:?} Virtual Interface = {:?}", self.cntxt, node.attr["name"], tdr.0.unwrap());
@@ -870,7 +908,7 @@ impl CompLib {
                     type_name = x.name.clone();
                     for d in dims {dim.push(d.clone());}
                     updated = true;
-                    tdr = self.find_def(&x.name,x.scope.as_ref(),li,true,true);
+                    tdr = self.find_def(&x.name,x.scope.as_ref(),li,true,true,false);
                 }
                 ObjDef::Port(x) if x.dir == PortDir::Param => {
                     type_name = x.name.clone();
@@ -878,12 +916,12 @@ impl CompLib {
                     if let Some(params) = &tdr.1 {
                         if params.contains_key(&x.name) {
                             updated = true;
-                            tdr = self.find_def(&params[&x.name],None,li,true,true);
+                            tdr = self.find_def(&params[&x.name],None,li,true,true,false);
                         }
                     } else if let Some(def_val) = &x.default {
                         // if debug {println!("[get_type_def] default value -> {:?}", def_val);}
                         updated = true;
-                        tdr = self.find_def(&def_val,None,li,true,true);
+                        tdr = self.find_def(&def_val,None,li,true,true,false);
                     }
                 }
                 _ => {}
@@ -919,7 +957,7 @@ impl CompLib {
                 "byte" | "shortint" | "int" | "longint" | "integer" | "time" => {},
                 "shortreal" | "real" | "realtime" | "string" | "void" | "chandle" | "event" => {},
                 _ => {
-                    if self.find_def(name,scope,li,false,false).0.is_none() {
+                    if self.find_def(name,scope,li,false,false,false).0.is_none() {
                         println!("[Linking] {:?} | Type {:?} undeclared", self.cntxt, node.attr["type"]);
                     }
                 }
@@ -989,7 +1027,7 @@ impl CompLib {
                             if has_impl {
                                 for p_ in &ports {
                                     if let ObjDef::Port(p) = p_ {
-                                        if let Some(_d) = self.find_def(&p.name,None,li,false,false).0 {
+                                        if let Some(_d) = self.find_def(&p.name,None,li,false,false,false).0 {
                                             // Type checking
                                         } else {
                                             println!("[Linking] {:?} | Missing signal for implicit connection to {} in {}", self.cntxt, p, n.attr["name"])
@@ -1125,4 +1163,41 @@ impl CompLib {
         }
     }
 
+    // Find the module type ofr bind
+    pub fn solve_bind(&mut self) {
+        for (_name,path) in self.binds.iter_mut() {
+            // println!("[solve_bind] {} -> {:?}", _name, path);
+            let mut cntxt = path[0].clone();
+            let mut found = true;
+            let mut ldefs = &self.objects;
+            for inst_name in path.into_iter().skip(1) {
+                // println!("[solve_bind] searching {} in {}", inst_name, cntxt);
+                if let Some(ObjDef::Module(o)) = self.objects.get(&cntxt) {ldefs = &o.defs;}
+                match ldefs.get(inst_name) {
+                    Some(ObjDef::Instance(inst_type)) => {
+                        cntxt = inst_type.clone();
+                    }
+                    Some(ObjDef::Block(blk)) => {
+                        // println!("[solve_bind] {} is a block with the instances {:?}", inst_name, blk.defs.keys());
+                        cntxt = format!("blk#{}", blk.name);
+                        ldefs = &blk.defs;
+                    }
+                    _ => {
+                        println!("[solve_bind] Instance {} not found in {}", inst_name, cntxt);
+                        found = false;
+                        break;
+                    }
+                }
+            }
+            // Update the path
+            let mut new_path = Vec::new();
+            if found {
+                new_path.push(cntxt);
+            }
+            *path = new_path;
+        }
+        // for (name,path) in self.binds.iter() {
+        //     println!("[solve_bind: done] {} -> {:?}", name, path);
+        // }
+    }
 }
