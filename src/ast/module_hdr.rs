@@ -11,8 +11,8 @@ use crate::ast::common::*;
 pub fn parse_module_hdr(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), SvError> {
     // First extract next token: can be lifetime or identifier.
     // let t = ts.next_non_comment(false);
-    let mut node_h = AstNode::new(AstNodeKind::Header);
     let mut t = next_t!(ts,true);
+    let mut node_h = AstNode::new(AstNodeKind::Header, t.pos);
 
     if t.kind==TokenKind::KwStatic || t.kind==TokenKind::KwAutomatic {
         node_h.attr.insert("lifetime".to_owned(),t.value);

@@ -4,6 +4,7 @@
 mod lex;
 mod ast;
 mod error;
+mod reporter;
 mod comp;
 mod project;
 
@@ -19,10 +20,8 @@ extern crate structopt;
 use structopt::StructOpt;
 use structopt::clap::{App, AppSettings};
 
-
 use project::Project;
 
-use comp::comp_lib::CompLib;
 macro_rules! exit {
     ($str:expr, $($var:expr),+) => {{
         println!($str,($($var),+));
@@ -43,6 +42,9 @@ struct Cli {
     /// Include directories
     #[structopt(short = "I", long = "incdir")]
     incdir: Vec<PathBuf>,
+    /// Only parse file, no elaboration/type check/...
+    #[structopt( long = "parse_only")]
+    parse_only: bool,
 }
 
 fn main() {
@@ -64,16 +66,14 @@ fn main() {
     }
 
     proj.compile_all();
-
+    if args.parse_only {
+        return;
+    }
     // Debug : save AST
     // let fw = File::create("C:/tmp/sv_parser.log").unwrap();
     // let mut w = BufWriter::new(&fw);
     // write!(&mut w, "{:#?}", proj.ast_list).unwrap();
 
     // Analyze ASTs
-    let _lib = CompLib::new("my_lib".to_owned(),proj.ast_list, proj.ast_inc);
-    // Debug : save Lib
-    // let fw = File::create("E:/tmp/sv_check_lib.log").unwrap();
-    // let mut w = BufWriter::new(&fw);
-    // write!(&mut w, "{:#?}", _lib).unwrap();
+    proj.elaborate();
 }

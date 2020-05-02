@@ -14,7 +14,7 @@ use std::collections::{VecDeque, HashMap};
 pub struct TokenStream<'a,'b> {
     pub source: &'a mut Source,
     last_char: char,
-    last_pos : Position,
+    pub last_pos : Position,
     buffer : VecDeque<Token>,
     rd_ptr : usize,
     pub inc_files : Vec<String>,
@@ -792,6 +792,14 @@ impl<'a,'b> TokenStream<'a,'b> {
                     return None
                 }
             };
+        }
+    }
+
+    pub fn get_pos(&self) -> Position {
+        if self.buffer.len() > self.rd_ptr {
+            self.buffer[self.rd_ptr].pos
+        } else {
+            self.last_pos
         }
     }
 

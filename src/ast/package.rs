@@ -10,11 +10,12 @@ use crate::ast::module_body::{parse_timescale};
 use crate::ast::class::{parse_class,parse_func,parse_task};
 
 
-/// This function should be called after a keyword package
+/// 
 pub fn parse_package(ts : &mut TokenStream) -> Result<AstNode, SvError> {
-    let mut node = AstNode::new(AstNodeKind::Package);
+    let mut t = expect_t!(ts, "package declaration", TokenKind::KwPackage);
+    let mut node = AstNode::new(AstNodeKind::Package, t.pos);
     // Parse package header
-    let mut t = next_t!(ts,false);
+    t = next_t!(ts,false);
     if t.kind==TokenKind::KwStatic || t.kind==TokenKind::KwAutomatic {
         node.attr.insert("lifetime".to_owned(),t.value);
         t = next_t!(ts,false);
@@ -82,7 +83,7 @@ pub fn parse_package(ts : &mut TokenStream) -> Result<AstNode, SvError> {
                     let nt = next_t!(ts,false);
                     match nt.kind {
                         TokenKind::Ident => {
-                            let mut n = AstNode::new(AstNodeKind::Declaration);
+                            let mut n = AstNode::new(AstNodeKind::Declaration, t.pos);
                             n.attr.insert("type".to_owned(), "genvar".to_owned());
                             n.attr.insert("name".to_owned(),t.value.clone());
                             node.child.push(n);

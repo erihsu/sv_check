@@ -10,6 +10,7 @@ use crate::comp::{
     prototype::*,
     def_type::{DefType,TypeUser,TypeVIntf}
 };
+use crate::reporter::{Reporter,/* Severity,*/ MsgID};
 
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
@@ -41,9 +42,10 @@ impl ObjDef {
             match node.kind {
                 AstNodeKind::Directive => {
                     if let Some(i) = node.attr.get("include") {
-                        ast_inc.get(i).map_or_else(
-                            || if i!="uvm_macros.svh" {println!("[Compiling] Include {} not found", i)},
-                            |a| ObjDef::from_ast(a, &ast_inc, &mut lib));
+                        match ast_inc.get(i) {
+                            Some(a) => ObjDef::from_ast(a, &ast_inc, &mut lib),
+                            _ => if i!="uvm_macros.svh" {lib.log.msg_s(MsgID::ErrFile,i);}
+                        }
                     }
                 },
                 AstNodeKind::MacroCall => {},
@@ -85,7 +87,7 @@ impl ObjDef {
                                     }
                                 }
                             }
-                            _ => d.parse_body(&node_m,ast_inc, &mut lib.binds)
+                            _ => d.parse_body(&node_m,ast_inc, &mut lib.binds, &lib.log)
                         }
                     }
                     // println!("[ObjDef] {:?}", d);
@@ -94,13 +96,13 @@ impl ObjDef {
                 AstNodeKind::Package   => {
                     let mut d = DefPackage::new(node.attr["name"].clone());
                     // println!("[Compiling] Package {}", node.attr["name"]);
-                    d.parse_body(&node,ast_inc);
+                    d.parse_body(&node,ast_inc, &lib.log);
                     lib.objects.insert(d.name.clone(),ObjDef::Package(d));
                 }
                 AstNodeKind::Class   => {
                     let mut d = DefClass::new(node.attr["name"].clone());
                     // println!("[Compiling] Class {}", node.attr["name"]);
-                    d.parse_body(&node,ast_inc);
+                    d.parse_body(&node,ast_inc, &lib.log);
                     lib.objects.insert(d.name.clone(),ObjDef::Class(d));
                 }
                 AstNodeKind::Define => {
@@ -121,7 +123,7 @@ impl ObjDef {
                 // }
                 // Temporay Whitelist
                 AstNodeKind::Import => {}
-                _ => {println!("[ObjDef] Top: Skipping {:?}", node.kind);}
+                _ => lib.log.msg(MsgID::DbgSkip,node,"Root")
             }
         }
     }
@@ -143,7 +145,7 @@ impl ObjDef {
 
 impl DefModule {
     // Collect signals declaration, instance, type and function definition
-    pub fn parse_body(&mut self, node: &AstNode, ast_inc: & HashMap<String,Box<Ast>>, binds  : &mut HashMap<String, Vec<String> >) {
+    pub fn parse_body(&mut self, node: &AstNode, ast_inc: & HashMap<String,Box<Ast>>, binds  : &mut HashMap<String, Vec<String> >, log : &Reporter) {
         let mut prev_dir = PortDir::Input; // Default port direction to input
         let mut idx_port = -1 as i16;
         let mut idx_param = (self.params.len() as i16) - 1 ;
@@ -163,8 +165,8 @@ impl DefModule {
                 AstNodeKind::Directive => {
                     n.attr.get("include").map(
                         |i| ast_inc.get(i).map_or_else(
-                            || if i!="uvm_macros.svh" {println!("[DefModule] Include {} not found", i)},
-                            |a| self.parse_body(&a.tree,ast_inc, binds)
+                            || if i!="uvm_macros.svh" {log.msg_s(MsgID::ErrFile,i);} ,
+                            |a| self.parse_body(&a.tree,ast_inc, binds, log)
                         )
                     );
                 },
@@ -180,7 +182,7 @@ impl DefModule {
                                 pc.idx = pa.idx;
                                 self.ports.insert(pc.name.clone(),ObjDef::Port(pc));
                             } else {
-                                println!("[{:?}] Port {} definition without declaration", self.name,pc.name);
+                                log.msg(MsgID::ErrNotFound, nc, &pc.name)
                             }
                         }
                     }
@@ -235,7 +237,7 @@ impl DefModule {
                                 // println!("[{:?}] Adding enum : {:?}", self.name,m);
                                 self.defs.insert(m.name.clone(),ObjDef::Member(m));
                             }
-                            _ => println!("[DefModule] {} | Enum: Skipping {}",self.name, nc.kind),
+                            _ => log.msg(MsgID::DbgSkip,nc,"Enum declaration")
                         }
                     }
                 }
@@ -254,9 +256,10 @@ impl DefModule {
                                 // println!("[{:?}] Adding enum : {:?}", self.name,m);
                                 self.defs.insert(m.name.clone(),ObjDef::Member(m));
                             }
-                            // AstNodeKind::Declaration => {}
+                            // Ignore delcaration : was already used when getting the type
+                            AstNodeKind::Declaration => {}
                             // AstNodeKind::Slice  => {}
-                            _ => println!("[DefModule] {} | Struct: Skipping {}",self.name, nc),
+                            _ => log.msg(MsgID::DbgSkip,nc,"Struct declaration")
                         }
                     }
                 }
@@ -280,7 +283,7 @@ impl DefModule {
                             AstNodeKind::Instance => {
                                 self.defs.insert(nc.attr["name"].clone(),ObjDef::Instance(n.attr["type"].clone()));
                             }
-                            _ => println!("[DefModule] {} | Instances: Skipping = {} | {:?}",self.name, n.kind, n.attr)
+                            _ => log.msg(MsgID::DbgSkip,nc,"Instance")
                         }
                     }
                 }
@@ -288,7 +291,7 @@ impl DefModule {
                 AstNodeKind::Branch  |
                 AstNodeKind::LoopFor => {
                     // println!("[DefModule] {:?} | Branch : {:?}", self.name, n.attr);
-                    let blk = self.get_block_inst(n,ast_inc, binds);
+                    let blk = self.get_block_inst(n,ast_inc, binds, log);
                     // TODO: check name conflict
                     self.defs.insert(blk.name.clone(),ObjDef::Block(blk));
                 }
@@ -306,7 +309,7 @@ impl DefModule {
                                 let m = DefMethod::from(&n.child[0]);
                                 self.defs.insert(m.name.clone(),ObjDef::Method(m));
                             } else {
-                                println!("[CompObj Skipping DPI import : {:?}", n);
+                                log.msg(MsgID::DbgSkip,n,"DPI import");
                             }
                         }
                     }
@@ -314,7 +317,7 @@ impl DefModule {
                 // Header in a body: Loop definition
                 AstNodeKind::Header => {
                     // Check for instances ?
-                    println!("[DefModule] {} | Header Skipping {}",self.name, n);
+                    log.msg(MsgID::DbgSkip,n,"Header");
                 }
                 AstNodeKind::Define  => {
                     // println!("[Compiling] Module define {}", n.attr["name"]);
@@ -331,7 +334,7 @@ impl DefModule {
                 }
                 AstNodeKind::SvaProperty => {}
                 AstNodeKind::Bind => {
-                    self.parse_bind(n, binds);
+                    self.parse_bind(n, binds, log);
                     // println!("[DefModule] {} | Bind Skipping",self.name);
                     // println!("[DefModule] {} | Bind Skipping {}",self.name, n);
                 }
@@ -346,16 +349,16 @@ impl DefModule {
                 //
                 AstNodeKind::Class => {
                     let mut d = DefClass::new(n.attr["name"].clone());
-                    d.parse_body(&n,ast_inc);
+                    d.parse_body(&n,ast_inc, log);
                     self.defs.insert(d.name.clone(),ObjDef::Class(d));
                 }
-                _ => {println!("[DefModule] {} | Skipping {}",self.name, n);}
+                _ => log.msg(MsgID::DbgSkip,n,"Module top")
             }
         }
     }
 
     // Extract info from a bind statement
-    pub fn parse_bind(&mut self, node: &AstNode, binds  : &mut HashMap<String, Vec<String> >) {
+    pub fn parse_bind(&mut self, node: &AstNode, binds  : &mut HashMap<String, Vec<String> >, log: &Reporter) {
         let mut path = Vec::new();
         path.push(self.name.clone());
         let mut t = "".to_string();
@@ -372,7 +375,7 @@ impl DefModule {
                 AstNodeKind::Instances => {
                     t = n.attr["type"].clone();
                 }
-                _ => println!("[DefModule] {} | Binding : skipping child {}",self.name, n)
+                _ => log.msg(MsgID::DbgSkip,n,"Binding")
             }
         }
         // println!("[DefModule] {} | Binding {} to {:?}",self.name, t, path);
@@ -380,7 +383,7 @@ impl DefModule {
     }
 
     // TODO : get info from the For loop and name from the branch/for loop
-    pub fn get_block_inst(&mut self, node: &AstNode, ast_inc: & HashMap<String,Box<Ast>>, binds  : &mut HashMap<String, Vec<String> >) -> DefBlock {
+    pub fn get_block_inst(&mut self, node: &AstNode, ast_inc: & HashMap<String,Box<Ast>>, binds  : &mut HashMap<String, Vec<String> >, log: &Reporter) -> DefBlock {
         // println!("[DefModule] {} | get_block_inst on {:?}",self.name, node.attr);
         let blkname =
             if node.attr.contains_key("block") && node.attr["block"].len()>0 {node.attr["block"].clone()}
@@ -399,17 +402,17 @@ impl DefModule {
                                 // println!("[get_block_inst] {:?} | Instance {}", self.name, nc.attr["name"]);
                                 blk.defs.insert(nc.attr["name"].clone(),ObjDef::Instance(n.attr["type"].clone()));
                             }
-                            _ => println!("[DefModule] {} | Instances: Skipping = {} | {:?}",self.name, n.kind, n.attr)
+                            _ => log.msg(MsgID::DbgSkip,n,"Instance")
                         }
                     }
                 }
                 AstNodeKind::Branch  |
                 AstNodeKind::LoopFor => {
-                    let sub_blk = self.get_block_inst(n,ast_inc, binds);
+                    let sub_blk = self.get_block_inst(n,ast_inc, binds, log);
                     // TODO: check name conflict
                     blk.defs.insert(sub_blk.name.clone(),ObjDef::Block(sub_blk));
                 }
-                AstNodeKind::Bind => self.parse_bind(n, binds),
+                AstNodeKind::Bind => self.parse_bind(n, binds, log),
                 _ => {}
             }
         }
@@ -421,7 +424,7 @@ impl DefModule {
 
 impl DefPackage {
     // Collect all definition
-    pub fn parse_body(&mut self, node: &AstNode, ast_inc: & HashMap<String,Box<Ast>>) {
+    pub fn parse_body(&mut self, node: &AstNode, ast_inc: & HashMap<String,Box<Ast>>, log : &Reporter) {
         for n in &node.child {
             // println!("[DefPackage] {} | next node = {}",self.name, n.kind);
             match n.kind {
@@ -429,8 +432,8 @@ impl DefPackage {
                 AstNodeKind::Directive => {
                     n.attr.get("include").map(
                         |i| ast_inc.get(i).map_or_else(
-                            || if i!="uvm_macros.svh" {println!("[DefPackage] Include {} not found", i)},
-                            |a| self.parse_body(&a.tree,ast_inc)
+                            || if i!="uvm_macros.svh" {log.msg_s(MsgID::ErrFile,i);},
+                            |a| self.parse_body(&a.tree,ast_inc, log)
                         )
                     );
                 },
@@ -468,7 +471,7 @@ impl DefPackage {
                                 // println!("[{:?}] Adding enum : {:?}", self.name,m);
                                 self.defs.insert(m.name.clone(),ObjDef::Member(m));
                             }
-                            _ => println!("[CompObj] {} | Enum: Skipping {}",self.name, nc.kind),
+                            _ => log.msg(MsgID::DbgSkip,nc,"Enum declaration")
                         }
                     }
                 }
@@ -505,7 +508,7 @@ impl DefPackage {
                             AstNodeKind::Instance => {
                                 self.defs.insert(nc.attr["name"].clone(),ObjDef::Instance(nc.attr["name"].clone()));
                             }
-                            _ => println!("[CompObj] {} | Instances: Skipping = {}",self.name, n.kind)
+                            _ => log.msg(MsgID::DbgSkip,nc,"Instance")
                         }
                     }
                 }
@@ -525,7 +528,7 @@ impl DefPackage {
                                 let m = DefMethod::from(&n.child[0]);
                                 self.defs.insert(m.name.clone(),ObjDef::Method(m));
                             } else {
-                                println!("[CompObj Skipping DPI import : {:?}", n);
+                                log.msg(MsgID::DbgSkip,n,"DPI import")
                             }
                         }
                     }
@@ -546,10 +549,10 @@ impl DefPackage {
                 //
                 AstNodeKind::Class => {
                     let mut d = DefClass::new(n.attr["name"].clone());
-                    d.parse_body(&n,ast_inc);
+                    d.parse_body(&n,ast_inc, log);
                     self.defs.insert(d.name.clone(),ObjDef::Class(d));
                 }
-                _ => {println!("[DefPackage] {} Skipping {}",self.name, n.kind);}
+                _ => log.msg(MsgID::DbgSkip,n,"Package Top")
             }
         }
         // println!("[DefPackage] {} : {:#?}", self.name, self.defs);
@@ -558,7 +561,7 @@ impl DefPackage {
 
 impl DefClass {
     // Collect all definition
-    pub fn parse_body(&mut self, node: &AstNode, ast_inc: & HashMap<String,Box<Ast>>) {
+    pub fn parse_body(&mut self, node: &AstNode, ast_inc: & HashMap<String,Box<Ast>>, log : &Reporter) {
         for n in &node.child {
             // println!("[Compiling] Class {} | next node = {}",self.name, n.kind);
             match n.kind {
@@ -576,7 +579,7 @@ impl DefClass {
                                     }
                                 }
                             }
-                            _ => println!("[Compiling] Class Params: Skipping {:?}", nc.kind)
+                            _ => log.msg(MsgID::DbgSkip,nc,"Class parameters")
                         }
                     }
                 }
@@ -585,8 +588,8 @@ impl DefClass {
                 AstNodeKind::Directive => {
                     n.attr.get("include").map(
                         |i| ast_inc.get(i).map_or_else(
-                            || if i!="uvm_macros.svh" {println!("[DefClass] Include {} not found", i)},
-                            |a| self.parse_body(&a.tree,ast_inc)
+                            || if i!="uvm_macros.svh" {log.msg_s(MsgID::ErrFile,i);},
+                            |a| self.parse_body(&a.tree,ast_inc, log)
                         )
                     );
                 },
@@ -624,7 +627,7 @@ impl DefClass {
                                 // println!("[{:?}] Adding enum : {:?}", self.name,m);
                                 self.defs.insert(m.name.clone(),ObjDef::Member(m));
                             }
-                            _ => println!("[Compiling] Class {} | Enum: Skipping {}",self.name, nc.kind),
+                            _ => log.msg(MsgID::DbgSkip, nc, "Enum")
                         }
                     }
                 }
@@ -662,7 +665,7 @@ impl DefClass {
                                 self.defs.insert(m.name.clone(),ObjDef::Member(m));
                             }
                             AstNodeKind::Params => {}
-                            _ => println!("[Compiling] Class {} | VIntf Skipping {}",self.name, nc.kind),
+                            _ => log.msg(MsgID::DbgSkip, nc, "Virtual Interface")
                         }
                     }
                 }
@@ -675,7 +678,7 @@ impl DefClass {
                             AstNodeKind::Instance => {
                                 self.defs.insert(nc.attr["name"].clone(),ObjDef::Instance(nc.attr["name"].clone()));
                             }
-                            _ => println!("[Compiling] Class {} | Instances: Skipping = {}",self.name, n.kind)
+                            _ => log.msg(MsgID::DbgSkip,nc,"Instance")
                         }
                     }
                 }
@@ -707,10 +710,10 @@ impl DefClass {
                 //
                 AstNodeKind::Class => {
                     let mut d = DefClass::new(n.attr["name"].clone());
-                    d.parse_body(&n,ast_inc);
+                    d.parse_body(&n,ast_inc, log);
                     self.defs.insert(d.name.clone(),ObjDef::Class(d));
                 }
-                _ => {println!("[Compiling] Class {} Skipping {}",self.name, n.kind);}
+                _ => log.msg(MsgID::DbgSkip,n,"Class top")
             }
         }
         // println!("[Compiling] Class {} : {:#?}", self.name, self.defs);

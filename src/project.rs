@@ -16,7 +16,8 @@ use crate::lex::{
     position::Position,
     token_stream::TokenStream};
 
-// use crate::comp::comp_lib::CompLib;
+use crate::comp::comp_lib::CompLib;
+use crate::reporter::{Reporter, Severity, MsgID};
 
 pub struct Project {
     pub filelist : HashSet<PathBuf>,
@@ -25,6 +26,7 @@ pub struct Project {
     pub ast_list : Vec<Ast>,
     pub ast_inc : HashMap<String,Box<Ast>>,
     pub cur_dir : PathBuf,
+    pub log : Reporter
 }
 
 impl Project {
@@ -36,7 +38,7 @@ impl Project {
         for d in incs {
             incdir.insert(d);
         }
-        println!("[Project] Include Dir = {:?}", incdir);
+        // println!("[Project] Include Dir = {:?}", incdir);
         // Create the file list: if the input vec contains a dir, push all file from the fir in the list
         let mut filelist = HashSet::new();
         for f in list {
@@ -57,8 +59,8 @@ impl Project {
                 filelist.insert(f);
             }
         }
-        println!("[Project] Filelist = {:?}", filelist);
-        println!("[Project] Include Dir = {:?}", incdir);
+        // println!("[Project] Filelist = {:?}", filelist);
+        // println!("[Project] Include Dir = {:?}", incdir);
         let mut ast_inc = HashMap::new();
         ast_inc.insert("uvm_macros.svh".to_string(),uvm_macro::get_uvm_macro());
         Ok(Project {
@@ -67,10 +69,13 @@ impl Project {
             defines: HashMap::new(),
             cur_dir: PathBuf::new(),
             ast_list: Vec::new(),
-            ast_inc})
+            ast_inc,
+            log: Reporter::new(None,Severity::Warning),
+        })
     }
 
     // Create a project based on a source list (in .f format)
+    #[allow(unused_mut)]
     pub fn from_srcfile(srclist: PathBuf, incs: Vec<PathBuf>) -> Result<Project,std::io::Error> {
         // Create the include dir list
         let mut incdir = HashSet::new();
@@ -83,6 +88,7 @@ impl Project {
         let mut src_path = srclist;
         src_path.pop();
         let file = BufReader::new(&f);
+        let mut log = Reporter::new(None,Severity::Warning);
         // TODO: use collect and filter to create the vector
         //       and also handle -f and --inc cases
         for (_num, line) in file.lines().enumerate() {
@@ -99,7 +105,7 @@ impl Project {
                     if let Ok(pc) = p.canonicalize() {
                         incdir.insert(pc);
                     } else {
-                        println!("[SourceList] Unable to resolve path {:?}", p);
+                        log.msg_s(MsgID::ErrFile,&path_display(&p));
                     }
                     continue;
                 }
@@ -108,7 +114,7 @@ impl Project {
                 if let Ok(pc) = p.canonicalize() {
                     filelist.insert(pc);
                 } else {
-                    println!("[SourceList] Unable to resolve path {:?}", p);
+                    log.msg_s(MsgID::ErrFile,&path_display(&p));
                 }
             }
         }
@@ -120,15 +126,18 @@ impl Project {
             defines: HashMap::new(), // TODO: handle define from source list
             ast_list: Vec::new(),
             cur_dir: PathBuf::new(),
-            ast_inc})
+            ast_inc, log,
+        })
     }
 
     // Compile all file from the project
     pub fn parse_file(&mut self, fname: PathBuf) -> Result<Ast,SvError> {
-        let mut src = Source::from_file(fname)?;
+        self.log.set_filename(&fname);
+        // self.log.msg_s(MsgID::InfoStatus, "Parsing included file".to_string());
+        let mut src = Source::from_file(fname.clone())?;
         let mut ts = TokenStream::new(&mut src, self);
         // println!("[Info] Parsing file {:?}", ts.source.get_filename());
-        let mut ast = Ast::new();
+        let mut ast = Ast::new(fname);
         ast.build(&mut ts)?;
         Ok(ast)
     }
@@ -143,12 +152,14 @@ impl Project {
             }
             //
             if let Ok(mut src) = Source::from_file(fname.clone()) {
+                self.log.set_filename(&fname);
+                // self.log.msg_s(MsgID::InfoStatus, "Parsing".to_string());
                 // println!("[Info] Parsing file {:?}", ts.source.get_filename());
                 self.defines.clear(); // TODO: reinit with project-wide define
                 self.cur_dir = fname.clone();
                 self.cur_dir.pop();
                 let mut ts = TokenStream::new(&mut src, self);
-                let mut ast = Ast::new();
+                let mut ast = Ast::new(fname);
                 match ast.build(&mut ts) {
                     Err(e) => println!("[Error] {:?}, {}", ts.source.get_filename(), e),
                     _ => {
@@ -157,12 +168,16 @@ impl Project {
                     }
                 }
             } else {
-                println!("[Error] File {:?} not found", fname);
+                self.log.msg_s(MsgID::ErrFile, &path_display(fname));
             }
         }
         // println!("[Info] Parsing Done");
         // Compile/link
-        // let _lib = CompLib::new("my_lib".to_owned(),self.ast_list, self.ast_inc);
+    }
+
+    // Compile all file from the project
+    pub fn elaborate(&mut self) {
+        let _lib = CompLib::new("my_lib".to_owned(),&self.ast_list, &self.ast_inc, &mut self.log);
     }
 
     //

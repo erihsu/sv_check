@@ -50,7 +50,7 @@ macro_rules! parse_opt_params {
     ($ts:expr, $node:expr, $t:expr) => {
         if $t.kind==TokenKind::Hash {
             $ts.flush_rd(); // Consume the hash token
-            let mut node_p = AstNode::new(AstNodeKind::Params);
+            let mut node_p = AstNode::new(AstNodeKind::Params, $ts.get_pos());
             parse_port_connection($ts,&mut node_p,true)?;
             $node.child.push(node_p);
             $t = next_t!($ts,true);
@@ -60,7 +60,7 @@ macro_rules! parse_opt_params {
         let t = next_t!($ts,true);
         if t.kind==TokenKind::Hash {
             $ts.flush_rd(); // Consume the hash token
-            let mut node_p = AstNode::new(AstNodeKind::Params);
+            let mut node_p = AstNode::new(AstNodeKind::Params, $ts.get_pos());
             parse_port_connection($ts,&mut node_p,true)?;
             $node.child.push(node_p);
         } else {
@@ -82,16 +82,16 @@ pub enum ExprCntxt {
 /// Parse an import/export statement
 pub fn parse_import(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), SvError> {
     ts.rewind(1);
-    let mut n = AstNode::new(AstNodeKind::Import);
     let mut t = expect_t!(ts,"import/export",TokenKind::KwImport,TokenKind::KwExport);
+    let mut n = AstNode::new(AstNodeKind::Import, t.pos);
     n.attr.insert("kind".to_owned(),t.value);
     t = next_t!(ts,true);
     match t.kind {
         TokenKind::Ident => {
             ts.rewind(1);
             loop {
-                let mut ni = AstNode::new(AstNodeKind::Identifier);
                 t = expect_t!(ts,"import",TokenKind::Ident);
+                let mut ni = AstNode::new(AstNodeKind::Identifier, t.pos);
                 ni.attr.insert("pkg_name".to_owned(),t.value);
                 expect_t!(ts,"import",TokenKind::Scope);
                 t = expect_t!(ts,"import",TokenKind::Ident,TokenKind::OpStar);
@@ -127,15 +127,15 @@ pub fn parse_import(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), SvE
 /// Parse a param/localparam declaration
 pub fn parse_param_decl(ts : &mut TokenStream, is_body: bool) -> Result<AstNode, SvError> {
     let mut t = next_t!(ts,true);
-    let mut node = AstNode::new(AstNodeKind::Param);
-    // Handle conditionnal macro. TODO: andle directly in the next_t macro
+    let mut node = AstNode::new(AstNodeKind::Param, t.pos);
+    // Handle conditionnal macro. TODO: handle directly in the next_t macro
     while t.kind == TokenKind::CompDir {
         parse_macro(ts,&mut node)?;
         t = next_t!(ts,true);
     }
     // optionnal keyword param/localparam
     match t.kind {
-        TokenKind::KwParam | TokenKind::KwLParam  => {
+        TokenKind::KwParam | TokenKind::KwLParam | TokenKind::KwSpecParam  => {
             node.attr.insert("kind".to_owned(), format!("{:?}",t.kind ) );
             ts.flush_rd();
         },
@@ -144,10 +144,11 @@ pub fn parse_param_decl(ts : &mut TokenStream, is_body: bool) -> Result<AstNode,
 
     // Optional data type
     parse_data_type(ts,&mut node, 2)?;
+    let allow_type = node.attr.get("type")==Some(&"type".to_string());
     // Parse name
     let cntxt = if is_body {ExprCntxt::StmtList} else {ExprCntxt::ArgList};
-    let mut ni = AstNode::new(AstNodeKind::Identifier);
-    parse_var_decl_name(ts,&mut ni,cntxt.clone(),false)?;
+    let mut ni = AstNode::new(AstNodeKind::Identifier, ts.get_pos());
+    parse_var_decl_name(ts,&mut ni,cntxt.clone(),false,allow_type)?;
     node.child.push(ni);
     // Parse extra name
     parse_opt_ident_list(ts,&mut node,cntxt)?; // TODO : allow type when node.attr.get("type")==Some(&"type".to_string())
@@ -159,9 +160,9 @@ pub fn parse_param_decl(ts : &mut TokenStream, is_body: bool) -> Result<AstNode,
 
 /// Parse a port declaration
 pub fn parse_port_decl(ts : &mut TokenStream, allow_void : bool, cntxt: ExprCntxt) -> Result<AstNode, SvError> {
-    let mut node = AstNode::new(AstNodeKind::Port);
     let mut type_found = false;
     let mut t = next_t!(ts,true);
+    let mut node = AstNode::new(AstNodeKind::Port, t.pos);
     // println!("[parse_port_decl] First token = {:?}", t);
     // Handle conditionnal macro. TODO: handle directly in the next_t macro
     while t.kind == TokenKind::CompDir {
@@ -244,24 +245,7 @@ pub fn parse_port_decl(ts : &mut TokenStream, allow_void : bool, cntxt: ExprCntx
         }
         // Virtual interface
         TokenKind::KwVirtual => {
-            let mut node_i = AstNode::new(AstNodeKind::VIntf);
-            ts.flush(1);
-            // Optional interface keyword
-            let mut t = next_t!(ts,false);
-            if t.kind==TokenKind::KwIntf {
-                t = next_t!(ts,false);
-                node_i.attr.insert("keyword".to_owned(),"explicit".to_owned());
-            } else {
-                node_i.attr.insert("keyword".to_owned(),"implicit".to_owned());
-            }
-            // Mandatory virtual interface type
-            if t.kind!=TokenKind::Ident && t.kind!=TokenKind::Macro {
-                return Err(SvError::syntax(t, "virtual interface. Expecting type identifier".to_owned()));
-            }
-            node_i.attr.insert("type".to_owned(),t.value);
-            // Optional parameter
-            parse_opt_params!(ts,node_i);
-            node.child.push(node_i);
+            node.child.push(parse_vintf_type(ts)?);
             type_found = true;
         }
         // No port case
@@ -275,8 +259,8 @@ pub fn parse_port_decl(ts : &mut TokenStream, allow_void : bool, cntxt: ExprCntx
         // Optional data type
         parse_data_type(ts,&mut node, if allow_void {1} else {0})?;
     }
-    let mut ni = AstNode::new(AstNodeKind::Identifier);
-    parse_var_decl_name(ts,&mut ni,cntxt.clone(),false)?;
+    let mut ni = AstNode::new(AstNodeKind::Identifier, ts.get_pos());
+    parse_var_decl_name(ts,&mut ni,cntxt.clone(),false,false)?;
     node.child.push(ni);
     parse_opt_ident_list(ts,&mut node,cntxt)?;
     // println!("port_decl: {:?}", node);
@@ -288,14 +272,14 @@ pub fn parse_port_decl(ts : &mut TokenStream, allow_void : bool, cntxt: ExprCntx
 pub fn parse_signal_decl_list(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), SvError> {
     ts.rewind(0);
     // ts.display_status("parse_signal_decl_list: start");
-    let mut node_sig = AstNode::new(AstNodeKind::Declaration);
+    let mut node_sig = AstNode::new(AstNodeKind::Declaration, ts.get_pos());
     // Parse potential net type
     parse_net_type(ts,&mut node_sig)?;
     // Parse data type
     parse_data_type(ts,&mut node_sig, 1)?;
     // Parse name
-    let mut ni = AstNode::new(AstNodeKind::Identifier);
-    parse_var_decl_name(ts,&mut ni,ExprCntxt::StmtList,false)?;
+    let mut ni = AstNode::new(AstNodeKind::Identifier, ts.get_pos());
+    parse_var_decl_name(ts,&mut ni,ExprCntxt::StmtList,false,false)?;
     node_sig.child.push(ni);
     // Continue parsing
     parse_opt_ident_list(ts,&mut node_sig,ExprCntxt::StmtList)?;
@@ -308,7 +292,7 @@ pub fn parse_signal_decl_list(ts : &mut TokenStream, node: &mut AstNode) -> Resu
     Ok(())
 }
 
-pub fn parse_var_decl_name(ts : &mut TokenStream, node : &mut AstNode, cntxt: ExprCntxt, need_value: bool) -> Result<(), SvError> {
+pub fn parse_var_decl_name(ts : &mut TokenStream, node : &mut AstNode, cntxt: ExprCntxt, need_value: bool, allow_type: bool) -> Result<(), SvError> {
     // Signal name
     let mut t = expect_t!(ts,"variable declaration",TokenKind::Ident);
     node.attr.insert("name".to_owned(), t.value);
@@ -318,7 +302,7 @@ pub fn parse_var_decl_name(ts : &mut TokenStream, node : &mut AstNode, cntxt: Ex
     t = next_t!(ts,true);
     if t.kind == TokenKind::OpEq {
         ts.flush(1);
-        node.child.push(parse_expr(ts,cntxt,false)?);
+        node.child.push(parse_expr(ts,cntxt,allow_type)?);
     } else if need_value {
         return Err(SvError::syntax(t, "variable declaration. Expecting init value".to_owned()))
     }
@@ -340,7 +324,7 @@ pub fn parse_net_type(ts : &mut TokenStream, node : &mut AstNode) -> Result<(), 
         node.attr.insert("nettype".to_owned(),t.value);
         ts.flush(1);
         t = next_t!(ts,true);
-        // println!("[parse_net_type] next ? {}", t);
+        // println!("[parse_net_type] next = {}", t);
         // Check for optional strength
         if t.kind==TokenKind::ParenLeft && allow_strength {
             ts.flush(1);
@@ -404,7 +388,7 @@ pub fn parse_opt_scope(ts : &mut TokenStream, node : &mut AstNode) -> Result<(),
         ts.rewind(2);
         return Ok(());
     }
-    let mut n = AstNode::new(AstNodeKind::Scope);
+    let mut n = AstNode::new(AstNodeKind::Scope, t_ident.pos);
     n.attr.insert("name".to_owned(),t_ident.value);
     ts.flush(2);
     // TODO : check for another scope after
@@ -514,7 +498,7 @@ pub fn parse_opt_slice(ts : &mut TokenStream, node: &mut AstNode, allow_range: b
     loop {
         t = next_t!(ts,true);
         if t.kind != TokenKind::SquareLeft {break;} else {ts.flush(1);}
-        let mut n = AstNode::new(AstNodeKind::Slice);
+        let mut n = AstNode::new(AstNodeKind::Slice, t.pos);
         t = next_t!(ts,true);
         if t.kind != TokenKind::SquareRight {
             ts.rewind(1);
@@ -546,7 +530,7 @@ pub fn parse_opt_slice(ts : &mut TokenStream, node: &mut AstNode, allow_range: b
 pub fn parse_ident_hier(ts : &mut TokenStream) -> Result<AstNode, SvError> {
     ts.rewind(0);
     // ts.display_status("parse_ident_hier: start");
-    let mut node = AstNode::new(AstNodeKind::Identifier);
+    let mut node = AstNode::new(AstNodeKind::Identifier, ts.get_pos());
     parse_opt_scope(ts,&mut node)?;
     let mut t = expect_t!(ts,"identifier", TokenKind::Ident, TokenKind::KwThis);
     node.attr.insert("name".to_owned(),t.value);
@@ -569,7 +553,7 @@ pub fn parse_ident_list(ts : &mut TokenStream, node: &mut AstNode) -> Result<(),
         let t = next_t!(ts,false);
         match t.kind {
             TokenKind::Ident if expect_ident => {
-                let mut n = AstNode::new(AstNodeKind::Identifier);
+                let mut n = AstNode::new(AstNodeKind::Identifier, t.pos);
                 n.attr.insert("name".to_owned(),t.value);
                 parse_opt_slice(ts,&mut n,true, true)?; // TODO CHECKD IF TYPE IS ALLOWED
                 parse_opt_init_value(ts,&mut n,ExprCntxt::StmtList)?;
@@ -614,7 +598,7 @@ pub fn parse_opt_ident_list(ts : &mut TokenStream, node: &mut AstNode,cntxt: Exp
             }
         }
         ts.flush(2);
-        let mut n = AstNode::new(AstNodeKind::Identifier);
+        let mut n = AstNode::new(AstNodeKind::Identifier, tid.pos);
         n.attr.insert("name".to_owned(),tid.value);
         // Optional Unpacked dimension : [x][y:z]
         parse_opt_slice(ts,&mut n,true,true)?;
@@ -640,8 +624,8 @@ pub fn parse_opt_init_value(ts : &mut TokenStream, node: &mut AstNode, cntxt: Ex
 
 /// Parse an enum declaration
 pub fn parse_enum(ts : &mut TokenStream, is_typedef: bool) -> Result<AstNode,SvError> {
+    let mut node_e = AstNode::new(AstNodeKind::Enum, ts.get_pos());
     ts.flush(1); // Suppose enum is on the stack
-    let mut node_e = AstNode::new(AstNodeKind::Enum);
     let mut t = next_t!(ts,false);
     // Optionnal data type
     match t.kind {
@@ -694,7 +678,7 @@ pub fn parse_enum(ts : &mut TokenStream, is_typedef: bool) -> Result<AstNode,SvE
     loop {
         // Capture enum identifier
         t = next_t!(ts,false);
-        let mut node_id = AstNode::new(AstNodeKind::EnumIdent);
+        let mut node_id = AstNode::new(AstNodeKind::EnumIdent, t.pos);
         node_id.attr.insert("name".to_owned(), t.value);
         t = next_t!(ts,false);
         // Optional range
@@ -723,9 +707,9 @@ pub fn parse_struct(ts : &mut TokenStream) -> Result<AstNode,SvError> {
     let mut t = next_t!(ts,false);
     let mut node;
     match t.kind {
-        TokenKind::KwStruct => node = AstNode::new(AstNodeKind::Struct),
+        TokenKind::KwStruct => node = AstNode::new(AstNodeKind::Struct, t.pos),
         TokenKind::KwUnion => {
-            node = AstNode::new(AstNodeKind::Union);
+            node = AstNode::new(AstNodeKind::Union, t.pos);
             t = next_t!(ts,true);
             if t.kind == TokenKind::KwTagged {
                 node.attr.insert("tagged".to_owned(),"".to_owned());
@@ -805,7 +789,7 @@ pub fn parse_struct(ts : &mut TokenStream) -> Result<AstNode,SvError> {
 pub fn parse_typedef(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), SvError> {
     ts.flush(1); // Consume the typedef keyword
     let mut t = next_t!(ts,true);
-    let mut node_def = AstNode::new(AstNodeKind::Typedef);
+    let mut node_def = AstNode::new(AstNodeKind::Typedef, t.pos);
     match t.kind {
         TokenKind::KwEnum => node_def.child.push(parse_enum(ts,true)?),
         TokenKind::KwStruct |
@@ -818,17 +802,18 @@ pub fn parse_typedef(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), Sv
         TokenKind::TypeString    |
         TokenKind::TypeCHandle   |
         TokenKind::TypeEvent     => {
-            let mut node_type = AstNode::new(AstNodeKind::Type);
+            let mut node_type = AstNode::new(AstNodeKind::Type, t.pos);
             parse_data_type(ts,&mut node_type, 0)?;
             node_def.child.push(node_type);
         }
         TokenKind::KwClass => {
             ts.flush(1);
-            let mut node_type = AstNode::new(AstNodeKind::Type);
+            let mut node_type = AstNode::new(AstNodeKind::Type, t.pos);
             node_type.attr.insert("type".to_owned(),"class".to_owned());
             node_type.attr.insert("name".to_owned(),t.value);
             node_def.child.push(node_type);
         }
+        TokenKind::KwVirtual => node_def.child.push(parse_vintf_type(ts)?),
         _ => return Err(SvError::syntax(t, "typedef declaration, expecting type/enum/struct".to_owned()))
     }
     // Parse type name
@@ -862,7 +847,7 @@ pub fn parse_port_connection(ts : &mut TokenStream, node: &mut AstNode, is_param
                 allow_list = false;
                 ts.flush(1); // Consume the dot
                 let mut nt = expect_t!(ts,"port name",TokenKind::Ident);
-                let mut node_p = AstNode::new( if is_param {AstNodeKind::Param} else {AstNodeKind::Port});
+                let mut node_p = AstNode::new( if is_param {AstNodeKind::Param} else {AstNodeKind::Port}, nt.pos);
                 node_p.attr.insert("name".to_owned(), nt.value);
                 nt = next_t!(ts,true);
                 match nt.kind {
@@ -888,7 +873,7 @@ pub fn parse_port_connection(ts : &mut TokenStream, node: &mut AstNode, is_param
             TokenKind::DotStar if allow_dot_star => {
                 ts.flush(1); // Consume the .*
                 allow_dot_star = false;
-                let mut node_p = AstNode::new( if is_param {AstNodeKind::Param} else {AstNodeKind::Port});
+                let mut node_p = AstNode::new( if is_param {AstNodeKind::Param} else {AstNodeKind::Port}, t.pos);
                 node_p.attr.insert("name".to_owned(), t.value);
                 node.child.push(node_p);
             },
@@ -899,7 +884,7 @@ pub fn parse_port_connection(ts : &mut TokenStream, node: &mut AstNode, is_param
                 // ordered connection
                 if allow_list {
                     ts.rewind(0);
-                    let mut node_p = AstNode::new( if is_param {AstNodeKind::Param} else {AstNodeKind::Port});
+                    let mut node_p = AstNode::new( if is_param {AstNodeKind::Param} else {AstNodeKind::Port}, t.pos);
                     node_p.attr.insert("name".to_owned(), "".to_owned());
                     node_p.attr.insert("pos".to_owned(), format!("{}",cnt));
                     node_p.child.push(parse_expr(ts,ExprCntxt::ArgList,is_param)?);
@@ -978,12 +963,12 @@ pub fn check_label(ts : &mut TokenStream, name: &str) -> Result<(), SvError> {
 pub fn parse_delay (ts : &mut TokenStream) -> Result<AstNode, SvError> {
     ts.rewind(0);
     let mut t = next_t!(ts,false);
-    let mut node = AstNode::new(AstNodeKind::Wait);
+    let mut node = AstNode::new(AstNodeKind::Wait, t.pos);
     node.attr.insert("kind".to_owned(),t.value);
     t = next_t!(ts,true);
     match t.kind {
         TokenKind::Integer | TokenKind::Real | TokenKind::Kw1step => {
-            let mut nv = AstNode::new(AstNodeKind::Value);
+            let mut nv = AstNode::new(AstNodeKind::Value, t.pos);
             nv.attr.insert("value".to_owned(), t.value);
             ts.flush(1); // consume number
             // Optional time unit
@@ -1009,9 +994,9 @@ pub fn parse_delay (ts : &mut TokenStream) -> Result<AstNode, SvError> {
 
 /// Parse Macro/Directive
 pub fn parse_macro(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), SvError> {
-    let mut node_m = AstNode::new(AstNodeKind::Directive);
     ts.rewind(0);
     let mut t = next_t!(ts,false);
+    let mut node_m = AstNode::new(AstNodeKind::Directive, t.pos);
     node_m.attr.insert("name".to_owned(),t.value.clone());
     // println!("[parse_macro] First token {:?}", t);
     match t.value.as_ref() {
@@ -1195,13 +1180,13 @@ pub fn parse_macro(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), SvEr
 
 
 /// Parse a virtual interface member declaration
-pub fn parse_vintf(ts : &mut TokenStream, node : &mut AstNode) -> Result<(), SvError> {
+pub fn parse_vintf_type(ts : &mut TokenStream) -> Result<AstNode, SvError> {
     ts.rewind(0);
     // Mandatory virtual keyword
-    expect_t!(ts,"virtual interface",TokenKind::KwVirtual);
-    let mut node_i = AstNode::new(AstNodeKind::VIntf);
+    let mut t = expect_t!(ts,"virtual interface",TokenKind::KwVirtual);
+    let mut node_i = AstNode::new(AstNodeKind::VIntf, t.pos);
     // Optional interface keyword
-    let mut t = next_t!(ts,false);
+    t = next_t!(ts,false);
     if t.kind==TokenKind::KwIntf {
         t = next_t!(ts,false);
         node_i.attr.insert("keyword".to_owned(),"explicit".to_owned());
@@ -1215,11 +1200,17 @@ pub fn parse_vintf(ts : &mut TokenStream, node : &mut AstNode) -> Result<(), SvE
     node_i.attr.insert("type".to_owned(),t.value);
     // Optional parameter
     parse_opt_params!(ts,node_i);
+    Ok(node_i)
+}
+
+/// Parse a virtual interface member declaration
+pub fn parse_vintf(ts : &mut TokenStream, node : &mut AstNode) -> Result<(), SvError> {
+    let mut node_i = parse_vintf_type(ts)?;
     loop {
-        t = next_t!(ts,false);
+        let t = next_t!(ts,false);
         match t.kind {
             TokenKind::Ident => {
-                let mut n = AstNode::new(AstNodeKind::Identifier);
+                let mut n = AstNode::new(AstNodeKind::Identifier, t.pos);
                 n.attr.insert("name".to_owned(),t.value);
                 node_i.child.push(n);
                 loop_args_break_cont!(ts,"virtual interface",SemiColon);
@@ -1235,8 +1226,8 @@ pub fn parse_vintf(ts : &mut TokenStream, node : &mut AstNode) -> Result<(), SvE
 pub fn parse_struct_init(ts : &mut TokenStream, node : &mut AstNode) -> Result<(),SvError> {
     // Suppose the function is called when a token '{ has been read -> consume it
     // ts.display_status("parse_struct_init: called");
+    let mut node_s = AstNode::new(AstNodeKind::StructInit, ts.get_pos());
     ts.flush(1);
-    let mut node_s = AstNode::new(AstNodeKind::StructInit);
     // Check the second next token: a colon indicate a structure
     next_t!(ts,true);
     let mut t = next_t!(ts,true);
@@ -1272,7 +1263,7 @@ pub fn parse_struct_init(ts : &mut TokenStream, node : &mut AstNode) -> Result<(
 pub fn parse_case(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), SvError> {
     ts.rewind(0);
     let mut t = next_t!(ts,false);
-    let mut node_c = AstNode::new(AstNodeKind::Case);
+    let mut node_c = AstNode::new(AstNodeKind::Case, t.pos);
     // println!("[parse_case] First Token {}", t);
     if t.kind==TokenKind::KwPriority || t.kind==TokenKind::KwUnique || t.kind==TokenKind::KwUnique0 {
         node_c.attr.insert("prio".to_owned(),t.value);
@@ -1303,8 +1294,8 @@ pub fn parse_case(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), SvErr
     // Loop on all case entry until endcase
     loop {
         // println!("[parse_case] case item {}", t);
-        let mut node_i =  AstNode::new(AstNodeKind::CaseItem);
         t = next_t!(ts,true);
+        let mut node_i =  AstNode::new(AstNodeKind::CaseItem, t.pos);
         if t.kind == TokenKind::KwEndcase {break;}
         // Collect all case item entries
         loop {
@@ -1353,7 +1344,7 @@ pub fn parse_case(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), SvErr
 }
 
 pub fn parse_expr(ts : &mut TokenStream, cntxt: ExprCntxt, allow_type: bool) -> Result<AstNode, SvError> {
-    let mut node_e = AstNode::new(if cntxt==ExprCntxt::ExprGroup {AstNodeKind::ExprGroup} else {AstNodeKind::Expr});
+    let mut node_e = AstNode::new(if cntxt==ExprCntxt::ExprGroup {AstNodeKind::ExprGroup} else {AstNodeKind::Expr}, ts.get_pos());
     let mut is_first = true;
     let mut allow_ident = true;
     let mut allow_op    = true;
@@ -1388,7 +1379,7 @@ pub fn parse_expr(ts : &mut TokenStream, cntxt: ExprCntxt, allow_type: bool) -> 
                             AstNodeKind::Value      |
                             AstNodeKind::Identifier |
                             AstNodeKind::ExprGroup  => {
-                                let mut nc = AstNode::new(AstNodeKind::Replication);
+                                let mut nc = AstNode::new(AstNodeKind::Replication, t.pos);
                                 loop {
                                     nc.child.push(parse_expr(ts,ExprCntxt::FieldList,false)?);
                                     loop_args_break_cont!(ts,"replication",CurlyRight);
@@ -1409,7 +1400,7 @@ pub fn parse_expr(ts : &mut TokenStream, cntxt: ExprCntxt, allow_type: bool) -> 
                 }
                 if allow_ident {
                     // Concatenation operator
-                    let mut nc = AstNode::new(AstNodeKind::Concat);
+                    let mut nc = AstNode::new(AstNodeKind::Concat, t.pos);
                     loop {
                         nc.child.push(parse_expr(ts,ExprCntxt::FieldList,false)?);
                         loop_args_break_cont!(ts,"concatenation",CurlyRight);
@@ -1547,7 +1538,7 @@ pub fn parse_expr(ts : &mut TokenStream, cntxt: ExprCntxt, allow_type: bool) -> 
             TokenKind::Integer |
             TokenKind::KwNull  |
             TokenKind::Real     if allow_ident => {
-                let mut nc = AstNode::new(AstNodeKind::Value);
+                let mut nc = AstNode::new(AstNodeKind::Value, t.pos);
                 nc.attr.insert("value".to_owned(), t.value);
                 node_e.child.push(nc);
                 allow_ident = false;
@@ -1569,7 +1560,7 @@ pub fn parse_expr(ts : &mut TokenStream, cntxt: ExprCntxt, allow_type: bool) -> 
                 allow_ident = true;
                 allow_op    = false;
                 ts.flush(1);
-                let mut nc = AstNode::new(AstNodeKind::Operation);
+                let mut nc = AstNode::new(AstNodeKind::Operation, t.pos);
                 nc.attr.insert("kind".to_owned(),t.value.clone());
                 node_e.child.push(nc);
                 // println!("{}", node_e);
@@ -1587,7 +1578,7 @@ pub fn parse_expr(ts : &mut TokenStream, cntxt: ExprCntxt, allow_type: bool) -> 
                 allow_ident = true;
                 allow_op    = false;
                 ts.flush(1);
-                let mut nc = AstNode::new(AstNodeKind::Operation);
+                let mut nc = AstNode::new(AstNodeKind::Operation, t.pos);
                 nc.attr.insert("kind".to_owned(),t.value.clone());
                 node_e.child.push(nc);
                 // println!("{}", node_e);
@@ -1598,7 +1589,7 @@ pub fn parse_expr(ts : &mut TokenStream, cntxt: ExprCntxt, allow_type: bool) -> 
                 allow_ident = true;
                 allow_op    = false;
                 ts.flush(1);
-                let mut nc = AstNode::new(AstNodeKind::Operation);
+                let mut nc = AstNode::new(AstNodeKind::Operation, t.pos);
                 nc.attr.insert("kind".to_owned(),t.value.clone());
                 // TODO: maybe improve check here : optional slice size followed by concatenation
                 node_e.child.push(nc);
@@ -1626,12 +1617,12 @@ pub fn parse_expr(ts : &mut TokenStream, cntxt: ExprCntxt, allow_type: bool) -> 
                 allow_ident = true;
                 allow_op    = false;
                 ts.flush(1);
-                let mut nc = AstNode::new(AstNodeKind::Operation);
+                let mut nc = AstNode::new(AstNodeKind::Operation, t.pos);
                 nc.attr.insert("kind".to_owned(),t.value.clone());
                 node_e.child.push(nc);
             },
             TokenKind::KwInside if !is_first => {
-                let mut nc = AstNode::new(AstNodeKind::Constraint);
+                let mut nc = AstNode::new(AstNodeKind::Constraint, t.pos);
                 nc.attr.insert("kind".to_owned(),t.value.clone());
                 ts.flush(1);
                 expect_t!(ts,"inside expression",TokenKind::CurlyLeft);
@@ -1654,7 +1645,7 @@ pub fn parse_expr(ts : &mut TokenStream, cntxt: ExprCntxt, allow_type: bool) -> 
                     }
                     TokenKind::ParenLeft => {
                         ts.flush(2);
-                        let mut nc = AstNode::new(AstNodeKind::Constraint);
+                        let mut nc = AstNode::new(AstNodeKind::Constraint, t.pos);
                         nc.attr.insert("kind".to_owned(),"with".to_owned());
                         nc.child.push(parse_expr(ts,ExprCntxt::Arg,false)?);
                         node_e.child.push(nc);
@@ -1666,7 +1657,7 @@ pub fn parse_expr(ts : &mut TokenStream, cntxt: ExprCntxt, allow_type: bool) -> 
                 allow_op    = true;
             }
             TokenKind::OpIncrDecr => {
-                let mut nc = AstNode::new(AstNodeKind::Operation);
+                let mut nc = AstNode::new(AstNodeKind::Operation, t.pos);
                 nc.attr.insert("kind".to_owned(),t.value.clone());
                 if is_first || !allow_op {
                     nc.attr.insert("op".to_owned(),"pre".to_owned());
@@ -1685,7 +1676,7 @@ pub fn parse_expr(ts : &mut TokenStream, cntxt: ExprCntxt, allow_type: bool) -> 
             }
             // Composed assignement are allowed in expression when surrounded by parenthesis
             TokenKind::OpCompAss if cntxt==ExprCntxt::ExprGroup && !is_first && allow_op => {
-                let mut nc = AstNode::new(AstNodeKind::Operation);
+                let mut nc = AstNode::new(AstNodeKind::Operation, t.pos);
                 nc.attr.insert("kind".to_owned(),t.value.clone());
                 node_e.child.push(nc);
                 allow_ident = true;
@@ -1695,7 +1686,7 @@ pub fn parse_expr(ts : &mut TokenStream, cntxt: ExprCntxt, allow_type: bool) -> 
             //
             TokenKind::Que if !is_first => {
                 let node_cond = node_e;
-                node_e = AstNode::new(AstNodeKind::Branch);
+                node_e = AstNode::new(AstNodeKind::Branch, t.pos);
                 node_e.attr.insert("kind".to_owned(),"?".to_owned());
                 node_e.child.push(node_cond);
                 ts.flush(1);
@@ -1746,24 +1737,23 @@ pub fn parse_expr(ts : &mut TokenStream, cntxt: ExprCntxt, allow_type: bool) -> 
 }
 
 pub fn parse_member_or_call(ts : &mut TokenStream, is_first: bool) -> Result<AstNode, SvError> {
-    let mut n = AstNode::new(AstNodeKind::Identifier);
     // ts.display_status("parse_member_or_call: start");
     ts.rewind(0);
-    let mut t = next_t!(ts,false);
-    if t.kind!=TokenKind::Ident && t.kind!=TokenKind::KwNew {
-        if (t.kind != TokenKind::KwThis && t.kind != TokenKind::KwSuper) || !is_first {
-            return Err(SvError::syntax(t, "member. Expecting identifier".to_owned()));
+    let t0 = next_t!(ts,false);
+    let mut n = AstNode::new(AstNodeKind::Identifier, t0.pos);
+    if t0.kind!=TokenKind::Ident && t0.kind!=TokenKind::KwNew {
+        if (t0.kind != TokenKind::KwThis && t0.kind != TokenKind::KwSuper) || !is_first {
+            return Err(SvError::syntax(t0, "member. Expecting identifier".to_owned()));
         }
     }
-    let name = t.value;
     // ts.display_status("parse_member_or_call");
-    t = next_t!(ts,true);
+    let mut t = next_t!(ts,true);
     // println!("[parse_member_or_call] next token = {}", t);
     // Could be a static method call from parameterized class
     if t.kind == TokenKind::Hash && is_first {
         ts.flush(1);
 
-        let mut ns = AstNode::new(AstNodeKind::Scope);
+        let mut ns = AstNode::new(AstNodeKind::Scope, t0.pos);
 
         parse_func_call(ts, &mut ns, true)?;
 
@@ -1771,7 +1761,7 @@ pub fn parse_member_or_call(ts : &mut TokenStream, is_first: bool) -> Result<Ast
         // println!("[parse_member_or_call] static method call from parameterized class : next token = {}", t);
         match t.kind {
             TokenKind::Scope => {
-                ns.attr.insert("name".to_owned(),name);
+                ns.attr.insert("name".to_owned(),t0.value);
                 ts.flush(1);
                 parse_opt_scope(ts,&mut ns)?;
                 n.child.push(ns);
@@ -1782,17 +1772,17 @@ pub fn parse_member_or_call(ts : &mut TokenStream, is_first: bool) -> Result<Ast
             TokenKind::Comma | TokenKind::ParenRight => {
                 n = ns;
                 n.kind = AstNodeKind::Type;
-                n.attr.insert("name".to_owned(),name);
+                n.attr.insert("name".to_owned(),t0.value);
                 ts.rewind(1);
                 return Ok(n);
             }
-            // TODO : need to be reviewed, the scope handline seems incorrect ...
+            // TODO : need to be reviewed, the scope handling seems incorrect ...
             TokenKind::Ident => {
                 n = ns; // Might need to update some attr of ns ? Kind ?
                 n.kind = AstNodeKind::Declaration;
-                n.attr.insert("name".to_owned(),name);
+                n.attr.insert("name".to_owned(),t0.value);
                 ts.rewind(1);
-                parse_var_decl_name(ts, &mut n,ExprCntxt::StmtList,false)?;
+                parse_var_decl_name(ts, &mut n,ExprCntxt::StmtList,false,false)?;
                 loop {
                     t = next_t!(ts,true);
                     // println!("[parse_member_or_call] Next token : {}", t);
@@ -1801,8 +1791,8 @@ pub fn parse_member_or_call(ts : &mut TokenStream, is_first: bool) -> Result<Ast
                         TokenKind::SemiColon => break, // Semi colon indicate end of statement, stop the loop
                         _ => return Err(SvError::syntax(t, "signal declaration, expecting , or ;".to_owned()))
                     }
-                    let mut node_m = AstNode::new(AstNodeKind::Declaration);
-                    parse_var_decl_name(ts, &mut node_m,ExprCntxt::StmtList,false)?;
+                    let mut node_m = AstNode::new(AstNodeKind::Declaration, ts.get_pos());
+                    parse_var_decl_name(ts, &mut node_m,ExprCntxt::StmtList,false,false)?;
                     n.child.push(node_m);
                 }
                 ts.rewind(0);
@@ -1815,8 +1805,8 @@ pub fn parse_member_or_call(ts : &mut TokenStream, is_first: bool) -> Result<Ast
     }
     else if t.kind == TokenKind::Scope {
         ts.flush(1);
-        let mut ns = AstNode::new(AstNodeKind::Scope);
-        ns.attr.insert("name".to_owned(),name);
+        let mut ns = AstNode::new(AstNodeKind::Scope, t0.pos);
+        ns.attr.insert("name".to_owned(),t0.value);
         parse_opt_scope(ts,&mut ns)?;
         n.child.push(ns);
         t = next_t!(ts,false);
@@ -1839,7 +1829,7 @@ pub fn parse_member_or_call(ts : &mut TokenStream, is_first: bool) -> Result<Ast
         }
 
     } else {
-        n.attr.insert("name".to_owned(),name);
+        n.attr.insert("name".to_owned(),t0.value);
     }
     // Check for function call
     if t.kind == TokenKind::ParenLeft {
@@ -1867,9 +1857,9 @@ pub fn parse_member_or_call(ts : &mut TokenStream, is_first: bool) -> Result<Ast
 }
 
 pub fn parse_system_task(ts : &mut TokenStream) -> Result<AstNode, SvError> {
-    let mut n = AstNode::new(AstNodeKind::SystemTask);
     ts.rewind(0);
     let mut t = expect_t!(ts,"system task",TokenKind::SystemTask);
+    let mut n = AstNode::new(AstNodeKind::SystemTask, t.pos);
     let mut name = t.value.clone();
     // Handle special cases
     match t.value.as_ref() {
@@ -1919,7 +1909,7 @@ pub fn parse_func_call(ts : &mut TokenStream, node: &mut AstNode, is_param: bool
     let mut cnt = 0;
     ts.rewind(0);
     let mut t = expect_t!(ts,"function call. Expecting open parenthesis", TokenKind::ParenLeft);
-    let mut nps = AstNode::new(AstNodeKind::Ports);
+    let mut nps = AstNode::new(AstNodeKind::Ports, t.pos);
     loop {
         t = next_t!(ts,true);
         // println!("[parse_func_call] Token {}", t);
@@ -1928,7 +1918,7 @@ pub fn parse_func_call(ts : &mut TokenStream, node: &mut AstNode, is_param: bool
                 allow_list = false;
                 ts.flush_rd(); // Consume the dot
                 let mut nt = expect_t!(ts,"function argument name",TokenKind::Ident);
-                let mut node_p = AstNode::new(AstNodeKind::Port);
+                let mut node_p = AstNode::new(AstNodeKind::Port, nt.pos);
                 node_p.attr.insert("name".to_owned(), nt.value);
                 nt = next_t!(ts,true);
                 match nt.kind {
@@ -1955,7 +1945,7 @@ pub fn parse_func_call(ts : &mut TokenStream, node: &mut AstNode, is_param: bool
             TokenKind::TypeIntVector |
             TokenKind::TypeIntAtom if is_param => {
                 ts.flush(1);
-                let mut node_p = AstNode::new(AstNodeKind::Param);
+                let mut node_p = AstNode::new(AstNodeKind::Param, t.pos);
                 node_p.attr.insert("name".to_owned(), "".to_owned());
                 node_p.attr.insert("type".to_owned(), t.value);
                 node_p.attr.insert("pos".to_owned(), format!("{}",cnt));
@@ -1972,7 +1962,7 @@ pub fn parse_func_call(ts : &mut TokenStream, node: &mut AstNode, is_param: bool
             TokenKind::TypeString  |
             TokenKind::TypeCHandle if is_param => {
                 ts.flush(1);
-                let mut node_p = AstNode::new(AstNodeKind::Param);
+                let mut node_p = AstNode::new(AstNodeKind::Param, t.pos);
                 node_p.attr.insert("name".to_owned(), "".to_owned());
                 node_p.attr.insert("type".to_owned(), t.value);
                 node_p.attr.insert("pos".to_owned(), format!("{}",cnt));
@@ -1990,7 +1980,7 @@ pub fn parse_func_call(ts : &mut TokenStream, node: &mut AstNode, is_param: bool
                     return Err(SvError::syntax(t,"function arg. Expecting port name".to_owned()));
                 }
                 s.push_str(&t.value);
-                let mut node_p = AstNode::new(AstNodeKind::Param);
+                let mut node_p = AstNode::new(AstNodeKind::Param, t.pos);
                 node_p.attr.insert("name".to_owned(), "".to_owned());
                 node_p.attr.insert("value".to_owned(), s);
                 node_p.attr.insert("pos".to_owned(), format!("{}",cnt));
@@ -2000,7 +1990,7 @@ pub fn parse_func_call(ts : &mut TokenStream, node: &mut AstNode, is_param: bool
             }
             TokenKind::KwNull => {
                 ts.flush(1);
-                let mut node_p = AstNode::new(AstNodeKind::Port);
+                let mut node_p = AstNode::new(AstNodeKind::Port, t.pos);
                 node_p.attr.insert("name".to_owned(), "".to_owned());
                 node_p.attr.insert("value".to_owned(), t.value);
                 node_p.attr.insert("pos".to_owned(), format!("{}",cnt));
@@ -2016,7 +2006,7 @@ pub fn parse_func_call(ts : &mut TokenStream, node: &mut AstNode, is_param: bool
                 // ordered connection
                 if allow_list {
                     ts.rewind(0);
-                    let mut node_p = AstNode::new(AstNodeKind::Port);
+                    let mut node_p = AstNode::new(AstNodeKind::Port, t.pos);
                     node_p.child.push(parse_expr(ts,ExprCntxt::ArgList,false)?);
                     node_p.attr.insert("name".to_owned(), "".to_owned());
                     node_p.attr.insert("pos".to_owned(), format!("{}",cnt));
@@ -2056,7 +2046,7 @@ pub fn parse_time(ts : &mut TokenStream) -> Result<String,SvError> {
 
 /// Parse an assetr/else
 pub fn parse_assert(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), SvError> {
-    let mut n = AstNode::new(AstNodeKind::Assert);
+    let mut n = AstNode::new(AstNodeKind::Assert, ts.get_pos());
     ts.flush(1); // Consume assert
     // TODO: support for deffered assertion (#0/final)
     let mut t = next_t!(ts,false);
@@ -2086,7 +2076,7 @@ pub fn parse_assert(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), SvE
     // Handle optionnal else part
     if t.kind==TokenKind::KwElse {
         ts.flush(1);
-        let mut node_else = AstNode::new(AstNodeKind::Branch);
+        let mut node_else = AstNode::new(AstNodeKind::Branch, t.pos);
         node_else.attr.insert("kind".to_owned(),"else".to_owned());
         parse_class_stmt_or_block(ts, &mut node_else)?;
         n.child.push(node_else);
@@ -2100,8 +2090,8 @@ pub fn parse_assert(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), SvE
 /// Parse constraint block
 /// Temporary implementation : just get the name of the constraint
 pub fn parse_constraint(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), SvError> {
-    let mut n = AstNode::new(AstNodeKind::Constraint);
     let t = next_t!(ts,false);
+    let mut n = AstNode::new(AstNodeKind::Constraint, t.pos);
     if t.kind == TokenKind::KwConstraint {
         let nt = expect_t!(ts,"constraint",TokenKind::Ident);
         n.attr.insert("name".to_owned(),nt.value);
@@ -2116,7 +2106,7 @@ pub fn parse_constraint(ts : &mut TokenStream, node: &mut AstNode) -> Result<(),
 /// Parse covergroup block
 /// Temporary implementation : just get the name of the covergroup
 pub fn parse_covergroup(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), SvError> {
-    let mut n = AstNode::new(AstNodeKind::Covergroup);
+    let mut n = AstNode::new(AstNodeKind::Covergroup, ts.get_pos());
     ts.flush(1); // Consume the covergroup word
     let t = expect_t!(ts,"covergroup",TokenKind::Ident);
     n.attr.insert("name".to_owned(),t.value);
@@ -2129,7 +2119,7 @@ pub fn parse_covergroup(ts : &mut TokenStream, node: &mut AstNode) -> Result<(),
 /// Parse property block
 /// Temporary implementation : just get the name of the covergroup
 pub fn parse_sva_property(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), SvError> {
-    let mut n = AstNode::new(AstNodeKind::SvaProperty);
+    let mut n = AstNode::new(AstNodeKind::SvaProperty, ts.get_pos());
     ts.flush(1); // Consume the property word
     let t = expect_t!(ts,"SVA property",TokenKind::Ident);
     n.attr.insert("name".to_owned(),t.value);

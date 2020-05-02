@@ -12,6 +12,7 @@ mod class;
 pub mod uvm_macro;
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 
 
 use astnode::*;
@@ -20,9 +21,11 @@ use module_hdr::*;
 use module_body::*;
 use crate::lex::{
     token::*,
+    position::Position,
     token_stream::*
 };
 use crate::error::*;
+use crate::reporter::MsgID;
 
 #[derive(Debug,  Clone)]
 pub struct MacroDef {
@@ -38,15 +41,17 @@ pub type Defines = HashMap<String,Option<MacroDef>>;
 
 #[derive(Debug, Clone)]
 pub struct Ast {
+    pub filename: PathBuf,
     pub tree    : AstNode,
     pub defines : Defines,
 }
 
 impl Ast {
 
-    pub fn new() -> Ast {
+    pub fn new(filename: PathBuf) -> Ast {
         Ast {
-            tree: AstNode::new(AstNodeKind::Root),
+            filename,
+            tree: AstNode::new(AstNodeKind::Root, Position::new()),
             defines: HashMap::new(),
         }
     }
@@ -65,27 +70,25 @@ impl Ast {
                             TokenKind::CompDir => parse_macro(ts,&mut self.tree)?,
                             TokenKind::KwModule => {
                                 ts.flush_rd();
-                                let mut node_m = AstNode::new(AstNodeKind::Module);
+                                let mut node_m = AstNode::new(AstNodeKind::Module, t.pos);
                                 parse_module_hdr(ts,&mut node_m)?;
-                                let mut node_b = AstNode::new(AstNodeKind::Body);
+                                let mut node_b = AstNode::new(AstNodeKind::Body, t.pos);
                                 parse_module_body(ts,&mut node_b, ModuleCntxt::Top)?;
                                 node_m.child.push(node_b);
                                 check_label(ts, &node_m.attr["name"])?;
                                 self.tree.child.push(node_m);
                             },
                             TokenKind::KwIntf => {
-                                ts.flush_rd();
-                                match interface::parse_interface(ts) {
-                                    Ok(n) => self.tree.child.push(n),
-                                    Err(e) => return Err(e)
+                                let nt = next_t!(ts,true);
+                                ts.rewind(0);
+                                match nt.kind {
+                                    TokenKind::KwClass => self.tree.child.push(class::parse_class(ts)?),
+                                    _ => self.tree.child.push(interface::parse_interface(ts)?)
                                 }
                             },
                             TokenKind::KwPackage => {
-                                ts.flush_rd();
-                                match package::parse_package(ts) {
-                                    Ok(n) => self.tree.child.push(n),
-                                    Err(e) => return Err(e)
-                                }
+                                ts.rewind(1);
+                                self.tree.child.push(package::parse_package(ts)?);
                             },
                             TokenKind::KwTypedef => parse_typedef(ts,&mut self.tree)?,
                             TokenKind::KwImport  => parse_import(ts,&mut self.tree)?,
@@ -108,7 +111,8 @@ impl Ast {
                             TokenKind::SemiColon => ts.flush(1),
                             // Display all un-implemented token (TEMP)
                             _ => {
-                                println!("[Warning] {:?} -- Root skipping {}",ts.source.get_filename(), t);
+                                ts.project.log.msg_s(MsgID::DbgSkip, &format!("{} {} | Skipping {}", ts.source.get_filename(), t.pos, t.kind));
+                                // println!("[Warning] {:?} -- Root skipping {}",ts.source.get_filename(), t);
                                 ts.flush_rd();
                             }
                         }
@@ -124,4 +128,3 @@ impl Ast {
     }
 
 }
-

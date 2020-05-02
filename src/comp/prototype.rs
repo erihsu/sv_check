@@ -107,6 +107,7 @@ impl DefPort {
                 AstNodeKind::Slice if allow_slice => self.unpacked.push(parse_dim(nc)),
                 AstNodeKind::Value      => {self.default = Some(nc.attr["value"].clone()); allow_slice = false; }
                 AstNodeKind::Identifier => {self.default = Some(nc.attr["name"].clone());  allow_slice = false; }
+                AstNodeKind::Type       => {self.default = Some(nc.attr["type"].clone());  allow_slice = false; }
                 // TODO !!!
                 AstNodeKind::Slice      |
                 AstNodeKind::Concat     |
@@ -116,7 +117,7 @@ impl DefPort {
                 AstNodeKind::Expr       => {self.default = Some("".to_owned());  allow_slice = false; }
                 _ => {
                     allow_slice = false;
-                    println!("[DefPort] Port {} | Skipping {:?} : {:?}",self.name, nc.kind, nc.attr)
+                    println!("[DefPort] Port {} | Skipping {:?} : {:?}",self.name, nc.kind, nc.attr);
                 }
             }
         }

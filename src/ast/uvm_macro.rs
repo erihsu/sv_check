@@ -5,7 +5,7 @@ use crate::ast::{Ast,MacroDef};
 
 
 pub fn get_uvm_macro() -> Box<Ast> {
-    let mut ast = Ast::new();
+    let mut ast = Ast::new(std::path::PathBuf::from("uvm_macro.svh"));
     let mut body = Vec::with_capacity(1024);
 
     body.push(Token {kind: KwBegin,value: "begin".to_string(),pos: Position {line: 1, col: 1}});

@@ -9,7 +9,7 @@ use std::fmt;
 #[derive(PartialEq, Clone, Debug)]
 pub enum TokenKind {
     // Keywords
-    KwModule,KwEndModule, KwImport, KwExport, KwParam, KwLParam, KwAssign, KwDefparam, KwStatic, KwAutomatic,
+    KwModule,KwEndModule, KwImport, KwExport, KwParam, KwLParam, KwSpecParam, KwAssign, KwDefparam, KwStatic, KwAutomatic,
     KwInput , KwOutput, KwInout , KwRef, KwVar, KwTimeunit, KwTimeprec,
     KwNetType, KwSupply, KwSigning, KwEnum, KwStruct, KwUnion, KwPacked, KwTypedef, KwType,
     KwAlways, KwAlwaysC, KwAlwaysF, KwAlwaysL, KwInitial, KwFinal, KwEdge, KwOr, KwIff, KwBind,
@@ -133,6 +133,7 @@ impl fmt::Display for TokenKind {
             TokenKind::KwEndcase         => write!(f, "Kw:endcase"     ),
             TokenKind::KwParam           => write!(f, "Kw:param"       ),
             TokenKind::KwLParam          => write!(f, "Kw:localparam"  ),
+            TokenKind::KwSpecParam       => write!(f, "Kw:specparam"   ),
             TokenKind::KwImport          => write!(f, "Kw:import"      ),
             TokenKind::KwExport          => write!(f, "Kw:export"      ),
             TokenKind::KwAssign          => write!(f, "Kw:assign"      ),
@@ -499,7 +500,7 @@ pub fn keyword_from_str(w: &str) -> Option<TokenKind> {
         "soft"                => Some(TokenKind::Keyword    ),
         "solve"               => Some(TokenKind::Keyword    ),
         "specify"             => Some(TokenKind::Keyword    ),
-        "specparam"           => Some(TokenKind::Keyword    ),
+        "specparam"           => Some(TokenKind::KwSpecParam),
         "static"              => Some(TokenKind::KwStatic   ),
         "strong"              => Some(TokenKind::Keyword    ),
         "strong0"             => Some(TokenKind::KwDrive    ),

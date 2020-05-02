@@ -91,7 +91,7 @@ impl CompLib {
         m = DefMethod::new("first".to_owned(),false);
         m.ret = Some(DefType::User(TypeUser::new("enum".to_owned())));
         o.defs.insert(m.name.clone(),ObjDef::Method(m));
-        m = DefMethod::new("lasst".to_owned(),false);
+        m = DefMethod::new("last".to_owned(),false);
         m.ret = Some(DefType::User(TypeUser::new("enum".to_owned())));
         o.defs.insert(m.name.clone(),ObjDef::Method(m));
         m = DefMethod::new("next".to_owned(),false);
@@ -191,6 +191,9 @@ impl CompLib {
 
         // Generic array reduction method
         o = DefClass::new("!array".to_owned());
+        m = DefMethod::new("size".to_owned(),false);
+        m.ret = Some(TYPE_INT);
+        o.defs.insert(m.name.clone(),ObjDef::Method(m));
         m = DefMethod::new("sum".to_owned(),false);
         o.defs.insert(m.name.clone(),ObjDef::Method(m));
         m = DefMethod::new("product".to_owned(),false);

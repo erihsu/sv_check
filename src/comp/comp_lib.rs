@@ -1,17 +1,16 @@
 // This file is part of sv_check and subject to the terms of MIT Licence
 // Copyright (c) 2019, clams@mail.com
 
-#[allow(unused_imports)]
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap};
 
 use crate::ast::Ast;
-#[allow(unused_imports)]
 use crate::ast::astnode::{AstNode,AstNodeKind};
 
 use crate::comp::comp_obj::{ObjDef};
 use crate::comp::prototype::*;
 use crate::comp::def_type::{DefType,TypeVIntf,TypePrimary,TypeUser,TYPE_INT,TYPE_STR};
 use crate::comp::lib_uvm::get_uvm_lib;
+use crate::reporter::{Reporter,/* Severity,*/ MsgID};
 
 type LinkCntxt = (AstNodeKind,String);
 
@@ -20,7 +19,8 @@ pub struct CompLib {
     pub name   : String,
     pub objects: HashMap<String, ObjDef>,
     pub binds  : HashMap<String, Vec<String> >,
-    cntxt : Vec<LinkCntxt>
+    cntxt : Vec<LinkCntxt>,
+    pub log : Reporter
 }
 
 // Structure containing local information for a block:
@@ -52,8 +52,8 @@ impl CompLib {
 
     // Create a library containing definition of all object compiled
     // Try to fix any missing reference, analyze hierarchical access, ...
-    pub fn new(name: String, ast_list: Vec<Ast>, ast_inc: HashMap<String,Box<Ast>>) -> CompLib {
-        let mut lib = CompLib {name, objects:HashMap::new(), binds:HashMap::new(), cntxt:Vec::new()};
+    pub fn new(name: String, ast_list: &Vec<Ast>, ast_inc: &HashMap<String,Box<Ast>>, log: &mut Reporter) -> CompLib {
+        let mut lib = CompLib {name, objects:HashMap::new(), binds:HashMap::new(), cntxt:Vec::new(), log: log.clone()};
         // let mut missing_scope : HashSet<String> = HashSet::new();
 
         // Create a top object for type/localparam definition without scope
@@ -61,8 +61,10 @@ impl CompLib {
         lib.objects.insert("uvm_pkg".to_owned(),get_uvm_lib());
 
         // Extract object definition from all ASTs
-        for ast in &ast_list {
-            ObjDef::from_ast(&ast, &ast_inc, &mut lib);
+        for ast in ast_list {
+            lib.log.set_filename(&ast.filename);
+            // println!("Compiliing AST from {:?}", path_display(&log.filename));
+            ObjDef::from_ast(&ast, ast_inc, &mut lib);
             // ObjDef::from_ast(&ast, &ast_inc, &mut lib.objects);
         }
 
@@ -71,8 +73,10 @@ impl CompLib {
 
         // Second pass : check types and signals are defined, module instance are correct ...
         for ast in ast_list {
+            lib.log.set_filename(&ast.filename);
+            // println!("Linking AST from {:?}", path_display(&ast.filename));
             let mut li = LocalInfo{imports: Vec::new(),defs: Vec::new(), obj: None};
-            lib.check_ast(&ast.tree, &ast_inc, &mut li, false);
+            lib.check_ast(&ast.tree, ast_inc, &mut li, false);
         }
 
         lib
@@ -147,7 +151,8 @@ impl CompLib {
                                     // println!("[Linking] {:?} | Loop Foreach\n {}", self.cntxt, ncc);
                                     for x in &ncc.child {
                                         if x.kind != AstNodeKind::Identifier {
-                                            println!("[Linking] {:?} | Unable to extract foreach variables in: {}", self.cntxt, ncc);
+                                            self.log.msg(MsgID::ErrSyntax,x,"foreach");
+                                            // println!("[Linking] {:?} | Unable to extract foreach variables in: {}", self.cntxt, ncc);
                                             break;
                                         }
                                         let mut t= TYPE_INT;
@@ -192,13 +197,13 @@ impl CompLib {
                 }
                 // Include node
                 AstNodeKind::Directive => {
-                    nc.attr.get("include").map(
-                        |i| ast_inc.get(i).map_or_else(
-                            || if i!="uvm_macros.svh" {println!("[Linking] Include {} not found", i)},
-                            |a| self.check_ast(&a.tree,ast_inc,li,false)
-                        )
-                    );
-                },                  
+                    if let Some(i) = nc.attr.get("include") {
+                        match ast_inc.get(i) {
+                            Some(a) => self.check_ast(&a.tree,ast_inc,li,false),
+                            _ => if i!="uvm_macros.svh" {self.log.msg_s(MsgID::ErrFile,i);}
+                        }
+                    }
+                }             
                 // Update local info
                 AstNodeKind::Import => {
                     // Import DPI function/task
@@ -208,7 +213,8 @@ impl CompLib {
                                 let m = DefMethod::from(&nc.child[0]);
                                 li.add_def(m.name.clone(),ObjDef::Method(m));
                             } else {
-                                println!("[Linking] {:?} | Skipping DPI import : {:?}", self.cntxt, nc);
+                                self.log.msg(MsgID::DbgSkip,nc,"DPI import");
+                                // println!("[Linking] {:?} | Skipping DPI import : {:?}", self.cntxt, nc);
                             }
                         }
                     }
@@ -223,10 +229,12 @@ impl CompLib {
                                     // TODO : check that the name exist in the context
                                     //        decide how this should be handled in the local info:
                                     //        maybe copy the def from the import ?
-                                    println!("[Linking] {:?} | Skipping Import {:?}", self.cntxt, ncc.attr);
+                                    self.log.msg(MsgID::DbgSkip,ncc,"import package element");
+                                    // println!("[Linking] {:?} | Skipping Import {:?}", self.cntxt, ncc.attr);
                                 }
                             } else {
-                                println!("[Linking] {:?} | Import Package {} not found", self.cntxt, ncc.attr["pkg_name"]);
+                                self.log.msg(MsgID::ErrNotFound,ncc, &ncc.attr["pkg_name"]);
+                                // println!("[Linking] {:?} | Import Package {} not found", self.cntxt, ncc.attr["pkg_name"]);
                             }
                         }
                     }
@@ -255,7 +263,8 @@ impl CompLib {
                         kind : t, is_const: false, unpacked: Vec::new(), access: Access::Local};
                     if let DefType::User(k) = &m.kind {
                         if self.find_def(&k.name,k.scope.as_ref(),li,false,false,false).0.is_none() {
-                            println!("[Linking] {:?} | Type {:?} undeclared", self.cntxt, k.name);
+                            self.log.msg(MsgID::ErrNotFound, nc, &k.name);
+                            // println!("[Linking] {:?} | Type {:?} undeclared", self.cntxt, k.name);
                         }
                     }
                     // println!("[Linking] {:?} | Method {} has return type {:?}", self.cntxt, m.name,m.kind);
@@ -276,7 +285,7 @@ impl CompLib {
                                 li.add_def(m.name.clone(),ObjDef::Member(m));
                             }
                             AstNodeKind::Params => {}
-                            _ => println!("[Linking] {:?} | VIntf Skipping {}",self.cntxt, ncc.kind),
+                            _ => self.log.msg(MsgID::DbgSkip,ncc,"Virtual Interface"),
                         }
                     }
                 }
@@ -304,7 +313,8 @@ impl CompLib {
                                     let fdc = fd.clone();
                                     li.add_def(nc.attr["name"].clone(),fdc);
                                 } else {
-                                    println!("[Linking] {:?} | Type {:?} undeclared", self.cntxt, nc.attr["name"]);
+                                    self.log.msg(MsgID::ErrNotFound, nc, &nc.attr["name"]);
+                                    // println!("[Linking] {:?} | Type {:?} undeclared", self.cntxt, nc.attr["name"]);
                                 }
                             }
                             _ => {
@@ -340,7 +350,7 @@ impl CompLib {
                             }
                             AstNodeKind::Declaration => {}
                             AstNodeKind::Slice  => {}
-                            _ => println!("[Linking] {:?} | Struct: Skipping {}",self.cntxt, ncc),
+                            _ => self.log.msg(MsgID::DbgSkip,ncc,"Structure declaration")
                         }
                     }
                 }
@@ -453,7 +463,7 @@ impl CompLib {
                 AstNodeKind::Bind  => {
                     // println!("[Linking] {:?} | Binding ignored {:?} ({} childs) : {:?}", self.cntxt, nc.kind, nc.child.len(), nc.attr);
                 }
-                _ => {println!("[Linking] {:?} | Skipping {:?} ({} childs) : {:?}", self.cntxt, nc.kind, nc.child.len(), nc.attr);}
+                _ => self.log.msg(MsgID::DbgSkip,nc,"Root")
             }
         }
         if new_cntxt {
@@ -482,7 +492,7 @@ impl CompLib {
                     // println!("[{:?}] Adding enum : {:?}", self.name,m);
                     li.add_def(m.name.clone(),ObjDef::Member(m));
                 }
-                _ => println!("[Linking] {:?} | Enum: Skipping {}",self.cntxt, nc.kind),
+                _ => self.log.msg(MsgID::DbgSkip,nc,"Enum declaration")
             }
         }
     }
@@ -518,7 +528,10 @@ impl CompLib {
                     }
                     return (None,None);
                 }
-                Some(di) => {println!("[Linking] {:?} | Ignoring scope definition: {:?}",self.cntxt,di);return (None,None);}
+                Some(di) => {
+                    self.log.msg_s(MsgID::DbgSkip, &format!("(find_def) Ignoring scope definition: {:?}",di) );
+                    return (None,None);
+                }
                 _ => {return (None,None);}
             }
         }
@@ -586,7 +599,7 @@ impl CompLib {
                 }
             }
         }
-        // Check bindings: at this pint binding were resolved and should be only one element: a type
+        // Check bindings: at this point binding were resolved and should be only one element: a type
         if check_bind {
             if let Some((AstNodeKind::Module,module_name)) = self.cntxt.last() {
                 if let Some(b) = self.binds.get(module_name) {
@@ -596,9 +609,9 @@ impl CompLib {
                             if d.defs.contains_key(name) {
                                 return (Some(&d.defs[name]),None);
                             }
-                            println!("[Linking] {:?} | {:?} not found in bind context {:?} ", self.cntxt, name, b);
+                            self.log.msg_s(MsgID::ErrNotFound, &format!("{} not found in bind context {:?} ", name, b ));
                         } else {
-                            println!("[Linking] {:?} | Binding type {:?} not defined", self.cntxt, b);
+                            self.log.msg_s(MsgID::ErrNotFound, &format!("Binding type {:?} not found", b ));
                         }
                     }
                 }
@@ -638,7 +651,7 @@ impl CompLib {
                         let mut cnt = 0;
                         for p in &bct.params {
                             if bcd.params.len() == 0 {
-                                println!("[Linking] {:?} | Too many parameters in base class {:?}", self.cntxt, bcd.name);
+                                self.log.msg_s(MsgID::ErrArgExtra, &format!("Too many parameters in base class {:?}. Expecting {}.", bcd.name, bct.params.len()));
                                 break;
                             }
                             let pn =
@@ -660,7 +673,7 @@ impl CompLib {
                                         if let Some(d) = &p.default {
                                             pd.insert(p.name.clone(), if pd.contains_key(d) {pd[d].clone()} else {d.clone()});
                                         } else {
-                                             println!("[Linking] {:?} | Unset param {:?}", self.cntxt, p);
+                                            self.log.msg_s(MsgID::ErrNotFound, &format!("Parameter {:?} not set", p));
                                         }
                                     }
                                 }
@@ -678,11 +691,11 @@ impl CompLib {
                     o = &bcd;
                 }
                 Some(bcd) => {
-                    println!("[Linking] {:?} | Class {:?} -> Base class {} is not a class : {:?}",self.cntxt,cd.name,bct.name,bcd);
+                    self.log.msg_s(MsgID::ErrNotFound, &format!("Class {:?} -> Base class {} is not a class : {:?}",cd.name,bct.name,bcd));
                     break;
                 }
                 None => {
-                    println!("[Linking] {:?} | Class {:?} -> Base class {} not found",self.cntxt,cd.name,bct.name);
+                    self.log.msg_s(MsgID::ErrNotFound, &format!("Class {:?} -> Base class {} not found",cd.name,bct.name));
                     break;
                 }
             }
@@ -702,7 +715,7 @@ impl CompLib {
 
     // Check a node identifier is properly defined and check any hierarchical access to it.
     pub fn check_ident(&self, node: &AstNode, li: &LocalInfo) {
-        if !node.attr.contains_key("name") {println!("[Linking] {:?} | check_ident {}",self.cntxt,node);}
+        // if !node.attr.contains_key("name") {println!("[Linking] {:?} | check_ident {}",self.cntxt,node);}
         let mut o : Option<&ObjDef> = None;
         match node.attr["name"].as_ref() {
             "this"  => o = li.obj.as_ref(),
@@ -719,7 +732,7 @@ impl CompLib {
         }
         //
         if o.is_none() {
-            println!("[Linking] {:?} | Identifier {:?} undeclared", self.cntxt, node.attr["name"]);
+            self.log.msg(MsgID::ErrNotFound, node, &node.attr["name"]);
             return;
         }
         // if node.attr["name"]=="tr" {println!("[Linking] {:?} | tr type = {:?}", self.cntxt, o.unwrap());}
@@ -753,7 +766,8 @@ impl CompLib {
                     // TODO: check for unpacked dimension
                     let cd = self.find_def_in_obj(&ot,&nc.attr["name"],li);
                     if cd.is_none() {
-                        println!("[Linking] {:?} | Identifier {} not found in {} ({}{:?})", self.cntxt, nc.attr["name"],node.attr["name"],ot.get_typename(),dim);
+                        self.log.msg(MsgID::ErrNotFound, nc, &nc.attr["name"]);
+                        // println!("[Linking] {:?} | Identifier {} not found in {} ({}{:?})", self.cntxt, nc.attr["name"],node.attr["name"],ot.get_typename(),dim);
                     }
                     else if nc.child.len() > 0 {
                         // let _ctd = self.get_type_def(cd,li);
@@ -774,7 +788,8 @@ impl CompLib {
                                 SvArrayKind::Queue    => {if let ObjDef::Class(od) = &self.objects["!array!queue"] {od.defs.get(&nc.attr["name"])} else {None} }
                                 SvArrayKind::Dict(_)  => {if let ObjDef::Class(od) = &self.objects["!array!dict" ] {od.defs.get(&nc.attr["name"])} else {None} }
                                 _ => {
-                                    println!("[Linking] {:?} | No method {} in array {} ({}{:?})", self.cntxt, nc.attr["name"],node.attr["name"],ot.get_typename(),dim);
+                                    self.log.msg(MsgID::ErrNotFound, nc, &nc.attr["name"]);
+                                    // println!("[Linking] {:?} | No method {} in array {} ({}{:?})", self.cntxt, nc.attr["name"],node.attr["name"],ot.get_typename(),dim);
                                     None
                                 }
                             }
@@ -786,13 +801,14 @@ impl CompLib {
                         cd = if let ObjDef::Class(od) = &self.objects["!array"] {od.defs.get(&nc.attr["name"])} else {None};
                     }
                     if cd.is_none() {
-                        println!("[Linking] {:?} | Method {} not found in {} ({}{:?})", self.cntxt, nc.attr["name"],node.attr["name"],ot.get_typename(),dim);
+                        self.log.msg(MsgID::ErrNotFound, nc, &nc.attr["name"]);
+                        // println!("[Linking] {:?} | Method {} not found in {} ({}{:?})", self.cntxt, nc.attr["name"],node.attr["name"],ot.get_typename(),dim);
                     } else {
                         self.check_call(nc,cd,li);
                     }
                 }
                 AstNodeKind::Ports => {}
-                _ => {println!("[Linking] {:?} | Identifier {} has child {:?}", self.cntxt, node.attr["name"], node.child);}
+                _ => self.log.msg(MsgID::DbgSkip, nc, &format!("child of {:?}", node.attr["name"]))
             }
         }
     }
@@ -879,7 +895,7 @@ impl CompLib {
                     }
                     Some(tdr_) => ot = tdr_.clone(),
                     None => {
-                        println!("[Linking] {:?} | User type {:?} is undefined : {:?}", self.cntxt,x.name,tdr.0);
+                        self.log.msg_s(MsgID::ErrNotFound, &format!("Type {} not found", x.name));
                         return None;
                     }
                 }
@@ -890,7 +906,7 @@ impl CompLib {
                     ot = tdr.0.unwrap().clone();
                     // println!("[Linking] {:?} | Identifier {:?} Virtual Interface = {:?}", self.cntxt, node.attr["name"], tdr.0.unwrap());
                 } else {
-                    println!("[Linking] {:?} | User type {:?} undefined", self.cntxt, x.name);
+                    self.log.msg_s(MsgID::ErrNotFound, &format!("Type {} not found", x.name));
                     return None;
                 }
             }
@@ -934,7 +950,7 @@ impl CompLib {
                 }
                 Some(tdr_) => ot = tdr_.clone(),
                 None => {
-                    println!("[Linking] {:?} | User type {:?} is undefined", self.cntxt,type_name);
+                    self.log.msg_s(MsgID::ErrNotFound, &format!("Type {} not found", type_name));
                     return None;
                 }
             }
@@ -946,7 +962,7 @@ impl CompLib {
     }
 
     // Analyse a module/interface instance
-    pub fn check_type(&self, node: &AstNode, li: &LocalInfo) {
+    pub fn check_type(&mut self, node: &AstNode, li: &LocalInfo) {
         if node.attr.contains_key("type") {
             // println!("[Linking] {:?} | Checking type in {:?}", self.cntxt, node.attr);
             let name = &node.attr["type"];
@@ -958,7 +974,8 @@ impl CompLib {
                 "shortreal" | "real" | "realtime" | "string" | "void" | "chandle" | "event" => {},
                 _ => {
                     if self.find_def(name,scope,li,false,false,false).0.is_none() {
-                        println!("[Linking] {:?} | Type {:?} undeclared", self.cntxt, node.attr["type"]);
+                        self.log.msg(MsgID::ErrNotFound, node, &node.attr["type"]);
+                        // println!("[Linking] {:?} | Type {:?} undeclared", self.cntxt, node.attr["type"]);
                     }
                 }
             }
@@ -966,10 +983,11 @@ impl CompLib {
     }
 
     // Analyse a module/interface instance
-    pub fn check_inst(&self, node: &AstNode, li: &mut LocalInfo) {
+    pub fn check_inst(&mut self, node: &AstNode, li: &mut LocalInfo) {
         // Paranoid check : to be removed
         if !node.attr.contains_key("type") {
-            println!("[Linking] Instance with no type: {:?}", node.attr);
+             self.log.msg(MsgID::DbgSkip, node, "Instance with no type");
+            // println!("[Linking] Instance with no type: {:?}", node.attr);
             return;
         }
         // Instance module should appear as a top object
@@ -988,10 +1006,11 @@ impl CompLib {
                                     AstNodeKind::Port => {
                                         // println!("[{:?}] Instance {} of {}, port {:?} = {:?}", self.cntxt, n.attr["name"],node.attr["type"],nc.attr, nc.child);
                                         match nc.attr["name"].as_ref() {
-                                            // When unamed, port are taken in order
+                                            // When un-named, port are taken in order
                                             "" => {
                                                 if ports.len() == 0 {
-                                                    println!("[Linking] {:?} |  Too many ports in instance {} of {}",self.cntxt,nc.attr["name"], node.attr["type"]);
+                                                    self.log.msg(MsgID::ErrArgExtra, node, &format!("{}", d.ports.len()));
+                                                    // println!("[Linking] {:?} |  Too many ports in instance {} of {}",self.cntxt,nc.attr["name"], node.attr["type"]);
                                                     break;
                                                 }
                                                 ports.remove(0);
@@ -1001,7 +1020,8 @@ impl CompLib {
                                             // Named connection
                                             _ => {
                                                 if ports.len() == 0 {
-                                                    println!("[Linking] {:?} |  Too many ports in instance {} of {}",self.cntxt,nc.attr["name"], node.attr["type"]);
+                                                    self.log.msg(MsgID::ErrArgExtra, node, &format!("{}. Extra port {}.", d.ports.len(), nc.attr["name"]));
+                                                    // println!("[Linking] {:?} |  Too many ports in instance {} of {}",self.cntxt,nc.attr["name"], node.attr["type"]);
                                                     break;
                                                 }
                                                 if let Some(i) = ports.iter().position(|x| if let ObjDef::Port(p) = x {p.name == nc.attr["name"]} else {false}) {
@@ -1009,7 +1029,8 @@ impl CompLib {
                                                     ports.remove(i);
                                                 }
                                                 else {
-                                                    println!("[Linking] {:?} | Unknown port name {} in instance {} of {}", self.cntxt, nc.attr["name"], n.attr["name"], d.name );
+                                                    self.log.msg(MsgID::ErrNotFound, nc, &nc.attr["name"]);
+                                                    // println!("[Linking] {:?} | Unknown port name {} in instance {} of {}", self.cntxt, nc.attr["name"], n.attr["name"], d.name );
                                                 }
                                             }
                                         }
@@ -1018,7 +1039,7 @@ impl CompLib {
                                         self.search_ident(&nc,li);
                                     }
                                     AstNodeKind::Slice => {}
-                                    _ => println!("[Linking] {:?} | Instance {} of {}, skipping {}", self.cntxt, n.attr["name"],node.attr["type"],nc.kind)
+                                    _ => self.log.msg(MsgID::DbgSkip, nc, "Instance port")
                                     // _ => {} // Ignore all other node
                                 }
                             }
@@ -1030,7 +1051,8 @@ impl CompLib {
                                         if let Some(_d) = self.find_def(&p.name,None,li,false,false,false).0 {
                                             // Type checking
                                         } else {
-                                            println!("[Linking] {:?} | Missing signal for implicit connection to {} in {}", self.cntxt, p, n.attr["name"])
+                                            self.log.msg(MsgID::ErrImplicit, node, &p.name);
+                                            // println!("[Linking] {:?} | Missing signal for implicit connection to {} in {}", self.cntxt, p, n.attr["name"])
                                         }
                                     }
 
@@ -1042,7 +1064,8 @@ impl CompLib {
                                 // Check if remaining ports are optional or not
                                 let ma :Vec<_> = ports.iter().filter(|x| if let ObjDef::Port(p) = x {p.default.is_none()} else {false}).collect();
                                 if ma.len() > 0 {
-                                    println!("[Linking] {:?} | Missing {} arguments in call to {}", self.cntxt, ports.len(), d.name);
+                                    self.log.msg(MsgID::ErrArgMiss, node, &format!("{:?}", ma));
+                                    // println!("[Linking] {:?} | Missing {} arguments in call to {}", self.cntxt, ports.len(), d.name);
                                     // println!("[Linking] {:?} | Missing {} arguments in call to {}: {}", self.cntxt, ports.len(), d.name, ma.iter().fold(String::new(), |acc, x| format!("{}{:?},", acc,x)));
                                 }
                             }
@@ -1053,7 +1076,8 @@ impl CompLib {
                                     AstNodeKind::Param => {
                                         // println!("[{}] Instance of {:?}, param {:?}", self.cntxt, c.attr["type"],nc.attr);
                                         if params.len() == 0 {
-                                            println!("[Linking] {:?} | Too many arguments in parameters of {}: ({:?})", self.cntxt, d.name, nc);
+                                            self.log.msg(MsgID::ErrArgExtra, node, &format!("{}", d.params.len()));
+                                            // println!("[Linking] {:?} | Too many arguments in parameters of {}: ({:?})", self.cntxt, d.name, nc);
                                             break;
                                         }
                                         match nc.attr["name"].as_ref() {
@@ -1066,25 +1090,24 @@ impl CompLib {
                                                     params.remove(i);
                                                 }
                                                 else {
-                                                    println!("[Linking] {:?} | Calling {} with unknown parameter name {} in {}", self.cntxt, d.name, nc.attr["name"], params.iter().fold(String::new(), |acc, x| format!("{}{:?},", acc,x)));
+                                                    self.log.msg(MsgID::ErrNotFound, nc, &nc.attr["name"]);
+                                                    // println!("[Linking] {:?} | Calling {} with unknown parameter name {} in {}", self.cntxt, d.name, nc.attr["name"], params.iter().fold(String::new(), |acc, x| format!("{}{:?},", acc,x)));
                                                 }
                                             }
                                         }
                                     }
-                                    _ => println!("[Linking] {:?} | Instance of {:?}, skipping {:?}", self.cntxt,node.attr["type"],nc.kind)
+                                    _ => self.log.msg(MsgID::DbgSkip, nc, "Instance param")
                                     // _ => {} // Ignore all other node
                                 }
                                 // TODO: check parameters as well
                             }
                         }
-                        _ => println!("[Linking] {:?} | Instances of {}, skipping {}", self.cntxt, node.attr["type"],n.kind)
+                        _ => self.log.msg(MsgID::DbgSkip, n, "Instance child")
                         // _ => {} // Ignore all other node
                     }
                 }
             }
-            _ => {
-                println!("[Linking] Instance Type {:?} undeclared", node.attr["type"]);
-            }
+            _ => self.log.msg(MsgID::ErrNotFound, node, &node.attr["type"])
         }
     }
 
@@ -1105,7 +1128,7 @@ impl CompLib {
                         // println!("[Linking] {:?} | Call to Port {:?}", self.cntxt, d.name);
                         for p in &n.child {
                             if ports.len() == 0 {
-                                println!("[Linking] {:?} | Too many arguments in call to {}: {:?}", self.cntxt, d.name, p);
+                                self.log.msg(MsgID::ErrArgExtra, node, &format!("{}", d.ports.len()));
                                 break;
                             }
                             // When unamed, port are taken in order
@@ -1117,7 +1140,7 @@ impl CompLib {
                                     ports.remove(i);
                                 }
                                 else {
-                                    println!("[Linking] {:?} | Calling {} with unknown argument name {} in {}", self.cntxt, d.name, p.attr["name"], ports.iter().fold(String::new(), |acc, x| format!("{}{},", acc,x)));
+                                    self.log.msg(MsgID::ErrNotFound, p, &p.attr["name"]);
                                 }
                             }
                         }
@@ -1127,12 +1150,12 @@ impl CompLib {
                     // Check if remaining ports are optional or not
                     let ma :Vec<_> = ports.iter().filter(|p| p.default.is_none()).collect();
                     if !ma.is_empty() {
-                        println!("[Linking] {:?} | Missing {} arguments in call to {}: {}", self.cntxt, ports.len(), d.name, ma.iter().fold(String::new(), |acc, x| format!("{}{},", acc,x)));
+                        self.log.msg(MsgID::ErrArgMiss, node, &format!("{:?}", ma.iter().fold(String::new(), |acc, x| format!("{}{},", acc,x))));
                     }
                 }
             }
-            Some(_) => println!("[Linking] {:?} | {:?} is not a method ", self.cntxt, node.attr.get("name")),
-            None    => println!("[Linking] {:?} | Unsolved call to {:?} ({:?})", self.cntxt, node.attr.get("name"), node.attr)
+            Some(_) => self.log.msg(MsgID::ErrNotFound, node, &format!("{} (not a method)",node.attr["name"])),
+            None    => self.log.msg(MsgID::ErrNotFound, node, &node.attr["name"])
         }
     }
 
@@ -1145,7 +1168,7 @@ impl CompLib {
                 let mut ports = d.ports.clone();
                 for nc in &node.child {
                     if ports.is_empty() {
-                        println!("[Linking] {:?} | Too many arguments in call to {}: {}", self.cntxt, d.name, nc);
+                        self.log.msg(MsgID::ErrArgExtra, node, &format!("{} : first invalid = {:?}", d.ports.len(), nc));
                         break;
                     }
                     ports.remove(0);
@@ -1154,16 +1177,17 @@ impl CompLib {
                     // Check if remaining ports are optional or not
                     let ma :Vec<_> = ports.iter().filter(|p| !p.is_opt).collect();
                     if !ma.is_empty() {
-                        println!("[Linking] {:?} | Missing {} arguments in call to {}: {}", self.cntxt, ports.len(), d.name, ma.iter().fold(String::new(), |acc, x| format!("{}{},", acc,x)));
+                        self.log.msg(MsgID::ErrArgMiss, node, &format!("{:?}", ma));
+                        // println!("[Linking] {:?} | Missing {} arguments in call to {}: {}", self.cntxt, ports.len(), d.name, ma.iter().fold(String::new(), |acc, x| format!("{}{},", acc,x)));
                     }
                 }
             }
-            Some(_) => println!("[Linking] {:?} | {:?} is not a macro ", self.cntxt, node.attr.get("name")),
-            None => println!("[Linking] {:?} | Unsolved macro {:?}", self.cntxt, node.attr.get("name"))
+            Some(_) =>  self.log.msg(MsgID::ErrNotFound, node, &format!("{} (not a macro)",node.attr["name"])),
+            None => self.log.msg(MsgID::ErrNotFound, node, &node.attr["name"])
         }
     }
 
-    // Find the module type ofr bind
+    // Find the module type for bind
     pub fn solve_bind(&mut self) {
         for (_name,path) in self.binds.iter_mut() {
             // println!("[solve_bind] {} -> {:?}", _name, path);
@@ -1183,7 +1207,7 @@ impl CompLib {
                         ldefs = &blk.defs;
                     }
                     _ => {
-                        println!("[solve_bind] Instance {} not found in {}", inst_name, cntxt);
+                        self.log.msg_s(MsgID::ErrNotFound, &format!("Bind instance {} not found", inst_name));
                         found = false;
                         break;
                     }

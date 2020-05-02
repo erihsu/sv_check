@@ -14,11 +14,12 @@ use crate::ast::class::{parse_func,parse_task};
 
 /// This function should be called after a keyword interface
 pub fn parse_interface(ts : &mut TokenStream) -> Result<AstNode, SvError> {
-    let mut node = AstNode::new(AstNodeKind::Interface);
+    let t = expect_t!(ts,"interface declaration",TokenKind::KwIntf);
+    let mut node = AstNode::new(AstNodeKind::Interface, t.pos);
     // Parse interface header
     parse_module_hdr(ts, &mut node)?;
     // Parse package body
-    let mut node_b = AstNode::new(AstNodeKind::Body);
+    let mut node_b = AstNode::new(AstNodeKind::Body, ts.last_pos);
     loop {
         let t = next_t!(ts,true);
         // println!("[parse_module_body] Token = {}", t);
@@ -73,7 +74,7 @@ pub fn parse_interface(ts : &mut TokenStream) -> Result<AstNode, SvError> {
                     let nt = next_t!(ts,false);
                     match nt.kind {
                         TokenKind::Ident => {
-                            let mut n = AstNode::new(AstNodeKind::Declaration);
+                            let mut n = AstNode::new(AstNodeKind::Declaration, nt.pos);
                             n.attr.insert("type".to_owned(), "genvar".to_owned());
                             n.attr.insert("name".to_owned(),t.value.clone());
                             node_b.child.push(n);
@@ -168,7 +169,7 @@ pub fn parse_interface(ts : &mut TokenStream) -> Result<AstNode, SvError> {
 /// Parse an always block
 pub fn parse_modport(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), SvError> {
     ts.flush_rd(); // Suppose modport keyword is now consumed
-    let mut node_mp = AstNode::new(AstNodeKind::Modport);
+    let mut node_mp = AstNode::new(AstNodeKind::Modport, ts.last_pos);
     // Expect identifier for the modport name
     let mut t = next_t!(ts,false);
     if t.kind!=TokenKind::Ident {
@@ -185,7 +186,7 @@ pub fn parse_modport(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), Sv
     // In case of port (in/out/inout) need to support port expresison in the form .ID(expr)
     loop {
         t = next_t!(ts,false);
-        let mut node_p = AstNode::new(AstNodeKind::Port);
+        let mut node_p = AstNode::new(AstNodeKind::Port, t.pos);
         match t.kind {
             TokenKind::KwInput | TokenKind::KwOutput | TokenKind::KwInout | TokenKind::KwRef => {
                 node_p.attr.insert("dir".to_owned(), t.value);
@@ -246,7 +247,7 @@ pub fn parse_modport(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), Sv
 
 /// Parse an always block
 pub fn parse_clocking(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), SvError> {
-    let mut node_c = AstNode::new(AstNodeKind::Clocking);
+    let mut node_c = AstNode::new(AstNodeKind::Clocking, ts.last_pos);
     // Optionnal default/global
     let mut t = next_t!(ts,false);
     let has_id = t.kind!=TokenKind::KwDefault;

@@ -1,6 +1,7 @@
 // This file is part of sv_check and subject to the terms of MIT Licence
 // Copyright (c) 2019, clams@mail.com
 
+use crate::lex::position::Position;
 use std::collections::HashMap;
 use std::fmt;
 
@@ -47,14 +48,16 @@ pub enum AstNodeKind {
 #[derive(Debug,Clone)]
 pub struct AstNode {
     pub kind  : AstNodeKind,
+    pub pos   : Position,
     pub child : Vec<AstNode>,
     pub attr  : HashMap<String, String>
 }
 
 impl AstNode {
-    pub fn new(k: AstNodeKind) -> AstNode {
+    pub fn new(k: AstNodeKind, pos: Position) -> AstNode {
         AstNode {
             kind : k,
+            pos: pos,
             child : Vec::new(),
             attr : HashMap::new()
         }
