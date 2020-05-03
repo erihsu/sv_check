@@ -21,12 +21,12 @@ pub fn parse_package(ts : &mut TokenStream) -> Result<AstNode, SvError> {
         t = next_t!(ts,false);
     }
     if t.kind!=TokenKind::Ident {
-        return Err(SvError::syntax(t, "package header. Expecting identifier".to_owned()));
+        return Err(SvError::syntax(t, "package header. Expecting identifier"));
     }
     node.attr.insert("name".to_owned(),t.value);
     t = next_t!(ts,false);
     if t.kind!=TokenKind::SemiColon {
-        return Err(SvError::syntax(t, "package header. Expecting ;".to_owned()));
+        return Err(SvError::syntax(t, "package header. Expecting ;"));
     }
     // Parse package body
     loop {
@@ -48,7 +48,7 @@ pub fn parse_package(ts : &mut TokenStream) -> Result<AstNode, SvError> {
                     match nt.kind {
                         TokenKind::Comma => {}, // Comma indicate a list -> continue
                         TokenKind::SemiColon => {break;}, // Semi colon indicate end of statement, stop the loop
-                        _ => return Err(SvError::syntax(t, "param declaration, expecting , or ;".to_owned()))
+                        _ => return Err(SvError::syntax(t, "param declaration, expecting , or ;"))
                     }
                 }
             }
@@ -89,7 +89,7 @@ pub fn parse_package(ts : &mut TokenStream) -> Result<AstNode, SvError> {
                             node.child.push(n);
                             loop_args_break_cont!(ts,"genvar declaration",SemiColon);
                         }
-                        _ =>  return Err(SvError::syntax(t,"virtual interface. Expecting identifier".to_owned())),
+                        _ =>  return Err(SvError::syntax(t,"virtual interface. Expecting identifier")),
                     }
                 }
             }
@@ -111,7 +111,7 @@ pub fn parse_package(ts : &mut TokenStream) -> Result<AstNode, SvError> {
             // Any un-treated token is an error
             _ => {
                 // println!("{}", node);
-                return Err(SvError::syntax(t, "package".to_owned()))
+                return Err(SvError::syntax(t, "package"))
             }
         }
     }

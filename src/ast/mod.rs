@@ -97,7 +97,7 @@ impl Ast {
                                 let nt = next_t!(ts,true);
                                 match nt.kind {
                                     TokenKind::KwClass => self.tree.child.push(class::parse_class(ts)?),
-                                    _ => return Err(SvError::syntax(nt, "virtual declaration. Expecting class".to_owned()))
+                                    _ => return Err(SvError::syntax(nt, "virtual declaration. Expecting class"))
                                 }
                             }
                             TokenKind::KwLParam => {

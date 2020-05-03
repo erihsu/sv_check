@@ -87,7 +87,7 @@ pub enum TokenKind {
     // Other Special character
     Comma, Que, Colon, Scope, SemiColon,
     At, At2, Hash, Hash2, Dot, DotStar,
-    Dollar, LineCont
+    Dollar, LineCont, EOF, Unknown
 }
 
 #[derive(Clone, Debug)]
@@ -306,6 +306,8 @@ impl fmt::Display for TokenKind {
             TokenKind::DotStar           => write!(f, ".*"),
             TokenKind::Dollar            => write!(f, "$"),
             TokenKind::LineCont          => write!(f, "\\ (LineCont)"),
+            TokenKind::EOF               => write!(f, "EOF"),
+            TokenKind::Unknown           => write!(f, "Unknown"),
         }
     }
 }

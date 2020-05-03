@@ -1,7 +1,7 @@
 // This file is part of sv_check and subject to the terms of MIT Licence
 // Copyright (c) 2019, clams@mail.com
 
-use crate::error::{SvErrorKind, SvError, };
+use crate::error::SvError;
 use crate::lex::token::{TokenKind};
 use crate::lex::token_stream::TokenStream;
 use crate::ast::astnode::*;
@@ -101,7 +101,7 @@ pub fn parse_module_body(ts : &mut TokenStream, node : &mut AstNode, cntxt : Mod
                             node.child.push(n);
                             loop_args_break_cont!(ts,"genvar declaration",SemiColon);
                         }
-                        _ =>  return Err(SvError::syntax(t,"genvar. Expecting identifier".to_owned())),
+                        _ =>  return Err(SvError::syntax(t,"genvar. Expecting identifier")),
                     }
                 }
             }
@@ -161,8 +161,7 @@ pub fn parse_module_body(ts : &mut TokenStream, node : &mut AstNode, cntxt : Mod
                                 let node_inst = parse_instance(ts)?;
                                 node.child.push(node_inst);
                             }
-                            _ => return Err(SvError::new(SvErrorKind::Syntax, t.pos,
-                                    format!("Unexpected {} ({:?}) in signal declaration or instance",nnt.value, nnt.kind)))
+                            _ => return Err(SvError::syntax(t, "signal declaration/instance"))
                         }
                     }
                     // Open bracket indicate a packet dimension, i.e. a signal declaration
@@ -173,8 +172,7 @@ pub fn parse_module_body(ts : &mut TokenStream, node : &mut AstNode, cntxt : Mod
                         node.child.push(node_inst);
                     }
                     // Untreated token are forbidden
-                    _ => return Err(SvError::new(SvErrorKind::Syntax, t.pos,
-                            format!("Unexpected '{} {}' in signal declaration, expecting type or instance",t.value, nt.value)))
+                    _ => return Err(SvError::syntax(t, "signal declaration. Expecting type or instance"))
                 }
             }
             TokenKind::KwBind => parse_bind(ts,node)?,
@@ -223,7 +221,7 @@ pub fn parse_module_body(ts : &mut TokenStream, node : &mut AstNode, cntxt : Mod
             // Any un-treated token is an error
             _ => {
                 // println!("{}", node);
-                return Err(SvError::syntax(t, "module body".to_owned()))
+                return Err(SvError::syntax(t, "module body"))
             }
         }
 
@@ -255,12 +253,12 @@ pub fn parse_assign_c(ts : &mut TokenStream) -> Result<AstNode, SvError> {
         t = expect_t!(ts,"drive strength",TokenKind::KwDrive);
         if drive_is_0 {
             if t.value.ends_with('0') {
-                return Err(SvError::syntax(t, "drive strength. Expecting drive strength 1".to_owned()))
+                return Err(SvError::syntax(t, "drive strength. Expecting drive strength 1"))
             }
             node.attr.insert("strength1".to_owned(),t.value);
         } else {
             if t.value.ends_with('1') {
-                return Err(SvError::syntax(t, "drive strength. Expecting drive strength 0".to_owned()))
+                return Err(SvError::syntax(t, "drive strength. Expecting drive strength 0"))
             }
             node.attr.insert("strength0".to_owned(),t.value);
         }
@@ -364,8 +362,7 @@ pub fn parse_always(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), SvE
         ts.flush_rd();
         match t0.kind {
             TokenKind::KwAlwaysL |
-            TokenKind::KwAlwaysC => return Err(SvError::new(SvErrorKind::Syntax, t.pos,
-                                        format!("Sensitivity list not supported for {} process",t0.value))),
+            TokenKind::KwAlwaysC => return Err(SvError::syntax(t, &format!("in {} process sensitivity list",t0.value))),
             // Parse the sensitivity list
             _ => {
                 let node_s = parse_sensitivity(ts,true)?;
@@ -405,7 +402,7 @@ pub fn parse_sensitivity(ts : &mut TokenStream, is_process: bool) -> Result<AstN
                 return Ok(node);
             }
         }
-        _ => return Err(SvError::syntax(t, "sensitivity list. Expecting *, (*) or ( event list )".to_owned()))
+        _ => return Err(SvError::syntax(t, "sensitivity list. Expecting *, (*) or ( event list )"))
     }
     // Parse event list
     loop {
@@ -432,7 +429,7 @@ pub fn parse_sensitivity(ts : &mut TokenStream, is_process: bool) -> Result<AstN
             TokenKind::ParenRight => break,
             TokenKind::KwOr  |
             TokenKind::Comma => {},
-            _ => return Err(SvError::syntax(t, "sensitivity list. Expecting comma, keyword 'or' or )".to_owned()))
+            _ => return Err(SvError::syntax(t, "sensitivity list. Expecting comma, keyword 'or' or )"))
         }
         t = next_t!(ts,true);
     }
@@ -469,7 +466,7 @@ pub fn parse_stmt(ts : &mut TokenStream, node: &mut AstNode, is_block: bool) -> 
                 match t.kind {
                     TokenKind::KwIf   => parse_if_else(ts,node, false)?,
                     TokenKind::KwCase => parse_case(ts,node)?,
-                    _ => return Err(SvError::syntax(t,"priority statement. Expecting case/if".to_owned()))
+                    _ => return Err(SvError::syntax(t,"priority statement. Expecting case/if"))
                 }
             }
             TokenKind::KwFor  => parse_for(ts,node,false)?,
@@ -505,8 +502,7 @@ pub fn parse_stmt(ts : &mut TokenStream, node: &mut AstNode, is_block: bool) -> 
                 }
                 node.child.push(n);
             }
-            _ => return Err(SvError::new(SvErrorKind::Syntax, t.pos,
-                            format!("Unexpected {} ({:?}) in statement",t.value, t.kind)))
+            _ => return Err(SvError::syntax(t, "statement"))
         }
         // Stop parsing if not in a block
         if ! is_block {break;}
@@ -531,7 +527,7 @@ pub fn parse_if_else(ts : &mut TokenStream, node: &mut AstNode, is_gen: bool) ->
         node_if.attr.insert("kind".to_owned(),"if".to_owned());
     }
     if t.kind!=TokenKind::KwIf {
-        return Err(SvError::syntax(t, " if statement. Expecting if".to_owned()));
+        return Err(SvError::syntax(t, " if statement. Expecting if"));
     }
     expect_t!(ts,"if statement",TokenKind::ParenLeft);
     node_if.child.push(parse_expr(ts,ExprCntxt::Arg,false)?);
@@ -595,7 +591,7 @@ pub fn parse_for(ts : &mut TokenStream, node: &mut AstNode, is_generate: bool) -
     ts.flush_rd();
     let mut t = next_t!(ts,false);
     if t.kind!=TokenKind::ParenLeft {
-        return Err(SvError::syntax(t,"for. Expecting (".to_owned()));
+        return Err(SvError::syntax(t,"for loop. Expecting ("));
     }
     let mut node_for = AstNode::new(AstNodeKind::LoopFor, t.pos);
     // Parse init part : end on ;
@@ -659,10 +655,10 @@ pub fn parse_timescale(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), 
             node_ts.attr.insert("timeprecision".to_owned(), time);
             t = next_t!(ts,false);
             if t.kind != TokenKind::SemiColon {
-                return Err(SvError::syntax(t,"timescale. Expecting ;".to_owned()));
+                return Err(SvError::syntax(t,"timescale. Expecting ;"));
             }
         }
-        _ => return Err(SvError::syntax(t,"timescale. Expecting ; or /".to_owned()))
+        _ => return Err(SvError::syntax(t,"timescale. Expecting ; or /"))
     }
     node.child.push(node_ts);
     Ok(())
@@ -684,7 +680,7 @@ pub fn parse_primitive(ts : &mut TokenStream) -> Result<AstNode, SvError> {
         TokenKind::KwPrimOut    => {} //{nb_port = 3;}
         TokenKind::KwPrimTran   => {} //{nb_port = 2;}
         TokenKind::KwPrimTranif => {} //{nb_port = 3;}
-        _ => return Err(SvError::syntax(t, "primitive. Expecting primitive keyword".to_owned()))
+        _ => return Err(SvError::syntax(t, "primitive. Expecting primitive keyword"))
     }
     node.attr.insert("type".to_owned(), t.value);
     t = next_t!(ts,true);

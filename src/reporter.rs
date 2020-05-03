@@ -7,6 +7,7 @@ use std::collections::HashMap;
 use crate::ast::astnode::{AstNode, AstNodeKind};
 use crate::lex::{source::path_display};
 // use crate::lex::{token::Token, position::Position};
+use crate::error::SvError;
 
 #[allow(dead_code)]
 #[derive(PartialEq, Eq, Hash, Debug, Clone)]
@@ -79,7 +80,6 @@ impl Reporter {
 
     pub fn msg(&self, id: MsgID, node: &AstNode, cntxt: &str) {
         let str_sev = self.get_severity_str(&id);
-        let str_pos = format!(", line {}", node.pos);
         let str_fn = path_display(&self.filename);
         let str_body =
             match id {
@@ -97,11 +97,18 @@ impl Reporter {
                     }
                 }
                 MsgID::WarnUnused    => format!("Unused {}", "".to_string()),
-                MsgID::DbgSkip       => format!("Skipping {} : {:?}", cntxt, node),
+                MsgID::DbgSkip       => format!("Skipping {} : {}", cntxt, node),
                 _ => cntxt.to_string(),
             };
         // print the message to a file and/or stdout (TODO)
-        println!("{} {:?}{} | {}", str_sev, str_fn ,str_pos, str_body);
+        println!("{} {}:{} | {}", str_sev, str_fn ,node.pos, str_body);
+    }
+
+    // Message from error
+    pub fn msg_e(&self, error : SvError) {
+        let str_sev  = self.get_severity_str(&MsgID::ErrSyntax);
+        let str_fn   = path_display(&self.filename);
+        println!("{} {}{}", str_sev, str_fn ,error);
     }
 
     // Basic message (no mode/token)

@@ -35,7 +35,7 @@ pub fn parse_class(ts : &mut TokenStream) -> Result<AstNode, SvError> {
     }
     // Mandatory class keyword
     if t.kind!=TokenKind::KwClass {
-        return Err(SvError::syntax(t,"class. Expecting class".to_owned()));
+        return Err(SvError::syntax(t,"class. Expecting class"));
     }
     // Optional lifetime indicator
     t = next_t!(ts,false);
@@ -49,14 +49,14 @@ pub fn parse_class(ts : &mut TokenStream) -> Result<AstNode, SvError> {
             node.attr.insert("name".to_owned(),t.value);
             t = next_t!(ts,false);
         },
-        _ => return Err(SvError::syntax(t, "class declaration, expecting identifier or lifetime (static/automatic)".to_owned()))
+        _ => return Err(SvError::syntax(t, "class declaration, expecting identifier or lifetime (static/automatic)"))
     }
     // Optional parameter list
     if t.kind==TokenKind::Hash {
         let mut node_p = AstNode::new(AstNodeKind::Params, t.pos);
         t = next_t!(ts,false);
         if t.kind!=TokenKind::ParenLeft {
-            return Err(SvError::syntax(t, "param declaration. Expecting (".to_owned()));
+            return Err(SvError::syntax(t, "param declaration. Expecting ("));
         }
         loop {
             node_p.child.push(parse_param_decl(ts,false)?);
@@ -93,7 +93,7 @@ pub fn parse_class(ts : &mut TokenStream) -> Result<AstNode, SvError> {
     }
     // Check the declaration ends with a ;
     if t.kind!=TokenKind::SemiColon {
-        return Err(SvError::syntax(t,"class. Expecting ;".to_owned()));
+        return Err(SvError::syntax(t,"class. Expecting ;"));
     }
 
     // Loop on class item
@@ -147,7 +147,7 @@ pub fn parse_class(ts : &mut TokenStream) -> Result<AstNode, SvError> {
                         TokenKind::Ident         => {parse_class_members(ts, &mut node)?; break; },
                         TokenKind::KwVirtual   |
                         TokenKind::KwStatic     => {}
-                        _ => return Err(SvError::syntax(t, "extern function/task declaration".to_owned())),
+                        _ => return Err(SvError::syntax(t, "extern function/task declaration")),
                     }
                 }
             }
@@ -171,7 +171,7 @@ pub fn parse_class(ts : &mut TokenStream) -> Result<AstNode, SvError> {
                     TokenKind::KwFunction    => parse_func(ts, &mut node, false, false)?,
                     TokenKind::KwTask        => parse_task(ts, &mut node)?,
                     TokenKind::KwConstraint  => parse_constraint(ts,&mut node)?,
-                    _ => return Err(SvError::syntax(t, "virtual task/function/interface".to_owned())),
+                    _ => return Err(SvError::syntax(t, "virtual task/function/interface")),
                 }
             }
             TokenKind::KwExtern => {
@@ -184,7 +184,7 @@ pub fn parse_class(ts : &mut TokenStream) -> Result<AstNode, SvError> {
                         TokenKind::KwProtected |
                         TokenKind::KwVirtual   |
                         TokenKind::KwStatic     => {}
-                        _ => return Err(SvError::syntax(t, "extern function/task declaration".to_owned())),
+                        _ => return Err(SvError::syntax(t, "extern function/task declaration")),
                     }
                 }
             }
@@ -200,14 +200,14 @@ pub fn parse_class(ts : &mut TokenStream) -> Result<AstNode, SvError> {
                     TokenKind::Ident | TokenKind::KwIntf | TokenKind::Macro => parse_vintf(ts, &mut node)?,
                     TokenKind::KwFunction => parse_func(ts, &mut node, false, false)?,
                     TokenKind::KwTask     => parse_task(ts, &mut node)?,
-                    _ => return Err(SvError::syntax(t, "virtual task/function/interface".to_owned())),
+                    _ => return Err(SvError::syntax(t, "virtual task/function/interface")),
                 }
 
             }
             TokenKind::KwPure => {
                 t = next_t!(ts,true);
                 if t.kind != TokenKind::KwVirtual {
-                    return Err(SvError::syntax(t, "virtual task/function/interface".to_owned()))
+                    return Err(SvError::syntax(t, "virtual task/function/interface"))
                 }
                 t = next_t!(ts,true);
                 if t.kind == TokenKind::KwProtected {
@@ -216,7 +216,7 @@ pub fn parse_class(ts : &mut TokenStream) -> Result<AstNode, SvError> {
                 match t.kind {
                     TokenKind::KwFunction => parse_func(ts, &mut node, false, false)?,
                     TokenKind::KwTask     => parse_task(ts, &mut node)?,
-                    _ => return Err(SvError::syntax(t, "pure virtual task/function".to_owned())),
+                    _ => return Err(SvError::syntax(t, "pure virtual task/function")),
                 }
             }
             TokenKind::Macro => {
@@ -234,7 +234,7 @@ pub fn parse_class(ts : &mut TokenStream) -> Result<AstNode, SvError> {
                 check_label(ts,&node.attr["name"])?;
                 break;
             },
-            _ => return Err(SvError::syntax(t, "class body".to_owned())),
+            _ => return Err(SvError::syntax(t, "class body")),
         }
     }
     // println!("[class] {}", node);
@@ -330,7 +330,7 @@ pub fn parse_class_members(ts : &mut TokenStream, node : &mut AstNode) -> Result
         match t.kind {
             TokenKind::Comma => {}, // Comma indicate a list -> continue
             TokenKind::SemiColon => break, // Semi colon indicate end of statement, stop the loop
-            _ => return Err(SvError::syntax(t, "signal declaration, expecting , or ;".to_owned()))
+            _ => return Err(SvError::syntax(t, "signal declaration, expecting , or ;"))
         }
         n = AstNode::new(AstNodeKind::Identifier, t.pos);
         parse_var_decl_name(ts, &mut n,ExprCntxt::StmtList,false,false)?;
@@ -381,7 +381,7 @@ pub fn parse_func(ts : &mut TokenStream, node : &mut AstNode, is_oob : bool, is_
                 allow_static = false;
             }
             TokenKind::KwFunction => break,
-            _ => return Err(SvError::syntax(t, "function header. Expecting method qualifier".to_owned()))
+            _ => return Err(SvError::syntax(t, "function header. Expecting method qualifier"))
         }
     }
     t = next_t!(ts,true);
@@ -432,17 +432,17 @@ pub fn parse_func(ts : &mut TokenStream, node : &mut AstNode, is_oob : bool, is_
                     if t.kind == TokenKind::KwNew {
                         node_f.attr.insert("name".to_owned(),t.value);
                     } else {
-                        return Err(SvError::syntax(t, "function header. Expecting function name".to_owned()));
+                        return Err(SvError::syntax(t, "function header. Expecting function name"));
                     }
                 } else {
-                    return Err(SvError::syntax(t, "function header. Expecting function name".to_owned()));
+                    return Err(SvError::syntax(t, "function header. Expecting function name"));
                 }
             } else {
                 node_f.attr.insert("name".to_owned(),t.value);
             }
         }
         // Expect data type
-        _ => return Err(SvError::syntax(t, "function header. Expecting function name".to_owned()))
+        _ => return Err(SvError::syntax(t, "function header. Expecting function name"))
     }
     // Optional function port definition
     t = next_t!(ts,false);
@@ -465,7 +465,7 @@ pub fn parse_func(ts : &mut TokenStream, node : &mut AstNode, is_oob : bool, is_
     }
     // Expect ;
     if t.kind!=TokenKind::SemiColon {
-        return Err(SvError::syntax(t, "function declaration. Expecting ;".to_owned()));
+        return Err(SvError::syntax(t, "function declaration. Expecting ;"));
     }
     if no_body {
         // println!("Function declaration {:?}", node_f);
@@ -515,7 +515,7 @@ pub fn parse_task(ts : &mut TokenStream, node : &mut AstNode) -> Result<(), SvEr
                 no_body = true;
                 t = next_t!(ts,false);
                 if t.kind != TokenKind::KwVirtual {
-                    return Err(SvError::syntax(t, "pure method. Expecting virtual".to_owned()));
+                    return Err(SvError::syntax(t, "pure method. Expecting virtual"));
                 }
                 allow_virtual = false;
             }
@@ -532,7 +532,7 @@ pub fn parse_task(ts : &mut TokenStream, node : &mut AstNode) -> Result<(), SvEr
                 allow_static = false;
             }
             TokenKind::KwTask => break,
-            _ => return Err(SvError::syntax(t, "task declaration. Expecting method qualifier".to_owned()))
+            _ => return Err(SvError::syntax(t, "task declaration. Expecting method qualifier"))
         }
     }
     t = next_t!(ts,false);
@@ -543,7 +543,7 @@ pub fn parse_task(ts : &mut TokenStream, node : &mut AstNode) -> Result<(), SvEr
 
     // Expect task name
     if t.kind != TokenKind::Ident {
-        return Err(SvError::syntax(t, "task declaration. Expecting task name".to_owned()))
+        return Err(SvError::syntax(t, "task declaration. Expecting task name"))
     }
     node_task.attr.insert("name".to_owned(),t.value);
 
@@ -568,7 +568,7 @@ pub fn parse_task(ts : &mut TokenStream, node : &mut AstNode) -> Result<(), SvEr
     }
     // Expect ;
     if t.kind!=TokenKind::SemiColon {
-        return Err(SvError::syntax(t, "function declaration. Expecting ;".to_owned()));
+        return Err(SvError::syntax(t, "function declaration. Expecting ;"));
     }
 
     if no_body {
@@ -585,7 +585,7 @@ pub fn parse_task(ts : &mut TokenStream, node : &mut AstNode) -> Result<(), SvEr
                 node.child.push(AstNode::new(AstNodeKind::Return, ts.get_pos()));
                 t = next_t!(ts,false);
                 if t.kind!=TokenKind::SemiColon {
-                    return Err(SvError::syntax(t,"return statement. Expecting ;".to_owned()));
+                    return Err(SvError::syntax(t,"return statement. Expecting ;"));
                 }
             },
             _ => allow_decl = parse_class_stmt(ts,&mut node_task,false,allow_decl,!has_args)?,
@@ -650,13 +650,13 @@ pub fn parse_class_stmt(ts : &mut TokenStream, node: &mut AstNode, is_block: boo
                 n.attr.insert("kind".to_owned(), t.value);
                 t = next_t!(ts,false);
                 if t.kind!=TokenKind::ParenLeft {
-                    return Err(SvError::syntax(t,"foreach. Expecting (".to_owned()));
+                    return Err(SvError::syntax(t,"foreach. Expecting ("));
                 }
                 // TODO: handle multi-dimensionnal foreach loop !
                 n.child.push(parse_ident_hier(ts)?);
                 t = next_t!(ts,false);
                 if t.kind!=TokenKind::ParenRight {
-                    return Err(SvError::syntax(t,"foreach. Expecting )".to_owned()));
+                    return Err(SvError::syntax(t,"foreach. Expecting )"));
                 }
                 ts.flush_rd(); // Clear parenthesis
                 parse_class_stmt_or_block(ts, &mut n)?;
@@ -669,7 +669,7 @@ pub fn parse_class_stmt(ts : &mut TokenStream, node: &mut AstNode, is_block: boo
                 n.attr.insert("kind".to_owned(), t.value);
                 t = next_t!(ts,false);
                 if t.kind != TokenKind::ParenLeft {
-                    return Err(SvError::syntax(t, format!("{} loop, expecting (", n.attr["kind"].clone() )));
+                    return Err(SvError::syntax(t, &format!("{} loop, expecting (", n.attr["kind"].clone() )));
                 }
                 let node_cond = parse_expr(ts,ExprCntxt::Arg,false)?;
                 ts.flush(1); // Consume right parenthesis
@@ -685,11 +685,11 @@ pub fn parse_class_stmt(ts : &mut TokenStream, node: &mut AstNode, is_block: boo
                 parse_class_stmt_or_block(ts, &mut ns)?;
                 t = next_t!(ts,false);
                 if t.kind != TokenKind::KwWhile {
-                    return Err(SvError::syntax(t, "do loop, expecting while".to_owned() ));
+                    return Err(SvError::syntax(t, "do loop, expecting while"));
                 }
                 t = next_t!(ts,false);
                 if t.kind != TokenKind::ParenLeft {
-                    return Err(SvError::syntax(t, "do loop, expecting (".to_owned() ));
+                    return Err(SvError::syntax(t, "do loop, expecting ("));
                 }
                 let nc = parse_expr(ts,ExprCntxt::Arg,false)?;
                 ts.flush(1); // Consume right parenthesis
@@ -706,13 +706,13 @@ pub fn parse_class_stmt(ts : &mut TokenStream, node: &mut AstNode, is_block: boo
                 match t.kind {
                     TokenKind::KwIf   => parse_class_if_else(ts,node)?,
                     TokenKind::KwCase => parse_case(ts,node)?,
-                    _ => return Err(SvError::syntax(t,"priority statement. Expecting case/if".to_owned()))
+                    _ => return Err(SvError::syntax(t,"priority statement. Expecting case/if"))
                 }
             }
             TokenKind::KwFork => {
                 ts.flush(1);
                 let mut n = AstNode::new(AstNodeKind::Fork, ts.get_pos());
-                let has_label = parse_label(ts,&mut n,"label".to_owned())?;
+                let has_label = parse_label(ts,&mut n,"label".to_string())?;
                 loop {
                     t = next_t!(ts,true);
                     if t.kind == TokenKind::KwJoin {
@@ -740,7 +740,7 @@ pub fn parse_class_stmt(ts : &mut TokenStream, node: &mut AstNode, is_block: boo
                 match t.kind {
                     TokenKind::KwFork => ts.flush(1),
                     TokenKind::Ident => n.child.push(parse_ident_hier(ts)?),
-                    _ => return Err(SvError::syntax(t, "disable statement, expecting fork or identifier".to_owned() ))
+                    _ => return Err(SvError::syntax(t, "disable statement, expecting fork or identifier" ))
                 }
                 n.attr.insert("value".to_owned(), t.value);
                 expect_t!(ts,"disable statement",TokenKind::SemiColon);
@@ -781,7 +781,7 @@ pub fn parse_class_stmt(ts : &mut TokenStream, node: &mut AstNode, is_block: boo
                             TokenKind::Hash  => {
                                 t = next_t!(ts,true);
                                 if t.kind != TokenKind::ParenLeft {
-                                    return Err(SvError::syntax(t, "parameterized class, expecting (".to_owned()));
+                                    return Err(SvError::syntax(t, "parameterized class, expecting ("));
                                 }
                                 ts.peek_until(TokenKind::ParenRight)?;
                                 // ts.display_status("[peek_until] done");
@@ -792,7 +792,7 @@ pub fn parse_class_stmt(ts : &mut TokenStream, node: &mut AstNode, is_block: boo
                             TokenKind::Scope => {
                                 t = next_t!(ts,true);
                                 if t.kind != TokenKind::Ident {
-                                    return Err(SvError::syntax(t, "type/package, expecting identifier".to_owned()));
+                                    return Err(SvError::syntax(t, "type/package, expecting identifier"));
                                 }
                                 t = next_t!(ts,true);
                                 was_decl = t.kind==TokenKind::Ident;
@@ -893,7 +893,7 @@ pub fn parse_class_stmt(ts : &mut TokenStream, node: &mut AstNode, is_block: boo
                             _ => parse_class_stmt_or_block(ts, &mut n)?,
                         }
                     }
-                    _ => return Err(SvError::syntax(t, "wait statement. Expecting fork or (event_name)".to_owned()))
+                    _ => return Err(SvError::syntax(t, "wait statement. Expecting fork or (event_name)"))
                 }
                 node.child.push(n);
             }
@@ -901,11 +901,11 @@ pub fn parse_class_stmt(ts : &mut TokenStream, node: &mut AstNode, is_block: boo
             TokenKind::Casting => {
                 ts.flush(1); // Consume
                 if t.value!="void'" {
-                    return Err(SvError::syntax(t,"casting statement. Expecting void".to_owned()));
+                    return Err(SvError::syntax(t,"casting statement. Expecting void"));
                 }
                 t = next_t!(ts,false);
                 if t.kind!=TokenKind::ParenLeft {
-                    return Err(SvError::syntax(t,"casting statement. Expecting (".to_owned()));
+                    return Err(SvError::syntax(t,"casting statement. Expecting ("));
                 }
                 node.child.push(parse_expr(ts,ExprCntxt::Arg,false)?);
                 ts.flush(1); // Consume right parenthesis
@@ -927,7 +927,7 @@ pub fn parse_class_stmt(ts : &mut TokenStream, node: &mut AstNode, is_block: boo
             // Semi-colon : empty statement
             TokenKind::SemiColon => ts.flush(1),
             TokenKind::KwEndFunction | TokenKind::KwEndTask => {ts.rewind(0); break;},
-            _ => return Err(SvError::syntax(t, "class statement".to_owned()))
+            _ => return Err(SvError::syntax(t, "class statement"))
         }
         // Stop parsing if not in a block
         if ! is_block {break;}
@@ -995,7 +995,7 @@ pub fn parse_assign_or_call(ts : &mut TokenStream, node: &mut AstNode, cntxt: Ex
             n.child.push(nm);
         }
         TokenKind::SemiColon if cntxt==ExprCntxt::Stmt || cntxt==ExprCntxt::StmtList => n = nm,
-        _ => return Err(SvError::syntax(t, "class assign/call. Expecting assignment operator or ;".to_owned())),
+        _ => return Err(SvError::syntax(t, "class assign/call. Expecting assignment operator or ;")),
     }
     // Rewind ending token when in a list, otherwise consume it
     match cntxt {
@@ -1004,14 +1004,14 @@ pub fn parse_assign_or_call(ts : &mut TokenStream, node: &mut AstNode, cntxt: Ex
         ExprCntxt::ArgList  => {
             t = next_t!(ts,true);
             if t.kind != TokenKind::ParenRight && t.kind != TokenKind::Comma {
-                return Err(SvError::syntax(t, "assign/call. Expecting , or )".to_owned()))
+                return Err(SvError::syntax(t, "assign/call. Expecting , or )"))
             }
             ts.rewind(1);
         },
         ExprCntxt::StmtList => {
             t = next_t!(ts,true);
             if t.kind != TokenKind::SemiColon && t.kind != TokenKind::Comma {
-                return Err(SvError::syntax(t, "assign/call. Expecting , or ;".to_owned()))
+                return Err(SvError::syntax(t, "assign/call. Expecting , or ;"))
             }
             ts.rewind(1);
         },
@@ -1040,7 +1040,7 @@ pub fn parse_class_if_else(ts : &mut TokenStream, node: &mut AstNode) -> Result<
         node_if.attr.insert("kind".to_owned(),"if".to_owned());
     }
     if t.kind!=TokenKind::KwIf {
-        return Err(SvError::syntax(t, " if statement. Expecting if".to_owned()));
+        return Err(SvError::syntax(t, " if statement. Expecting if"));
     }
     expect_t!(ts,"if statement",TokenKind::ParenLeft);
     let n = parse_expr(ts,ExprCntxt::Arg,false)?;

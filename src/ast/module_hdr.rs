@@ -25,7 +25,7 @@ pub fn parse_module_hdr(ts : &mut TokenStream, node: &mut AstNode) -> Result<(),
             ts.flush(1);
             t = next_t!(ts,true);
         },
-        _ => return Err(SvError::syntax(t, "module/interface declaration, expecting identifier or lifetime (static/automatic)".to_owned()))
+        _ => return Err(SvError::syntax(t, "module/interface declaration, expecting identifier or lifetime (static/automatic)"))
     }
     // Optional package import
     while t.kind == TokenKind::KwImport {
@@ -63,7 +63,7 @@ pub fn parse_module_hdr(ts : &mut TokenStream, node: &mut AstNode) -> Result<(),
     }
     // End of header
     if t.kind != TokenKind::SemiColon {
-        return Err(SvError::syntax(t, "port declaration. Expecting ;".to_owned()));
+        return Err(SvError::syntax(t, "port declaration. Expecting ;"));
     }
     ts.flush(1);
     node.child.push(node_h);

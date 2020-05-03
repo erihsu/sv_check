@@ -12,7 +12,7 @@ use crate::error::{SvErrorKind, SvError};
 
 macro_rules! next_t {
     ($ts:expr, $peek:expr) => {{
-        $ts.next_non_comment($peek).unwrap_or(Err(SvError::eof()))?
+        $ts.next_non_comment($peek).unwrap_or(Err(SvError::eof($ts.source.pos)))?
     }};
 }
 
@@ -25,7 +25,7 @@ macro_rules! expect_t {
             m |= t.kind == $exp_tk;
         )+
         if !m {
-            return Err(SvError::syntax(t,  format!("{}. Expecting {:?}", $cntxt.to_string(), ($($exp_tk),+) ) ));
+            return Err(SvError::syntax(t,  &format!("{}. Expecting {:?}", $cntxt.to_string(), ($($exp_tk),+) ) ));
         }
         t
     }};
@@ -40,7 +40,7 @@ macro_rules! loop_args_break_cont {
             // Right parenthesis, port list is done
             TokenKind::$tk => break,
             // Any other token is an error
-            _ => return Err(SvError::syntax(t, format!("{}. Expecting , or {}", $cntxt,TokenKind::$tk)))
+            _ => return Err(SvError::syntax(t, &format!("{}. Expecting , or {}", $cntxt,TokenKind::$tk)))
         }
     }}
 }
@@ -101,13 +101,13 @@ pub fn parse_import(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), SvE
                 match t.kind {
                     TokenKind::SemiColon => break,
                     TokenKind::Comma => {},
-                    _ => return Err(SvError::syntax(t, "package import. Expecting , or ;".to_owned()))
+                    _ => return Err(SvError::syntax(t, "package import. Expecting , or ;"))
                 }
             }
         }
         TokenKind::Str => {
             if t.value!="DPI-C" && t.value!="DPI"  {
-                return Err(SvError::syntax(t, "import DPI. Expecting DPI-C, DPI or package identifier".to_owned()))
+                return Err(SvError::syntax(t, "import DPI. Expecting DPI-C, DPI or package identifier"))
             }
             n.attr.insert("dpi".to_owned(),t.value);
             ts.flush(1);
@@ -118,7 +118,7 @@ pub fn parse_import(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), SvE
             } else {ts.rewind(1);}
             parse_func(ts, &mut n, false, true)?;
         }
-        _ => return Err(SvError::syntax(t, "import. Expecting DPI-C or package identifier".to_owned()))
+        _ => return Err(SvError::syntax(t, "import. Expecting DPI-C or package identifier"))
     }
     node.child.push(n);
     Ok(())
@@ -190,7 +190,7 @@ pub fn parse_port_decl(ts : &mut TokenStream, allow_void : bool, cntxt: ExprCntx
                 TokenKind::Dot => {
                     let nnt = next_t!(ts,true);
                     if nnt.kind != TokenKind::Ident {
-                        return Err(SvError::new(SvErrorKind::Syntax, t.pos, format!("Unexpected {} ({:?}) for port type",nnt.value, nnt.kind)))
+                        return Err(SvError::syntax(t, "port type"))
                     }
                     node.attr.insert("intf".to_owned(), t.value);
                     node.attr.insert("modport".to_owned(), nnt.value);
@@ -219,7 +219,7 @@ pub fn parse_port_decl(ts : &mut TokenStream, allow_void : bool, cntxt: ExprCntx
                     ts.rewind(2);
                 }
                 // Any other token is an error
-                _ =>  return Err(SvError::syntax(nt, "port declaration. Expecting identifer, comma, ), #".to_owned()))
+                _ =>  return Err(SvError::syntax(nt, "port declaration. Expecting identifer, comma, ), #"))
             }
         }
         TokenKind::KwIntf => {
@@ -231,7 +231,7 @@ pub fn parse_port_decl(ts : &mut TokenStream, allow_void : bool, cntxt: ExprCntx
                 TokenKind::Dot => {
                     let nnt = next_t!(ts,true);
                     if nnt.kind != TokenKind::Ident {
-                        return Err(SvError::new(SvErrorKind::Syntax, t.pos, format!("Unexpected {} ({:?}) for port type, expecting modport",nnt.value, nnt.kind)))
+                        return Err(SvError::new(SvErrorKind::Syntax, t, format!("Unexpected {} ({:?}) for port type, expecting modport",nnt.value, nnt.kind)))
                     }
                     node.attr.insert("intf".to_owned(), t.value);
                     node.attr.insert("modport".to_owned(), nnt.value);
@@ -240,7 +240,7 @@ pub fn parse_port_decl(ts : &mut TokenStream, allow_void : bool, cntxt: ExprCntx
                 // Another ident : No modport, nt is the port name, rewind it
                 TokenKind::Ident => ts.rewind(1),
                 // Any other token is an error
-                _ => return Err(SvError::syntax(t, "interface declaratione. Expecting identifier".to_owned()))
+                _ => return Err(SvError::syntax(t, "interface declaratione. Expecting identifier"))
             }
         }
         // Virtual interface
@@ -304,7 +304,7 @@ pub fn parse_var_decl_name(ts : &mut TokenStream, node : &mut AstNode, cntxt: Ex
         ts.flush(1);
         node.child.push(parse_expr(ts,cntxt,allow_type)?);
     } else if need_value {
-        return Err(SvError::syntax(t, "variable declaration. Expecting init value".to_owned()))
+        return Err(SvError::syntax(t, "variable declaration. Expecting init value"))
     }
     ts.rewind(0);
     Ok(())
@@ -353,23 +353,23 @@ pub fn parse_strength(ts : &mut TokenStream, node : &mut AstNode) -> Result<(), 
             let mut s = t.value;
             t = next_t!(ts,false);
             if t.kind!=TokenKind::Comma {
-                return Err(SvError::syntax(t, "drive strength declaration, expecting ,".to_owned()))
+                return Err(SvError::syntax(t, "drive strength declaration, expecting ,"))
             }
             s.push(',');
             t = next_t!(ts,false);
             if t.kind!=TokenKind::KwDrive && t.kind!=TokenKind::KwSupply {
-                return Err(SvError::syntax(t, "drive strength declaration, expecting ,".to_owned()))
+                return Err(SvError::syntax(t, "drive strength declaration, expecting ,"))
             }
             s.push_str(&t.value);
             node.attr.insert("drivee".to_owned(),s);
             // TODO: Check combination are actually valid
         }
-        _ => return Err(SvError::syntax(t, "strength declaration, expecting drive or charge".to_owned()))
+        _ => return Err(SvError::syntax(t, "strength declaration, expecting drive or charge"))
     }
     // Done, expecting closing parenthesis
     t = next_t!(ts,false);
     if t.kind!=TokenKind::ParenRight {
-        return Err(SvError::syntax(t, "strength declaration, expecting )".to_owned()))
+        return Err(SvError::syntax(t, "strength declaration, expecting )"))
     }
     Ok(())
 }
@@ -457,14 +457,14 @@ pub fn parse_data_type(ts : &mut TokenStream, node : &mut AstNode, allowed_flag:
                 TokenKind::SemiColon |
                 TokenKind::OpEq |
                 TokenKind::ParenRight => ts.rewind(1),
-                _ => return Err(SvError::new(SvErrorKind::Syntax, t.pos, format!("Unexpected {} ({}) in data type.",nt.value, nt.kind)))
+                _ => return Err(SvError::syntax(t, "data type."))
             }
         }
         // Sign/Slice start (ignore handling now, will be done after)
         TokenKind::KwSigning |
         TokenKind::SquareLeft => {}
         // Any token not listed here is an error
-        _ => return Err(SvError::new(SvErrorKind::Syntax, t.pos, format!("Unexpected {} ({:?}) in data type. Expecting type or identifier",t.value, t.kind)))
+        _ => return Err(SvError::syntax(t, "data type. Expecting type or identifier"))
     }
     // println!("[parse_data_type] ->get next = {} : {}", get_next, t );
     if get_next {
@@ -564,8 +564,7 @@ pub fn parse_ident_list(ts : &mut TokenStream, node: &mut AstNode) -> Result<(),
                 expect_ident = true;
             }
             TokenKind::SemiColon if !expect_ident => break, // Semi colon indicate end of statement, stop the loop
-            _ => return Err(SvError::new(SvErrorKind::Syntax, t.pos,
-                    format!("Unexpected {} ({:?}) in ident list, expecting identifier/comma/semicolon",t.value, t.kind)))
+            _ => return Err(SvError::syntax(t, "ident list. Expecting identifier/comma/semicolon"))
         }
     }
     Ok(())
@@ -662,7 +661,7 @@ pub fn parse_enum(ts : &mut TokenStream, is_typedef: bool) -> Result<AstNode,SvE
             t = next_t!(ts,false);
         }
         TokenKind::CurlyLeft => {}
-        _ => return Err(SvError::new(SvErrorKind::Syntax, t.pos, format!("Unexpected {} ({:?}) in enum", t.value, t.kind)))
+        _ => return Err(SvError::syntax(t, "enum"))
     }
     // Expect opening brace for definition or ; in case of forward declaration
     match t.kind {
@@ -672,7 +671,7 @@ pub fn parse_enum(ts : &mut TokenStream, is_typedef: bool) -> Result<AstNode,SvE
             ts.flush_rd();
             return Ok(node_e);
         }
-        _ => return Err(SvError::syntax(t, "enum. Expecting {".to_owned()))
+        _ => return Err(SvError::syntax(t, "enum. Expecting {"))
     }
 
     loop {
@@ -696,7 +695,7 @@ pub fn parse_enum(ts : &mut TokenStream, is_typedef: bool) -> Result<AstNode,SvE
         match t.kind {
             TokenKind::Comma => {},
             TokenKind::CurlyRight => break,
-            _ => return Err(SvError::syntax(t, "enum. Expecting , }".to_owned()))
+            _ => return Err(SvError::syntax(t, "enum. Expecting , }"))
         }
     }
     Ok(node_e)
@@ -718,7 +717,7 @@ pub fn parse_struct(ts : &mut TokenStream) -> Result<AstNode,SvError> {
                 ts.rewind(1);
             }
         },
-        _ => return Err(SvError::syntax(t, "struct. Expecting struct or union".to_owned()))
+        _ => return Err(SvError::syntax(t, "struct. Expecting struct or union"))
     }
     t = next_t!(ts,true);
     // Optional packed keyword
@@ -741,7 +740,7 @@ pub fn parse_struct(ts : &mut TokenStream) -> Result<AstNode,SvError> {
             node.attr.insert("forward".to_owned(),"".to_owned());
             return Ok(node);
         },
-        _ => return Err(SvError::syntax(t, "struct. Expecting {".to_owned()))
+        _ => return Err(SvError::syntax(t, "struct. Expecting {"))
     }
     // Loop on type declaration until closing curly brace
     loop {
@@ -771,7 +770,7 @@ pub fn parse_struct(ts : &mut TokenStream) -> Result<AstNode,SvError> {
             }
             // End of struct declaration
             TokenKind::CurlyRight => break,
-            _ => return Err(SvError::syntax(t, "struct. Expecting data type".to_owned())),
+            _ => return Err(SvError::syntax(t, "struct. Expecting data type")),
         }
         //
     }
@@ -814,7 +813,7 @@ pub fn parse_typedef(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), Sv
             node_def.child.push(node_type);
         }
         TokenKind::KwVirtual => node_def.child.push(parse_vintf_type(ts)?),
-        _ => return Err(SvError::syntax(t, "typedef declaration, expecting type/enum/struct".to_owned()))
+        _ => return Err(SvError::syntax(t, "typedef declaration, expecting type/enum/struct"))
     }
     // Parse type name
     t = expect_t!(ts,"typedef", TokenKind::Ident, TokenKind::Macro);
@@ -867,7 +866,7 @@ pub fn parse_port_connection(ts : &mut TokenStream, node: &mut AstNode, is_param
                         cnt += 1;
                         ts.rewind(0);
                     }
-                    _ => return Err(SvError::new(SvErrorKind::Syntax, nt.pos, "Expecting open parenthesis".to_owned()))
+                    _ => return Err(SvError::syntax(nt, "port connection. Expecting open parenthesis"))
                 }
             },
             TokenKind::DotStar if allow_dot_star => {
@@ -891,7 +890,7 @@ pub fn parse_port_connection(ts : &mut TokenStream, node: &mut AstNode, is_param
                     node.child.push(node_p);
                     cnt += 1;
                 } else {
-                    return Err(SvError::syntax(t, "port connection".to_owned()));
+                    return Err(SvError::syntax(t, "port connection"));
                 }
             }
         }
@@ -930,7 +929,7 @@ pub fn parse_label(ts : &mut TokenStream, node: &mut AstNode, attr_name: String)
         ts.flush(1);
         t = next_t!(ts,false);
         if t.kind!=TokenKind::Ident {
-            return Err(SvError::syntax(t, "block name".to_owned()))
+            return Err(SvError::syntax(t, "block name"))
         }
         node.attr.insert(attr_name, t.value);
         Ok(true)
@@ -949,9 +948,9 @@ pub fn check_label(ts : &mut TokenStream, name: &str) -> Result<(), SvError> {
             ts.flush_rd();
             t = next_t!(ts,false);
             if t.kind!=TokenKind::Ident && t.kind!=TokenKind::KwNew {
-                return Err(SvError::syntax(t, "label".to_owned()));
+                return Err(SvError::syntax(t, "label"));
             } else if t.value != name {
-                return Err(SvError::syntax(t, format!("label name. Expecting {}",name)));
+                return Err(SvError::syntax(t, &format!("label name. Expecting {}",name)));
             }
         } else {
             ts.rewind(0);
@@ -987,7 +986,7 @@ pub fn parse_delay (ts : &mut TokenStream) -> Result<AstNode, SvError> {
             node.child.push(parse_expr(ts,ExprCntxt::Arg,false)?);
             ts.flush(1); // Consume right parenthesis
         }
-        _ => return Err(SvError::syntax(t, "wait statement. Expecting integer/real".to_owned()))
+        _ => return Err(SvError::syntax(t, "wait statement. Expecting integer/real"))
     }
     Ok(node)
 }
@@ -1023,7 +1022,7 @@ pub fn parse_macro(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), SvEr
         "`unconnected_drive" => {
             t = expect_t!(ts,"type",TokenKind::KwDrive);
             if t.value != "pull0" && t.value != "pull1" {
-                return Err(SvError::syntax(t, "Invalid unconnected drive, Expecting pull0/1 !".to_owned()));
+                return Err(SvError::syntax(t, "unconnected drive, Expecting pull0/1 !"));
             }
             node_m.attr.insert("drive".to_owned(),t.value);
         }
@@ -1036,13 +1035,13 @@ pub fn parse_macro(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), SvEr
                 TokenKind::OpLT => {
                     t = next_t!(ts,true);
                     if t.kind!=TokenKind::Ident {
-                        return Err(SvError::syntax(t, "include directive".to_owned()));
+                        return Err(SvError::syntax(t, "include directive"));
                     }
                     expect_t!(ts,"include directive",TokenKind::OpGT);
                 }
-                _ => return Err(SvError::syntax(t, "include directive".to_owned()))
+                _ => return Err(SvError::syntax(t, "include directive"))
             }
-            let fname = t.value;
+            let fname = t.value.clone();
             // TO BE REMOVED
             ts.add_inc(&fname);
             node_m.attr.insert("include".to_owned(),fname.clone());
@@ -1056,7 +1055,7 @@ pub fn parse_macro(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), SvEr
                 }
                 // ts.project.ast_inc[&fname].defines.iter().for_each(|(k, v)| ts.project.defines.insert(k.to_string(),v));
             } else {
-                ts.project.compile_inc(fname, t.pos)?;
+                ts.project.compile_inc(fname, t)?;
             }
             ts.flush_rd();
         }
@@ -1064,7 +1063,7 @@ pub fn parse_macro(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), SvEr
         "`define" => {
             t = next_t!(ts,true);
             if t.kind!=TokenKind::Ident {
-                return Err(SvError::syntax(t, "ifdef directive".to_owned()))
+                return Err(SvError::syntax(t, "ifdef directive"))
             }
             // Check if macro is already defined
             let name = format!("`{}", t.value);
@@ -1104,7 +1103,7 @@ pub fn parse_macro(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), SvEr
                                     loop_args_break_cont!(ts,"macro arguments",ParenRight);
                                 }
                                 TokenKind::LineCont => {},
-                                _ =>  return Err(SvError::syntax(t,"define. Expecting port name/expression".to_owned())),
+                                _ =>  return Err(SvError::syntax(t,"define. Expecting port name/expression")),
                             }
                         }
                     }
@@ -1131,7 +1130,7 @@ pub fn parse_macro(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), SvEr
         "`default_nettype" => {
             t = next_t!(ts,true);
             if t.kind!=TokenKind::KwNetType && (t.kind!=TokenKind::Ident || t.value != "none")  {
-                return Err(SvError::syntax(t,"default_nettype. Expecting net type (wire/tri/...) or none".to_owned()));
+                return Err(SvError::syntax(t,"default_nettype. Expecting net type (wire/tri/...) or none"));
             }
             node_m.attr.insert("nettype".to_owned(),t.value);
             ts.flush_rd();
@@ -1195,7 +1194,7 @@ pub fn parse_vintf_type(ts : &mut TokenStream) -> Result<AstNode, SvError> {
     }
     // Mandatory virtual interface type
     if t.kind!=TokenKind::Ident && t.kind!=TokenKind::Macro {
-        return Err(SvError::syntax(t, "virtual interface. Expecting type identifier".to_owned()));
+        return Err(SvError::syntax(t, "virtual interface. Expecting type identifier"));
     }
     node_i.attr.insert("type".to_owned(),t.value);
     // Optional parameter
@@ -1215,7 +1214,7 @@ pub fn parse_vintf(ts : &mut TokenStream, node : &mut AstNode) -> Result<(), SvE
                 node_i.child.push(n);
                 loop_args_break_cont!(ts,"virtual interface",SemiColon);
             }
-            _ =>  return Err(SvError::syntax(t,"virtual interface. Expecting identifier".to_owned())),
+            _ =>  return Err(SvError::syntax(t,"virtual interface. Expecting identifier")),
         }
     }
     node.child.push(node_i);
@@ -1243,7 +1242,7 @@ pub fn parse_struct_init(ts : &mut TokenStream, node : &mut AstNode) -> Result<(
                 TokenKind::TypeIntAtom | TokenKind::TypeIntVector |
                 TokenKind::TypeReal | TokenKind::TypeString |
                 TokenKind::KwDefault => {}
-                _ => return Err(SvError::syntax(t, "struct init. Expecting identifier/integer/default".to_owned()))
+                _ => return Err(SvError::syntax(t, "struct init. Expecting identifier/integer/default"))
             }
             s = t.value;
             expect_t!(ts,"struct init",TokenKind::Colon);
@@ -1270,7 +1269,7 @@ pub fn parse_case(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), SvErr
         t = next_t!(ts,false);
     }
     if t.kind!=TokenKind::KwCase {
-        return Err(SvError::syntax(t,"case statement. Expecting case".to_owned()));
+        return Err(SvError::syntax(t,"case statement. Expecting case"));
     }
     node_c.attr.insert("kind".to_owned(),t.value);
     // Parse case expression
@@ -1357,11 +1356,11 @@ pub fn parse_expr(ts : &mut TokenStream, cntxt: ExprCntxt, allow_type: bool) -> 
         match t.kind {
             // Statement: end on semi-colon or comma: rewind it and end
             TokenKind::SemiColon if cntxt==ExprCntxt::StmtList || cntxt==ExprCntxt::Stmt => { ts.rewind(0); break; },
-            TokenKind::SemiColon if cntxt!=ExprCntxt::StmtList && cntxt!=ExprCntxt::Stmt  => return Err(SvError::syntax(t, "expression".to_owned())),
+            TokenKind::SemiColon if cntxt!=ExprCntxt::StmtList && cntxt!=ExprCntxt::Stmt  => return Err(SvError::syntax(t, "expression")),
             // End on comma (if not inside curly braces)
             TokenKind::Comma => {
                 if cntxt==ExprCntxt::Stmt || cntxt==ExprCntxt::Arg || cntxt==ExprCntxt::ExprGroup  {
-                    return Err(SvError::syntax(t, "expression".to_owned()));
+                    return Err(SvError::syntax(t, "expression"));
                 }
                 ts.rewind(1); // reset to comma token to be used by caller
                 break;
@@ -1408,7 +1407,7 @@ pub fn parse_expr(ts : &mut TokenStream, cntxt: ExprCntxt, allow_type: bool) -> 
                     allow_ident = false;
                     node_e.child.push(nc);
                 } else {
-                    return Err(SvError::syntax(t, "expression".to_owned()));
+                    return Err(SvError::syntax(t, "expression"));
                 }
                 // println!("{}", node_e);
             }
@@ -1417,7 +1416,7 @@ pub fn parse_expr(ts : &mut TokenStream, cntxt: ExprCntxt, allow_type: bool) -> 
                     ts.rewind(1); // reset to } token to be used by caller
                     break;
                 }
-                return Err(SvError::syntax(t, "expression".to_owned()));
+                return Err(SvError::syntax(t, "expression"));
             }
             //
             TokenKind::SquareLeft  => {
@@ -1431,7 +1430,7 @@ pub fn parse_expr(ts : &mut TokenStream, cntxt: ExprCntxt, allow_type: bool) -> 
                     ts.rewind(1);
                     break;
                 }
-                return Err(SvError::syntax(t, "expression".to_owned()));
+                return Err(SvError::syntax(t, "expression"));
             }
             TokenKind::Dollar if cntxt == ExprCntxt::BracketMsb => {
                 node_e.attr.insert("value".to_owned(),"$".to_owned());
@@ -1454,7 +1453,7 @@ pub fn parse_expr(ts : &mut TokenStream, cntxt: ExprCntxt, allow_type: bool) -> 
                         ts.rewind(1);
                         break;
                     },
-                    _ => return Err(SvError::syntax(t, "expression".to_owned()))
+                    _ => return Err(SvError::syntax(t, "expression"))
                 }
             }
             TokenKind::KwOr if cntxt==ExprCntxt::Sensitivity => {ts.rewind(1);break;},
@@ -1487,7 +1486,7 @@ pub fn parse_expr(ts : &mut TokenStream, cntxt: ExprCntxt, allow_type: bool) -> 
                             match t.kind {
                                 TokenKind::Comma => {},
                                 TokenKind::ParenRight => break,
-                                _ => return Err(SvError::syntax(t, "new arguments. Expecting , or )".to_owned()))
+                                _ => return Err(SvError::syntax(t, "new arguments. Expecting , or )"))
                             }
                         }
                     } else {
@@ -1500,7 +1499,7 @@ pub fn parse_expr(ts : &mut TokenStream, cntxt: ExprCntxt, allow_type: bool) -> 
                     TokenKind::SemiColon  if cntxt==ExprCntxt::Stmt || cntxt==ExprCntxt::StmtList => {},
                     TokenKind::ParenRight if cntxt==ExprCntxt::Arg  || cntxt==ExprCntxt::ArgList  => {},
                     TokenKind::Comma      if cntxt==ExprCntxt::StmtList || cntxt==ExprCntxt::ArgList => {},
-                    _ => return Err(SvError::syntax(t, "new statement.".to_owned()))
+                    _ => return Err(SvError::syntax(t, "new statement."))
                 }
                 ts.rewind(0);
                 allow_ident = false;
@@ -1518,10 +1517,10 @@ pub fn parse_expr(ts : &mut TokenStream, cntxt: ExprCntxt, allow_type: bool) -> 
                                     node_e.attr.insert("value".to_owned(), t.value);
                                     ts.flush(1);
                                 }
-                                _ => return Err(SvError::syntax(t, "expression. Unexpected identifier".to_owned()))
+                                _ => return Err(SvError::syntax(t, "expression. Unexpected identifier"))
                             };
                         }
-                        _ => return Err(SvError::syntax(t, "expression.".to_owned()))
+                        _ => return Err(SvError::syntax(t, "expression."))
                     }
                 } else {
                     node_e.child.push(parse_member_or_call(ts,true)?);
@@ -1551,7 +1550,7 @@ pub fn parse_expr(ts : &mut TokenStream, cntxt: ExprCntxt, allow_type: bool) -> 
                     // node_e.child.last().unwrap().attr.insert("value".to_owned(), format!("{}{}", node_e.attr["value"],t.value));
                     ts.flush(1);
                 } else {
-                    return Err(SvError::syntax(t, "expression".to_owned()))
+                    return Err(SvError::syntax(t, "expression"))
                 }
             }
             // Operator with one operand
@@ -1651,7 +1650,7 @@ pub fn parse_expr(ts : &mut TokenStream, cntxt: ExprCntxt, allow_type: bool) -> 
                         node_e.child.push(nc);
                         ts.flush(1);
                     }
-                    _ => return Err(SvError::syntax(t, "with constraint. Expecting ( or {".to_owned()))
+                    _ => return Err(SvError::syntax(t, "with constraint. Expecting ( or {"))
                 }
                 allow_ident = false;
                 allow_op    = true;
@@ -1669,7 +1668,7 @@ pub fn parse_expr(ts : &mut TokenStream, cntxt: ExprCntxt, allow_type: bool) -> 
                     allow_ident = false;
                     allow_op    = true;
                 } else {
-                    return Err(SvError::syntax(t, "with constraint. Expecting ( or {".to_owned()));
+                    return Err(SvError::syntax(t, "with constraint. Expecting ( or {"));
                 }
                 node_e.child.push(nc);
                 ts.flush(1);
@@ -1721,7 +1720,7 @@ pub fn parse_expr(ts : &mut TokenStream, cntxt: ExprCntxt, allow_type: bool) -> 
                 break; // next character should be , or ) : no need to consume it, will be checked by caller
             }
             // Allowed keywords
-            _ => return Err(SvError::syntax(t, "expression".to_owned()))
+            _ => return Err(SvError::syntax(t, "expression"))
         }
         is_first = false;
         prev_tkind = t.kind;
@@ -1743,7 +1742,7 @@ pub fn parse_member_or_call(ts : &mut TokenStream, is_first: bool) -> Result<Ast
     let mut n = AstNode::new(AstNodeKind::Identifier, t0.pos);
     if t0.kind!=TokenKind::Ident && t0.kind!=TokenKind::KwNew {
         if (t0.kind != TokenKind::KwThis && t0.kind != TokenKind::KwSuper) || !is_first {
-            return Err(SvError::syntax(t0, "member. Expecting identifier".to_owned()));
+            return Err(SvError::syntax(t0, "member. Expecting identifier"));
         }
     }
     // ts.display_status("parse_member_or_call");
@@ -1789,7 +1788,7 @@ pub fn parse_member_or_call(ts : &mut TokenStream, is_first: bool) -> Result<Ast
                     match t.kind {
                         TokenKind::Comma => ts.flush(1), // Comma indicate a list -> continue
                         TokenKind::SemiColon => break, // Semi colon indicate end of statement, stop the loop
-                        _ => return Err(SvError::syntax(t, "signal declaration, expecting , or ;".to_owned()))
+                        _ => return Err(SvError::syntax(t, "signal declaration, expecting , or ;"))
                     }
                     let mut node_m = AstNode::new(AstNodeKind::Declaration, ts.get_pos());
                     parse_var_decl_name(ts, &mut node_m,ExprCntxt::StmtList,false,false)?;
@@ -1799,7 +1798,7 @@ pub fn parse_member_or_call(ts : &mut TokenStream, is_first: bool) -> Result<Ast
                 // ts.display_status("parse_member_or_call: Member declaration");
                 return Ok(n);
             }
-            _ => return Err(SvError::syntax(t, "statement. Expecting scope/type".to_owned()))
+            _ => return Err(SvError::syntax(t, "statement. Expecting scope/type"))
         }
 
     }
@@ -1825,7 +1824,7 @@ pub fn parse_member_or_call(ts : &mut TokenStream, is_first: bool) -> Result<Ast
                 ts.flush(1); // Consume right parenthesis
                 return Ok(n);
             }
-            _ => return Err(SvError::syntax(t, "Expression. Expecting identifier".to_owned()))
+            _ => return Err(SvError::syntax(t, "Expression. Expecting identifier"))
         }
 
     } else {
@@ -1866,19 +1865,19 @@ pub fn parse_system_task(ts : &mut TokenStream) -> Result<AstNode, SvError> {
         "$test" | "$value" => {
             t = expect_t!(ts,"system task $plusargs",TokenKind::SystemTask);
             if t.value != "$plusargs" {
-                return Err(SvError::syntax(t, "system task. Expecting $plusargs".to_owned()))
+                return Err(SvError::syntax(t, "system task. Expecting $plusargs"))
             }
             name.push_str(&t.value);
         }
         "$async" => {
             t = expect_t!(ts,"system task $plusargs",TokenKind::SystemTask);
             if t.value != "$and" && t.value != "$nand" && t.value != "$or" && t.value != "$nor" {
-                return Err(SvError::syntax(t, "system task. Expecting $and/$nand/$or/$nor".to_owned()))
+                return Err(SvError::syntax(t, "system task. Expecting $and/$nand/$or/$nor"))
             }
             name.push_str(&t.value);
             t = expect_t!(ts,"system task $plusargs",TokenKind::SystemTask);
             if t.value != "$array" && t.value != "$plane" {
-                return Err(SvError::syntax(t, "system task. Expecting $array/$plane".to_owned()))
+                return Err(SvError::syntax(t, "system task. Expecting $array/$plane"))
             }
             name.push_str(&t.value);
         }
@@ -1938,7 +1937,7 @@ pub fn parse_func_call(ts : &mut TokenStream, node: &mut AstNode, is_param: bool
                         cnt += 1;
                         ts.rewind(0);
                     }
-                    _ => return Err(SvError::syntax(t,"function arg. Expecting open parenthesis".to_owned()))
+                    _ => return Err(SvError::syntax(t,"function arg. Expecting open parenthesis"))
                 }
             },
             // Allow type for param
@@ -1977,7 +1976,7 @@ pub fn parse_func_call(ts : &mut TokenStream, node: &mut AstNode, is_param: bool
                     t = next_t!(ts,false);
                 }
                 if t.kind!=TokenKind::Ident && t.kind!=TokenKind::Macro {
-                    return Err(SvError::syntax(t,"function arg. Expecting port name".to_owned()));
+                    return Err(SvError::syntax(t,"function arg. Expecting port name"));
                 }
                 s.push_str(&t.value);
                 let mut node_p = AstNode::new(AstNodeKind::Param, t.pos);
@@ -2014,7 +2013,7 @@ pub fn parse_func_call(ts : &mut TokenStream, node: &mut AstNode, is_param: bool
                     cnt += 1;
                     ts.rewind(0); //
                 } else {
-                    return Err(SvError::syntax(t, "port connection".to_owned()));
+                    return Err(SvError::syntax(t, "port connection"));
                 }
             }
         }
@@ -2031,15 +2030,15 @@ pub fn parse_func_call(ts : &mut TokenStream, node: &mut AstNode, is_param: bool
 pub fn parse_time(ts : &mut TokenStream) -> Result<String,SvError> {
     let t1 = next_t!(ts,false);
     if t1.kind!=TokenKind::Integer && t1.kind!=TokenKind::Real {
-        return Err(SvError::syntax(t1,"timescale. Expecting time value (integer or floating)".to_owned()));
+        return Err(SvError::syntax(t1,"timescale. Expecting time value (integer or floating)"));
     }
     let t2 = next_t!(ts,false);
     if t2.kind!=TokenKind::Ident {
-        return Err(SvError::syntax(t2,"timescale. Expecting time unit".to_owned()));
+        return Err(SvError::syntax(t2,"timescale. Expecting time unit"));
     }
     match t2.value.as_ref() {
         "fs" |"ps" |"ns" |"us" |"ms" | "s" => {},
-        _ => return Err(SvError::syntax(t2,"timescale. Expecting fs, ps, ns, ...".to_owned()))
+        _ => return Err(SvError::syntax(t2,"timescale. Expecting fs, ps, ns, ..."))
     }
     Ok(format!("{}{}",t1.value,t2.value))
 }
@@ -2058,7 +2057,7 @@ pub fn parse_assert(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), SvE
             n.child.push(parse_expr(ts,ExprCntxt::Arg,false)?);
             ts.flush(1); // Consume right parenthesis
         }
-        _ => return Err(SvError::syntax(t,"assert statement. Expecting (".to_owned()))
+        _ => return Err(SvError::syntax(t,"assert statement. Expecting ("))
     }
     t = next_t!(ts,true);
     match t.kind {

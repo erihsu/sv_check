@@ -102,13 +102,13 @@ impl<'a,'b> TokenStream<'a,'b> {
         let k = {
             if first_char == '$' {
                 if is_pathpulse || is_casting {
-                    return Err(SvError::new(SvErrorKind::Token,p,s));
+                    return Err(SvError::token(p,s));
                 }
                 TokenKind::SystemTask
             }
             else if first_char == '`' {
                 if is_pathpulse || s.len()==1 {
-                    return Err(SvError::new(SvErrorKind::Token,p,s));
+                    return Err(SvError::token(p,s));
                 } else if is_casting {
                     let nc = self.source.peek_char().unwrap_or(&' ');
                     match nc {
@@ -118,7 +118,7 @@ impl<'a,'b> TokenStream<'a,'b> {
                             return Ok(Token::new(t.kind,s,p));
                         }
                         '(' => {},
-                        _ => {return Err(SvError::new(SvErrorKind::Token,p,s));}
+                        _ => {return Err(SvError::token(p,s));}
                     }
                 }
                 if is_casting {TokenKind::Casting}
@@ -141,7 +141,7 @@ impl<'a,'b> TokenStream<'a,'b> {
             else if let Some(k) = basetype_from_str(s.as_ref()) {k}
             else if let Some(k) = keyword_from_str(s.as_ref()) {
                 if is_casting {
-                    return Err(SvError::new(SvErrorKind::Token,p,s));
+                    return Err(SvError::token(p,s));
                 }
                 k
             } else {TokenKind::Ident}
@@ -265,7 +265,7 @@ impl<'a,'b> TokenStream<'a,'b> {
                 // x/z allowed for integer number only
                 'x'|'X'|'z'|'Z' => {
                     if base != NumBase::Binary && base != NumBase::Hexa && fsm!=NumParseState::Int && fsm!=NumParseState::IntStart && fsm!=NumParseState::Start && &s!="'" {
-                        return Err(SvError::new(SvErrorKind::Token,self.source.pos,s));
+                        return Err(SvError::token(self.source.pos,s));
                     }
                     has_xz = true;
                 }
@@ -275,7 +275,7 @@ impl<'a,'b> TokenStream<'a,'b> {
                 // Base specifier
                 '\'' => {
                     if fsm != NumParseState::Start || has_xz {
-                        return Err(SvError::new(SvErrorKind::Token,self.source.pos,s));
+                        return Err(SvError::token(self.source.pos,s));
                     }
                     fsm_next = NumParseState::Base;
                 },
@@ -286,14 +286,14 @@ impl<'a,'b> TokenStream<'a,'b> {
                         let nc = self.source.peek_char().unwrap_or(&' ');
                         if nc == &'t' {
                             self.source.get_char(); // consume t, and check the next two char are e and p
-                            if self.source.get_char().unwrap_or(' ') != 'e' {return Err(SvError::new(SvErrorKind::Token,self.source.pos,s));}
-                            if self.source.get_char().unwrap_or(' ') != 'p' {return Err(SvError::new(SvErrorKind::Token,self.source.pos,s));}
+                            if self.source.get_char().unwrap_or(' ') != 'e' {return Err(SvError::token(self.source.pos,s));}
+                            if self.source.get_char().unwrap_or(' ') != 'p' {return Err(SvError::token(self.source.pos,s));}
                             let lc = self.source.peek_char().unwrap_or(&'/');
                             if lc.is_whitespace() || lc==&';' {
                                 self.last_pos = self.source.pos;
                                 return Ok(Token::new(TokenKind::Kw1step,"1step".to_owned(),p));
                             } else {
-                                return Err(SvError::new(SvErrorKind::Token,self.source.pos,s));
+                                return Err(SvError::token(self.source.pos,s));
                             }
                         }
                     }
@@ -323,14 +323,14 @@ impl<'a,'b> TokenStream<'a,'b> {
                 // Dot -> real number
                 '.' => {
                     if fsm != NumParseState::Start || has_xz {
-                        return Err(SvError::new(SvErrorKind::Token,self.source.pos,s));
+                        return Err(SvError::token(self.source.pos,s));
                     }
                     fsm_next = NumParseState::Dec;
                 }
                 // Exponent -> real number
                 'e' | 'E' => {
                     if (fsm != NumParseState::Start && fsm != NumParseState::Dec) || has_xz {
-                        return Err(SvError::new(SvErrorKind::Token,self.source.pos,s));
+                        return Err(SvError::token(self.source.pos,s));
                     }
                     fsm_next = NumParseState::Exp;
                 }
@@ -376,7 +376,7 @@ impl<'a,'b> TokenStream<'a,'b> {
 
     /// Return the next token from the source code
     pub fn get_next_token(&mut self) -> Result<Token,SvError> {
-        let c = self.get_first_char().ok_or_else(|| SvError::new(SvErrorKind::Null,self.last_pos,"".to_owned()))?;
+        let c = self.get_first_char().ok_or_else(|| SvError::null(self.last_pos))?;
         let p = self.last_pos; // Save position of this first char since it will
         self.last_char = ' ';
         // println!("[get_next_token] Character {} @ {}", c, self.source.pos );
@@ -715,7 +715,7 @@ impl<'a,'b> TokenStream<'a,'b> {
                     },
                     '(' => Ok(Token::new(TokenKind::Casting,"\'".to_owned(),p)),
                     'h'|'d'|'o'|'b'|'x'|'z'|'H'|'D'|'O'|'B'|'X'|'Z'|'1'|'0' => self.parse_number(c),
-                    _ => Err(SvError::new(SvErrorKind::Token,p,'\''.to_string()))
+                    _ => Err(SvError::token(p,'\''.to_string()))
                 }
             }
             '\\' => {
@@ -876,7 +876,7 @@ impl<'a,'b> TokenStream<'a,'b> {
                 Some(Err(t)) => return Err(t),
                 None => {
                     // TODO: handle macro case where buffer is filled after macro expansion
-                    return Err(SvError::eof())
+                    return Err(SvError::eof(self.source.pos))
                 }
             };
         }
@@ -904,7 +904,7 @@ impl<'a,'b> TokenStream<'a,'b> {
                         t = x.clone();
                     }
                     Some(Err(e)) => return Err(e),
-                    None => return Err(SvError::eof()),
+                    None => return Err(SvError::eof(self.source.pos)),
                 }
             };
             // Increment read pointer in all cases since the token is always in thebuffer
@@ -1064,7 +1064,7 @@ impl<'a,'b> TokenStream<'a,'b> {
                                 if (cnt_a as usize)==macro_def.ports.len() {break;}
                                 v = Vec::new();
                             }
-                            _ if cnt_a == -1 => {return Some(Err(SvError::syntax(t,"Macro call parameter".to_string())));}
+                            _ if cnt_a == -1 => {return Some(Err(SvError::syntax(t,"Macro call parameter")));}
                             // Replace identifier by argument value
                             TokenKind::Ident if args_caller.contains_key(&t.value) => {
                                 // println!("[macro_expand] {} : macro {} port {} token {} replaced by {:?}", self.source.get_filename(),macro_name,macro_def.ports[cnt_a as usize].0,t.value,args_caller[&t.value]);
@@ -1080,7 +1080,7 @@ impl<'a,'b> TokenStream<'a,'b> {
                         cnt_a += 1;
                         let (arg_name,dt) = macro_def.ports[cnt_a as usize].clone();
                         if dt.len() == 0 {
-                            return Some(Err(SvError::syntax(t,format!("macro call. Only {} parameters over {}. No default value for {}.", cnt_a+1,macro_def.ports.len(),arg_name))));
+                            return Some(Err(SvError::syntax(t, &format!("macro call. Only {} parameters over {}. No default value for {}.", cnt_a+1,macro_def.ports.len(),arg_name))));
                         } else {
                             args.insert(arg_name,dt);
                         }
@@ -1104,7 +1104,7 @@ impl<'a,'b> TokenStream<'a,'b> {
                                     self.buffer.push_back(Token{kind:at.kind,value:at.value,pos:pos});
                                 }
                             } else {
-                                return Some(Err(SvError::syntax(bt,format!("macro call. Parameter not found: {:?}",args.keys()))));
+                                return Some(Err(SvError::syntax(bt,&format!("macro call. Parameter not found: {:?}",args.keys()))));
                             }
                         }
                         TokenKind::Ident if args.contains_key(&bt.value) => {
@@ -1123,7 +1123,7 @@ impl<'a,'b> TokenStream<'a,'b> {
                                     }
                                 } else {
                                     // println!("[macro_expand] Found include {} : compiling", bt.value);
-                                    if let Err(e) = self.project.compile_inc(bt.value.clone(), t.pos) {
+                                    if let Err(e) = self.project.compile_inc(bt.value.clone(), t.clone()) {
                                         return Some(Err(e));
                                     }
                                 }

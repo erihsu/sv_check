@@ -13,7 +13,8 @@ use std::{
 
 use crate::lex::{
     source::{Source,path_display},
-    position::Position,
+    token::Token,
+    // position::Position,
     token_stream::TokenStream};
 
 use crate::comp::comp_lib::CompLib;
@@ -161,7 +162,7 @@ impl Project {
                 let mut ts = TokenStream::new(&mut src, self);
                 let mut ast = Ast::new(fname);
                 match ast.build(&mut ts) {
-                    Err(e) => println!("[Error] {:?}, {}", ts.source.get_filename(), e),
+                    Err(e) => self.log.msg_e(e),
                     _ => {
                         // println!("[Info] File {} compiled with success", fname.display())
                         self.ast_list.push(ast);
@@ -181,7 +182,7 @@ impl Project {
     }
 
     //
-    pub fn compile_inc(&mut self, inc_name: String, pos: Position) -> Result<(),SvError> {
+    pub fn compile_inc(&mut self, inc_name: String, token: Token) -> Result<(),SvError> {
         let mut inc_path = PathBuf::new();
         for s in inc_name.to_string().split('/') {
             inc_path.push(s);
@@ -212,11 +213,12 @@ impl Project {
                 // println!("Compiling include file {:?}", f_abs);
                 match self.parse_file(f_abs.clone()) {
                     Ok(ast) => {self.ast_inc.insert(inc_name,Box::new(ast));}
-                    Err(e) => {println!("[Error] {:?}, {}", path_display(f_abs), e);}
+                    Err(e) => self.log.msg_e(e)
                 }
                 Ok(())
             }
-            None => Err(SvError::new(SvErrorKind::Io, pos, format!("line {} -- Unable to find include file {:?}", pos, inc_name)))
+            None => Err(SvError::new(SvErrorKind::Include, token, "".to_string()))
+            // None => Err(SvError::new(SvErrorKind::Include, token, format!("line {} -- Unable to find include file {:?}", pos, inc_name)))
         }
     }
 

@@ -41,3 +41,4 @@ Reminder of special error/warning which needs to be caught by the tool eventuall
  [ ] v1.0.0 : Pass a significant amount of test (TBD) from the SymbiFlow testsuite
  [ ] v1.1.0 : AST: Extract comment as well
  [ ] v1.2.0 : Basic linting: unused port/signals, assign input
+ [ ] v1.3.0 : Parsing error recovery
