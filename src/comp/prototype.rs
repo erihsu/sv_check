@@ -7,6 +7,7 @@ use std::fmt;
 use crate::ast::astnode::{AstNode,AstNodeKind};
 use crate::comp::def_type::{DefType,TypeUser};
 use crate::comp::comp_obj::*;
+use crate::reporter::{REPORTER, MsgID};
 
 // --------------
 // Port direction
@@ -114,10 +115,12 @@ impl DefPort {
                 AstNodeKind::StructInit |
                 AstNodeKind::Branch     |
                 AstNodeKind::SystemTask |
+                AstNodeKind::MethodCall |
+                AstNodeKind::ExprGroup  |
                 AstNodeKind::Expr       => {self.default = Some("".to_owned());  allow_slice = false; }
                 _ => {
                     allow_slice = false;
-                    println!("[DefPort] Port {} | Skipping {:?} : {:?}",self.name, nc.kind, nc.attr);
+                    rpt!(MsgID::DbgSkip,nc,"Update Port definition");
                 }
             }
         }
@@ -149,7 +152,7 @@ pub fn parse_dim(node : &AstNode,) -> SvArrayKind {
                 }
             }
             _ => {
-                println!("[parse_dim] Slice with attr {:?} | child kind = {}", node.child[0].attr, node.child[0].kind);
+                rpt!(MsgID::DbgSkip,&node.child[0],"Slice dimension");
                 SvArrayKind::Fixed(0)
             }
         }
@@ -187,7 +190,7 @@ pub fn param_value(node: &AstNode) -> String {
             AstNodeKind::Branch => {},
             AstNodeKind::SystemTask => {},
             _ => {
-                println!("[ParamValue] Skipping param value {:?}",npc);
+                rpt!(MsgID::DbgSkip,npc,"Parameter value");
             }
         }
     }

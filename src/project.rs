@@ -18,7 +18,8 @@ use crate::lex::{
     token_stream::TokenStream};
 
 use crate::comp::comp_lib::CompLib;
-use crate::reporter::{Reporter, Severity, MsgID};
+
+use crate::reporter::{REPORTER/*, Severity*/, MsgID};
 
 pub struct Project {
     pub filelist : HashSet<PathBuf>,
@@ -27,7 +28,6 @@ pub struct Project {
     pub ast_list : Vec<Ast>,
     pub ast_inc : HashMap<String,Box<Ast>>,
     pub cur_dir : PathBuf,
-    pub log : Reporter
 }
 
 impl Project {
@@ -71,7 +71,6 @@ impl Project {
             cur_dir: PathBuf::new(),
             ast_list: Vec::new(),
             ast_inc,
-            log: Reporter::new(None,Severity::Warning),
         })
     }
 
@@ -89,7 +88,6 @@ impl Project {
         let mut src_path = srclist;
         src_path.pop();
         let file = BufReader::new(&f);
-        let mut log = Reporter::new(None,Severity::Warning);
         // TODO: use collect and filter to create the vector
         //       and also handle -f and --inc cases
         for (_num, line) in file.lines().enumerate() {
@@ -106,7 +104,7 @@ impl Project {
                     if let Ok(pc) = p.canonicalize() {
                         incdir.insert(pc);
                     } else {
-                        log.msg_s(MsgID::ErrFile,&path_display(&p));
+                        rpt_s!(MsgID::ErrFile,&path_display(&p));
                     }
                     continue;
                 }
@@ -115,7 +113,7 @@ impl Project {
                 if let Ok(pc) = p.canonicalize() {
                     filelist.insert(pc);
                 } else {
-                    log.msg_s(MsgID::ErrFile,&path_display(&p));
+                    rpt_s!(MsgID::ErrFile,&path_display(&p));
                 }
             }
         }
@@ -127,17 +125,16 @@ impl Project {
             defines: HashMap::new(), // TODO: handle define from source list
             ast_list: Vec::new(),
             cur_dir: PathBuf::new(),
-            ast_inc, log,
+            ast_inc,
         })
     }
 
     // Compile all file from the project
     pub fn parse_file(&mut self, fname: PathBuf) -> Result<Ast,SvError> {
-        self.log.set_filename(&fname);
-        // self.log.msg_s(MsgID::InfoStatus, "Parsing included file".to_string());
+        rpt_set_fname!(&fname);
+        // rpt_s!(MsgID::InfoStatus, "Parsing include");
         let mut src = Source::from_file(fname.clone())?;
         let mut ts = TokenStream::new(&mut src, self);
-        // println!("[Info] Parsing file {:?}", ts.source.get_filename());
         let mut ast = Ast::new(fname);
         ast.build(&mut ts)?;
         Ok(ast)
@@ -153,23 +150,22 @@ impl Project {
             }
             //
             if let Ok(mut src) = Source::from_file(fname.clone()) {
-                self.log.set_filename(&fname);
-                // self.log.msg_s(MsgID::InfoStatus, "Parsing".to_string());
-                // println!("[Info] Parsing file {:?}", ts.source.get_filename());
+                rpt_set_fname!(&fname);
+                // rpt_s!(MsgID::InfoStatus, "Parsing");
                 self.defines.clear(); // TODO: reinit with project-wide define
                 self.cur_dir = fname.clone();
                 self.cur_dir.pop();
                 let mut ts = TokenStream::new(&mut src, self);
                 let mut ast = Ast::new(fname);
                 match ast.build(&mut ts) {
-                    Err(e) => self.log.msg_e(e),
+                    Err(e) => rpt_e!(e),
                     _ => {
-                        // println!("[Info] File {} compiled with success", fname.display())
+                        // rpt_info!("Compilation successfull");
                         self.ast_list.push(ast);
                     }
                 }
             } else {
-                self.log.msg_s(MsgID::ErrFile, &path_display(fname));
+                rpt_s!(MsgID::ErrFile, &path_display(fname));
             }
         }
         // println!("[Info] Parsing Done");
@@ -178,7 +174,7 @@ impl Project {
 
     // Compile all file from the project
     pub fn elaborate(&mut self) {
-        let _lib = CompLib::new("my_lib".to_owned(),&self.ast_list, &self.ast_inc, &mut self.log);
+        let _lib = CompLib::new("my_lib".to_owned(),&self.ast_list, &self.ast_inc);
     }
 
     //
@@ -213,7 +209,7 @@ impl Project {
                 // println!("Compiling include file {:?}", f_abs);
                 match self.parse_file(f_abs.clone()) {
                     Ok(ast) => {self.ast_inc.insert(inc_name,Box::new(ast));}
-                    Err(e) => self.log.msg_e(e)
+                    Err(e) => rpt_e!(e)
                 }
                 Ok(())
             }

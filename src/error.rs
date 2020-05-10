@@ -14,6 +14,7 @@ pub enum SvErrorKind {
     Eof,
     Token,
     Syntax,
+    Missing,
     // NotSupported,
 }
 
@@ -36,6 +37,10 @@ impl SvError {
 
     pub fn null(pos: Position) -> SvError {
         SvError {kind:SvErrorKind::Null, token: Token::new(TokenKind::EOF, "".to_owned(), pos), txt: "".to_string()}
+    }
+
+    pub fn missing(txt: &str) -> SvError {
+        SvError {kind:SvErrorKind::Missing, token: Token::new(TokenKind::EOF, "".to_owned(), Position::new()), txt: txt.to_string()}
     }
 
     pub fn token(pos: Position, s: String) -> SvError {
@@ -61,6 +66,7 @@ impl fmt::Display for SvError {
             SvErrorKind::Eof          => write!(f, ":{} | Unexpected end of file !", self.token.pos),
             SvErrorKind::Token        => write!(f, ":{} | Unable to parse token \"{}\" !",self.token.pos, self.token.value),
             SvErrorKind::Syntax       => write!(f, ":{} | Unexpected {} in {} !",self.token.pos, self.token.kind, self.txt),
+            SvErrorKind::Missing      => write!(f, "Missing {} !", self.txt),
             // SvErrorKind::NotSupported => write!(f, ":{} -- Unsuported syntax : {} !",self.token.pos, self.txt),
         }
     }

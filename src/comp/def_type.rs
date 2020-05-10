@@ -1,11 +1,12 @@
 // This file is part of sv_check and subject to the terms of MIT Licence
 // Copyright (c) 2019, clams@mail.com
 
+use std::fmt;
 
 use crate::comp::comp_obj::{ObjDef};
 use crate::ast::astnode::{AstNode,AstNodeKind};
 use crate::comp::prototype::{DefMember, param_value};
-use std::fmt;
+use crate::reporter::{REPORTER, MsgID};
 
 // ------------
 // Signal type
@@ -97,7 +98,7 @@ impl From<&AstNode> for VecKeyVal {
                 AstNodeKind::Param => {
                     v.push(KeyVal{key:np.attr["name"].clone(), val: param_value(np)});
                 }
-                _ => println!("[VecKeyVal] Skipping params child type {:?}", np.kind)
+                _ => rpt!(MsgID::DbgSkip,np,"Params child")
             }
         }
         v

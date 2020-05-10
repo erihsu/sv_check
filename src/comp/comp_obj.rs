@@ -10,7 +10,7 @@ use crate::comp::{
     prototype::*,
     def_type::{DefType,TypeUser,TypeVIntf}
 };
-use crate::reporter::{Reporter,/* Severity,*/ MsgID};
+use crate::reporter::{REPORTER,/* Severity,*/ MsgID};
 
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
@@ -31,6 +31,7 @@ pub enum ObjDef {
     Covergroup(DefCovergroup),
 }
 
+pub type ObjDefParam<'a> = (&'a ObjDef, Option<HashMap<String,String>>);
 
 impl ObjDef {
 
@@ -44,7 +45,7 @@ impl ObjDef {
                     if let Some(i) = node.attr.get("include") {
                         match ast_inc.get(i) {
                             Some(a) => ObjDef::from_ast(a, &ast_inc, &mut lib),
-                            _ => if i!="uvm_macros.svh" {lib.log.msg_s(MsgID::ErrFile,i);}
+                            _ => if i!="uvm_macros.svh" {rpt_s!(MsgID::ErrFile,i);}
                         }
                     }
                 },
@@ -87,7 +88,7 @@ impl ObjDef {
                                     }
                                 }
                             }
-                            _ => d.parse_body(&node_m,ast_inc, &mut lib.binds, &lib.log)
+                            _ => d.parse_body(&node_m,ast_inc, &mut lib.binds)
                         }
                     }
                     // println!("[ObjDef] {:?}", d);
@@ -96,13 +97,13 @@ impl ObjDef {
                 AstNodeKind::Package   => {
                     let mut d = DefPackage::new(node.attr["name"].clone());
                     // println!("[Compiling] Package {}", node.attr["name"]);
-                    d.parse_body(&node,ast_inc, &lib.log);
+                    d.parse_body(&node,ast_inc);
                     lib.objects.insert(d.name.clone(),ObjDef::Package(d));
                 }
                 AstNodeKind::Class   => {
                     let mut d = DefClass::new(node.attr["name"].clone());
                     // println!("[Compiling] Class {}", node.attr["name"]);
-                    d.parse_body(&node,ast_inc, &lib.log);
+                    d.parse_body(&node,ast_inc);
                     lib.objects.insert(d.name.clone(),ObjDef::Class(d));
                 }
                 AstNodeKind::Define => {
@@ -123,7 +124,7 @@ impl ObjDef {
                 // }
                 // Temporay Whitelist
                 AstNodeKind::Import => {}
-                _ => lib.log.msg(MsgID::DbgSkip,node,"Root")
+                _ => rpt!(MsgID::DbgSkip,node,"Root")
             }
         }
     }
@@ -145,7 +146,7 @@ impl ObjDef {
 
 impl DefModule {
     // Collect signals declaration, instance, type and function definition
-    pub fn parse_body(&mut self, node: &AstNode, ast_inc: & HashMap<String,Box<Ast>>, binds  : &mut HashMap<String, Vec<String> >, log : &Reporter) {
+    pub fn parse_body(&mut self, node: &AstNode, ast_inc: & HashMap<String,Box<Ast>>, binds  : &mut HashMap<String, Vec<String> >) {
         let mut prev_dir = PortDir::Input; // Default port direction to input
         let mut idx_port = -1 as i16;
         let mut idx_param = (self.params.len() as i16) - 1 ;
@@ -165,8 +166,8 @@ impl DefModule {
                 AstNodeKind::Directive => {
                     n.attr.get("include").map(
                         |i| ast_inc.get(i).map_or_else(
-                            || if i!="uvm_macros.svh" {log.msg_s(MsgID::ErrFile,i);} ,
-                            |a| self.parse_body(&a.tree,ast_inc, binds, log)
+                            || if i!="uvm_macros.svh" {rpt_s!(MsgID::ErrFile,i);} ,
+                            |a| self.parse_body(&a.tree,ast_inc, binds)
                         )
                     );
                 },
@@ -182,7 +183,7 @@ impl DefModule {
                                 pc.idx = pa.idx;
                                 self.ports.insert(pc.name.clone(),ObjDef::Port(pc));
                             } else {
-                                log.msg(MsgID::ErrNotFound, nc, &pc.name)
+                                rpt!(MsgID::ErrNotFound, nc, &pc.name)
                             }
                         }
                     }
@@ -237,7 +238,7 @@ impl DefModule {
                                 // println!("[{:?}] Adding enum : {:?}", self.name,m);
                                 self.defs.insert(m.name.clone(),ObjDef::Member(m));
                             }
-                            _ => log.msg(MsgID::DbgSkip,nc,"Enum declaration")
+                            _ => rpt!(MsgID::DbgSkip,nc,"Enum declaration")
                         }
                     }
                 }
@@ -259,7 +260,7 @@ impl DefModule {
                             // Ignore delcaration : was already used when getting the type
                             AstNodeKind::Declaration => {}
                             // AstNodeKind::Slice  => {}
-                            _ => log.msg(MsgID::DbgSkip,nc,"Struct declaration")
+                            _ => rpt!(MsgID::DbgSkip,nc,"Struct declaration")
                         }
                     }
                 }
@@ -283,7 +284,7 @@ impl DefModule {
                             AstNodeKind::Instance => {
                                 self.defs.insert(nc.attr["name"].clone(),ObjDef::Instance(n.attr["type"].clone()));
                             }
-                            _ => log.msg(MsgID::DbgSkip,nc,"Instance")
+                            _ => rpt!(MsgID::DbgSkip,nc,"Instance")
                         }
                     }
                 }
@@ -291,7 +292,7 @@ impl DefModule {
                 AstNodeKind::Branch  |
                 AstNodeKind::LoopFor => {
                     // println!("[DefModule] {:?} | Branch : {:?}", self.name, n.attr);
-                    let blk = self.get_block_inst(n,ast_inc, binds, log);
+                    let blk = self.get_block_inst(n,ast_inc, binds);
                     // TODO: check name conflict
                     self.defs.insert(blk.name.clone(),ObjDef::Block(blk));
                 }
@@ -309,7 +310,7 @@ impl DefModule {
                                 let m = DefMethod::from(&n.child[0]);
                                 self.defs.insert(m.name.clone(),ObjDef::Method(m));
                             } else {
-                                log.msg(MsgID::DbgSkip,n,"DPI import");
+                                rpt!(MsgID::DbgSkip,n,"DPI import");
                             }
                         }
                     }
@@ -317,7 +318,7 @@ impl DefModule {
                 // Header in a body: Loop definition
                 AstNodeKind::Header => {
                     // Check for instances ?
-                    log.msg(MsgID::DbgSkip,n,"Header");
+                    rpt!(MsgID::DbgSkip,n,"Header");
                 }
                 AstNodeKind::Define  => {
                     // println!("[Compiling] Module define {}", n.attr["name"]);
@@ -334,7 +335,7 @@ impl DefModule {
                 }
                 AstNodeKind::SvaProperty => {}
                 AstNodeKind::Bind => {
-                    self.parse_bind(n, binds, log);
+                    self.parse_bind(n, binds);
                     // println!("[DefModule] {} | Bind Skipping",self.name);
                     // println!("[DefModule] {} | Bind Skipping {}",self.name, n);
                 }
@@ -349,16 +350,16 @@ impl DefModule {
                 //
                 AstNodeKind::Class => {
                     let mut d = DefClass::new(n.attr["name"].clone());
-                    d.parse_body(&n,ast_inc, log);
+                    d.parse_body(&n,ast_inc);
                     self.defs.insert(d.name.clone(),ObjDef::Class(d));
                 }
-                _ => log.msg(MsgID::DbgSkip,n,"Module top")
+                _ => rpt!(MsgID::DbgSkip,n,"Module top")
             }
         }
     }
 
     // Extract info from a bind statement
-    pub fn parse_bind(&mut self, node: &AstNode, binds  : &mut HashMap<String, Vec<String> >, log: &Reporter) {
+    pub fn parse_bind(&mut self, node: &AstNode, binds  : &mut HashMap<String, Vec<String> >) {
         let mut path = Vec::new();
         path.push(self.name.clone());
         let mut t = "".to_string();
@@ -375,7 +376,7 @@ impl DefModule {
                 AstNodeKind::Instances => {
                     t = n.attr["type"].clone();
                 }
-                _ => log.msg(MsgID::DbgSkip,n,"Binding")
+                _ => rpt!(MsgID::DbgSkip,n,"Binding")
             }
         }
         // println!("[DefModule] {} | Binding {} to {:?}",self.name, t, path);
@@ -383,7 +384,7 @@ impl DefModule {
     }
 
     // TODO : get info from the For loop and name from the branch/for loop
-    pub fn get_block_inst(&mut self, node: &AstNode, ast_inc: & HashMap<String,Box<Ast>>, binds  : &mut HashMap<String, Vec<String> >, log: &Reporter) -> DefBlock {
+    pub fn get_block_inst(&mut self, node: &AstNode, ast_inc: & HashMap<String,Box<Ast>>, binds  : &mut HashMap<String, Vec<String> >) -> DefBlock {
         // println!("[DefModule] {} | get_block_inst on {:?}",self.name, node.attr);
         let blkname =
             if node.attr.contains_key("block") && node.attr["block"].len()>0 {node.attr["block"].clone()}
@@ -402,17 +403,17 @@ impl DefModule {
                                 // println!("[get_block_inst] {:?} | Instance {}", self.name, nc.attr["name"]);
                                 blk.defs.insert(nc.attr["name"].clone(),ObjDef::Instance(n.attr["type"].clone()));
                             }
-                            _ => log.msg(MsgID::DbgSkip,n,"Instance")
+                            _ => rpt!(MsgID::DbgSkip,n,"Instance")
                         }
                     }
                 }
                 AstNodeKind::Branch  |
                 AstNodeKind::LoopFor => {
-                    let sub_blk = self.get_block_inst(n,ast_inc, binds, log);
+                    let sub_blk = self.get_block_inst(n,ast_inc, binds);
                     // TODO: check name conflict
                     blk.defs.insert(sub_blk.name.clone(),ObjDef::Block(sub_blk));
                 }
-                AstNodeKind::Bind => self.parse_bind(n, binds, log),
+                AstNodeKind::Bind => self.parse_bind(n, binds),
                 _ => {}
             }
         }
@@ -424,7 +425,7 @@ impl DefModule {
 
 impl DefPackage {
     // Collect all definition
-    pub fn parse_body(&mut self, node: &AstNode, ast_inc: & HashMap<String,Box<Ast>>, log : &Reporter) {
+    pub fn parse_body(&mut self, node: &AstNode, ast_inc: & HashMap<String,Box<Ast>>) {
         for n in &node.child {
             // println!("[DefPackage] {} | next node = {}",self.name, n.kind);
             match n.kind {
@@ -432,8 +433,8 @@ impl DefPackage {
                 AstNodeKind::Directive => {
                     n.attr.get("include").map(
                         |i| ast_inc.get(i).map_or_else(
-                            || if i!="uvm_macros.svh" {log.msg_s(MsgID::ErrFile,i);},
-                            |a| self.parse_body(&a.tree,ast_inc, log)
+                            || if i!="uvm_macros.svh" {rpt_s!(MsgID::ErrFile,i);},
+                            |a| self.parse_body(&a.tree,ast_inc)
                         )
                     );
                 },
@@ -471,7 +472,7 @@ impl DefPackage {
                                 // println!("[{:?}] Adding enum : {:?}", self.name,m);
                                 self.defs.insert(m.name.clone(),ObjDef::Member(m));
                             }
-                            _ => log.msg(MsgID::DbgSkip,nc,"Enum declaration")
+                            _ => rpt!(MsgID::DbgSkip,nc,"Enum declaration")
                         }
                     }
                 }
@@ -508,7 +509,7 @@ impl DefPackage {
                             AstNodeKind::Instance => {
                                 self.defs.insert(nc.attr["name"].clone(),ObjDef::Instance(nc.attr["name"].clone()));
                             }
-                            _ => log.msg(MsgID::DbgSkip,nc,"Instance")
+                            _ => rpt!(MsgID::DbgSkip,nc,"Instance")
                         }
                     }
                 }
@@ -528,7 +529,7 @@ impl DefPackage {
                                 let m = DefMethod::from(&n.child[0]);
                                 self.defs.insert(m.name.clone(),ObjDef::Method(m));
                             } else {
-                                log.msg(MsgID::DbgSkip,n,"DPI import")
+                                rpt!(MsgID::DbgSkip,n,"DPI import")
                             }
                         }
                     }
@@ -549,10 +550,10 @@ impl DefPackage {
                 //
                 AstNodeKind::Class => {
                     let mut d = DefClass::new(n.attr["name"].clone());
-                    d.parse_body(&n,ast_inc, log);
+                    d.parse_body(&n,ast_inc);
                     self.defs.insert(d.name.clone(),ObjDef::Class(d));
                 }
-                _ => log.msg(MsgID::DbgSkip,n,"Package Top")
+                _ => rpt!(MsgID::DbgSkip,n,"Package Top")
             }
         }
         // println!("[DefPackage] {} : {:#?}", self.name, self.defs);
@@ -561,7 +562,7 @@ impl DefPackage {
 
 impl DefClass {
     // Collect all definition
-    pub fn parse_body(&mut self, node: &AstNode, ast_inc: & HashMap<String,Box<Ast>>, log : &Reporter) {
+    pub fn parse_body(&mut self, node: &AstNode, ast_inc: & HashMap<String,Box<Ast>>) {
         for n in &node.child {
             // println!("[Compiling] Class {} | next node = {}",self.name, n.kind);
             match n.kind {
@@ -579,7 +580,7 @@ impl DefClass {
                                     }
                                 }
                             }
-                            _ => log.msg(MsgID::DbgSkip,nc,"Class parameters")
+                            _ => rpt!(MsgID::DbgSkip,nc,"Class parameters")
                         }
                     }
                 }
@@ -588,8 +589,8 @@ impl DefClass {
                 AstNodeKind::Directive => {
                     n.attr.get("include").map(
                         |i| ast_inc.get(i).map_or_else(
-                            || if i!="uvm_macros.svh" {log.msg_s(MsgID::ErrFile,i);},
-                            |a| self.parse_body(&a.tree,ast_inc, log)
+                            || if i!="uvm_macros.svh" {rpt_s!(MsgID::ErrFile,i);},
+                            |a| self.parse_body(&a.tree,ast_inc)
                         )
                     );
                 },
@@ -627,7 +628,7 @@ impl DefClass {
                                 // println!("[{:?}] Adding enum : {:?}", self.name,m);
                                 self.defs.insert(m.name.clone(),ObjDef::Member(m));
                             }
-                            _ => log.msg(MsgID::DbgSkip, nc, "Enum")
+                            _ => rpt!(MsgID::DbgSkip, nc, "Enum")
                         }
                     }
                 }
@@ -665,7 +666,7 @@ impl DefClass {
                                 self.defs.insert(m.name.clone(),ObjDef::Member(m));
                             }
                             AstNodeKind::Params => {}
-                            _ => log.msg(MsgID::DbgSkip, nc, "Virtual Interface")
+                            _ => rpt!(MsgID::DbgSkip, nc, "Virtual Interface")
                         }
                     }
                 }
@@ -678,7 +679,7 @@ impl DefClass {
                             AstNodeKind::Instance => {
                                 self.defs.insert(nc.attr["name"].clone(),ObjDef::Instance(nc.attr["name"].clone()));
                             }
-                            _ => log.msg(MsgID::DbgSkip,nc,"Instance")
+                            _ => rpt!(MsgID::DbgSkip,nc,"Instance")
                         }
                     }
                 }
@@ -710,10 +711,10 @@ impl DefClass {
                 //
                 AstNodeKind::Class => {
                     let mut d = DefClass::new(n.attr["name"].clone());
-                    d.parse_body(&n,ast_inc, log);
+                    d.parse_body(&n,ast_inc);
                     self.defs.insert(d.name.clone(),ObjDef::Class(d));
                 }
-                _ => log.msg(MsgID::DbgSkip,n,"Class top")
+                _ => rpt!(MsgID::DbgSkip,n,"Class top")
             }
         }
         // println!("[Compiling] Class {} : {:#?}", self.name, self.defs);

@@ -25,7 +25,7 @@ use crate::lex::{
     token_stream::*
 };
 use crate::error::*;
-use crate::reporter::MsgID;
+use crate::reporter::{REPORTER, MsgID};
 
 #[derive(Debug,  Clone)]
 pub struct MacroDef {
@@ -111,7 +111,7 @@ impl Ast {
                             TokenKind::SemiColon => ts.flush(1),
                             // Display all un-implemented token (TEMP)
                             _ => {
-                                ts.project.log.msg_s(MsgID::DbgSkip, &format!("{} {} | Skipping {}", ts.source.get_filename(), t.pos, t.kind));
+                                rpt_s!(MsgID::DbgSkip, &format!("{} {} | Skipping {}", ts.source.get_filename(), t.pos, t.kind));
                                 // println!("[Warning] {:?} -- Root skipping {}",ts.source.get_filename(), t);
                                 ts.flush_rd();
                             }
