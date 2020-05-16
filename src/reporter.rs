@@ -8,7 +8,7 @@ use std::collections::{HashMap,HashSet};
 use crate::error::SvError;
 
 use crate::ast::astnode::{AstNode, AstNodeKind};
-use crate::lex::{source::path_display};
+use crate::lex::{token::Token, source::path_display};
 // use crate::lex::{token::Token, position::Position};
 use std::cell::RefCell;
 
@@ -17,8 +17,20 @@ macro_rules! rpt_set_fname {
     ($fn:expr) => {{ REPORTER.with(|log| {log.borrow_mut().set_filename(&$fn)}) }};
 }
 
+macro_rules! rpt_push_fname {
+    ($fn:expr) => {{ REPORTER.with(|log| {log.borrow_mut().push_filename(&$fn)}) }};
+}
+
+macro_rules! rpt_pop_fname {
+    () => {{ REPORTER.with(|log| {log.borrow_mut().pop_filename()}) }};
+}
+
 macro_rules! rpt {
     ($id:expr, $node:expr, $txt:expr) => {{ REPORTER.with(|log| {log.borrow_mut().msg($id, $node, $txt)}) }};
+}
+
+macro_rules! rpt_t {
+    ($id:expr, $token:expr, $txt:expr) => {{ REPORTER.with(|log| {log.borrow_mut().msg_t($id, $token, $txt)}) }};
 }
 
 macro_rules! rpt_s {
@@ -39,12 +51,14 @@ macro_rules! rpt_e {
 #[derive(PartialEq, Eq, Hash, Debug, Clone)]
 pub enum MsgID {
     ErrFile           , // File not found
+    ErrMacro          , // Error in macro invocation
     ErrToken          , // Illegal Token
     ErrSyntax         , // Illegal syntax
     ErrNotFound       , // Identifier undeclared
     ErrImplicit       , // Implicit connect undeclared
     ErrArgMiss        , // Port/Argument missing in instance/method
     ErrArgExtra       , // Too many argument in instance/method
+    ErrInvalid        , // Invalid token
     WarnUnused        , // Unused token
     InfoStatus        , // Compile/Link status
     DbgSkip           , // Skipping analysis of some AstNode
@@ -65,7 +79,7 @@ pub struct Reporter {
     /// Severity level for stdout
     id_level: HashMap<MsgID,Severity>,
     /// Full path of the file being parsed/compile
-    pub filename: PathBuf,
+    pub filename: Vec<PathBuf>,
     /// List of previous message in current file to avoid spamming same issue multiple
     prev_msg : HashMap<MsgID,HashSet<String>>,
 }
@@ -76,10 +90,12 @@ impl Reporter {
     pub fn new(logfile: Option<PathBuf>, level: Severity) -> Reporter {
         let mut id_level = HashMap::new();
         id_level.insert(MsgID::ErrFile      , Severity::Error);
+        id_level.insert(MsgID::ErrMacro     , Severity::Error);
         id_level.insert(MsgID::ErrToken     , Severity::Error);
         id_level.insert(MsgID::ErrSyntax    , Severity::Error);
         id_level.insert(MsgID::ErrNotFound  , Severity::Error);
         id_level.insert(MsgID::ErrImplicit  , Severity::Error);
+        id_level.insert(MsgID::ErrInvalid   , Severity::Error);
         id_level.insert(MsgID::ErrArgMiss   , Severity::Error);
         id_level.insert(MsgID::WarnUnused   , Severity::Warning);
         id_level.insert(MsgID::InfoStatus   , Severity::Info);
@@ -87,14 +103,25 @@ impl Reporter {
         id_level.insert(MsgID::DbgStatus    , Severity::Debug);
         Reporter {
             logfile, stdout_level: level, id_level,
-            filename: PathBuf::new(),
+            filename: Vec::new(),
             prev_msg: HashMap::new()}
     }
 
     // Set the filename begin analyzed
     pub fn set_filename(&mut self, name: &PathBuf) {
-        self.filename = name.clone();
+        self.filename.clear();
+        self.filename.push(name.clone());
         self.prev_msg.clear();
+    }
+
+    // Push a new filename (included file)
+    pub fn push_filename(&mut self, name: &PathBuf) {
+        self.filename.push(name.clone());
+    }
+
+    // Push a new filename (included file)
+    pub fn pop_filename(&mut self) {
+        self.filename.pop();
     }
 
     // Set the filename begin analyzed
@@ -109,6 +136,10 @@ impl Reporter {
             Some(Severity::Warning) => "[WARNING]".to_string(),
             _                       => "[ERROR]  ".to_string(),
         }
+    }
+
+    pub fn get_filename(&self) -> &PathBuf {
+        &self.filename.last().unwrap()
     }
 
     pub fn msg(&mut self, id: MsgID, node: &AstNode, cntxt: &str) {
@@ -127,12 +158,13 @@ impl Reporter {
             _ => {}
         }
         let str_sev = self.get_severity_str(&id);
-        let str_fn = path_display(&self.filename);
+        let str_fn = path_display(self.get_filename());
         let str_body =
             match id {
                 MsgID::ErrToken      => format!("Unable to parse token {}.", cntxt),
+                MsgID::ErrMacro      => format!("Macro {} {}.", node.kind, cntxt),
                 MsgID::ErrSyntax     => format!("Unexpected {} in {}.", node.kind, cntxt),
-                MsgID::ErrNotFound   => format!("{} not found.", cntxt),
+                MsgID::ErrNotFound   => format!("Undefined {}!", cntxt),
                 MsgID::ErrArgMiss    => format!("Missing port in instance of {} : {}", node.attr["type"], cntxt),
                 MsgID::ErrImplicit   => format!("Implicit connection to port {} of {} not found.", cntxt, node.attr["type"]),
                 MsgID::ErrArgExtra   => {
@@ -151,10 +183,24 @@ impl Reporter {
         println!("{} {}:{} | {}", str_sev, str_fn ,node.pos, str_body);
     }
 
+    pub fn msg_t(&self, id: MsgID, token: &Token, cntxt: &str) {
+        let str_sev = self.get_severity_str(&id);
+        let str_fn = path_display(self.get_filename());
+        let str_body =
+            match id {
+                MsgID::ErrToken      => format!("Unable to parse token {}.", token.value),
+                MsgID::ErrInvalid    => format!("Invalid {} in {}.", token.value, cntxt),
+                MsgID::ErrMacro      => format!("Macro {} {}.", token.value, cntxt),
+                _ => cntxt.to_string(),
+            };
+        // print the message to a file and/or stdout (TODO)
+        println!("{} {}:{} | {}", str_sev, str_fn , token.pos, str_body);
+    }
+
     // Message from error
     pub fn msg_e(&self, error : SvError) {
         let str_sev  = self.get_severity_str(&MsgID::ErrSyntax);
-        let str_fn   = path_display(&self.filename);
+        let str_fn   = path_display(self.get_filename());
         println!("{} {}{}", str_sev, str_fn ,error);
     }
 
@@ -164,8 +210,8 @@ impl Reporter {
         let str_body =
             match id {
                 MsgID::ErrFile     => format!("File {} not found.", cntxt),
-                MsgID::InfoStatus  => format!("{} | {}", path_display(&self.filename), cntxt),
-                MsgID::DbgStatus   => format!("{} | {}", path_display(&self.filename), cntxt),
+                MsgID::InfoStatus  => format!("{} | {}", path_display(self.get_filename()), cntxt),
+                MsgID::DbgStatus   => format!("{} | {}", path_display(self.get_filename()), cntxt),
                 _ => cntxt.to_string(),
             };
         // print the message to a file and/or stdout (TODO)

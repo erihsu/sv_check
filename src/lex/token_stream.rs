@@ -1,14 +1,12 @@
 // This file is part of sv_check and subject to the terms of MIT Licence
 // Copyright (c) 2019, clams@mail.com
 
-use crate::error::*;
-use crate::project::Project;
-use crate::lex::position::Position;
-use crate::lex::token::*;
-use crate::lex::source::Source;
-
 use std::collections::{VecDeque, HashMap};
 
+use crate::error::*;
+use crate::project::Project;
+use crate::lex::{position::Position, token::*, source::Source};
+use crate::reporter::{REPORTER, MsgID};
 
 
 pub struct TokenStream<'a,'b> {
@@ -181,7 +179,6 @@ impl<'a,'b> TokenStream<'a,'b> {
             self.last_char = c;
         }
         self.last_char = ' ';
-        // if is_macro {println!("Macro String = {}", s);}
         Ok(Token::new(TokenKind::Str,s,p))
     }
 
@@ -1004,7 +1001,7 @@ impl<'a,'b> TokenStream<'a,'b> {
         for t in &self.buffer {
             s = format!("{}\n - {:?}",s,t);
         }
-        println!("{}", s);
+        rpt_s!(MsgID::DbgStatus, &s);
     }
 
     pub fn macro_expand(&mut self, t: Token, pos: Position, top: bool, macro_body: &mut std::vec::IntoIter<Token>, args_caller: &HashMap<String,Vec<Token>>) -> Option<Result<Token,SvError>> {
@@ -1015,11 +1012,13 @@ impl<'a,'b> TokenStream<'a,'b> {
                 let macro_name = t.value.clone();
                 let def = self.project.defines.get(&macro_name);
                 if def.is_none() {
-                    println!("[macro_expand] {} : line {} | Empty macro {} ", self.source.get_filename(),pos,macro_name);
+                    rpt_t!(MsgID::ErrMacro, &t, "unknown");
+                    // println!("[macro_expand] {} : line {} | Unknown macro {} ", self.source.get_filename(),pos,macro_name);
                     return None;
                 }
                 if def.unwrap().is_none() {
-                    println!("[macro_expand] {} : line {} | Unknown macro {} ", self.source.get_filename(),pos,macro_name);
+                    rpt_t!(MsgID::ErrMacro, &t, "empty");
+                    // println!("[macro_expand] {} : line {} | Empty macro {} ", self.source.get_filename(),pos,macro_name);
                     return None;
                 }
                 let macro_def = def.unwrap().as_ref().unwrap().clone();
@@ -1057,7 +1056,7 @@ impl<'a,'b> TokenStream<'a,'b> {
                                 let arg_name = macro_def.ports[cnt_a as usize].0.clone();
                                 // println!("[macro_expand] {} : macro {} port {} = {:?}", self.source.get_filename(),macro_name,arg_name,v);
                                 if v.len() == 0 {
-                                    println!("[macro_expand] {} : macro {} port {} is empty : default length = {}", self.source.get_filename(),macro_name,arg_name,v.len());
+                                    rpt_t!(MsgID::ErrMacro, &t, &format!(" port {} is empty : default length = {}", arg_name,v.len()));
                                 }
                                 args.insert(arg_name,v);
                                 cnt_a += 1;

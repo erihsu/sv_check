@@ -197,7 +197,11 @@ impl CompLib {
                 AstNodeKind::Directive => {
                     if let Some(i) = nc.attr.get("include") {
                         match ast_inc.get(i) {
-                            Some(a) => self.check_ast(&a.tree,ast_inc,li,false),
+                            Some(a) => {
+                                rpt_push_fname!(&a.filename);
+                                self.check_ast(&a.tree,ast_inc,li,false);
+                                rpt_pop_fname!();
+                            }
                             _ => if i!="uvm_macros.svh" {rpt_s!(MsgID::ErrFile,i);}
                         }
                     }
@@ -231,7 +235,7 @@ impl CompLib {
                                     // println!("[Linking] {:?} | Skipping Import {:?}", self.cntxt, ncc.attr);
                                 }
                             } else {
-                                rpt!(MsgID::ErrNotFound,ncc, &ncc.attr["pkg_name"]);
+                                rpt!(MsgID::ErrNotFound,ncc, &format!("import package {:?}",ncc.attr["pkg_name"]));
                                 // println!("[Linking] {:?} | Import Package {} not found", self.cntxt, ncc.attr["pkg_name"]);
                             }
                         }
@@ -261,7 +265,7 @@ impl CompLib {
                         kind : t, is_const: false, unpacked: Vec::new(), access: Access::Local};
                     if let DefType::User(k) = &m.kind {
                         if self.find_def(&k.name,k.scope.as_ref(),li,false,false,false).is_err() {
-                            rpt!(MsgID::ErrNotFound, nc, &k.name);
+                            rpt!(MsgID::ErrNotFound, nc, &format!("type {}",k.name));
                             // println!("[Linking] {:?} | Type {:?} undeclared", self.cntxt, k.name);
                         }
                     }
@@ -311,7 +315,7 @@ impl CompLib {
                                         let fd = fd_.clone();
                                         li.add_def(nc.attr["name"].clone(),fd);
                                     }
-                                    Err(_e)     => rpt!(MsgID::ErrNotFound, nc, &nc.attr["name"]),
+                                    Err(_e)     => rpt!(MsgID::ErrNotFound, nc, &format!("typedef {}",nc.attr["name"])),
                                 }
                             }
                             _ => {
@@ -429,7 +433,7 @@ impl CompLib {
                 AstNodeKind::MethodCall => {
                     match self.find_ident_def(nc,li,true) {
                         Ok(d)  => self.check_call(nc,Some(d),li),
-                        Err(_e) => rpt!(MsgID::ErrNotFound, nc, &nc.attr["name"]),
+                        Err(e) => rpt!(MsgID::ErrNotFound, nc, &format!("method {}(). {}",nc.attr["name"],e)),
                     }
 
                 }
@@ -618,7 +622,7 @@ impl CompLib {
                             }
                             rpt_s!(MsgID::ErrNotFound, &format!("{} not found in bind context {:?} ", name, b ));
                         } else {
-                            rpt_s!(MsgID::ErrNotFound, &format!("Binding type {:?} not found", b ));
+                            rpt_s!(MsgID::ErrNotFound, &format!("binding type {:?}", b ));
                         }
                     }
                 }
@@ -684,7 +688,7 @@ impl CompLib {
                                         if let Some(d) = &p.default {
                                             pd.insert(p.name.clone(), if pd.contains_key(d) {pd[d].clone()} else {d.clone()});
                                         } else {
-                                            rpt_s!(MsgID::ErrNotFound, &format!("Parameter {:?} not set", p));
+                                            rpt_s!(MsgID::ErrNotFound, &format!("parameter {} (no default value)", p.name));
                                         }
                                     }
                                 }
@@ -702,11 +706,11 @@ impl CompLib {
                     o = &bcd;
                 }
                 Ok((bcd,_)) => {
-                    rpt_s!(MsgID::ErrNotFound, &format!("Class {:?} -> Base class {} is not a class : {:?}",cd.name,bct.name,bcd));
+                    rpt_s!(MsgID::ErrNotFound, &format!("base class {} of {}. Found another type definition: {:?}",bct.name,cd.name,bcd));
                     break;
                 }
                 Err(e) => {
-                    rpt_s!(MsgID::ErrNotFound, &format!("Class {:?} -> Base class {} not found : {}",cd.name,bct.name, e));
+                    rpt_s!(MsgID::ErrNotFound, &format!("base class {} of {}. {}",bct.name,cd.name, e));
                     break;
                 }
             }
@@ -736,7 +740,7 @@ impl CompLib {
                     if let Some(bct) = &bc.base {
                         match self.find_def(&bct.name,None,li,false,true,false) {
                             Ok((d,_)) => o = Some(&d),
-                            Err(_) => rpt!(MsgID::ErrNotFound, node, &node.attr["name"])
+                            Err(_) => rpt!(MsgID::ErrNotFound, node, &format!("base class {}",node.attr["name"]))
                         }
                     }
                 }
@@ -744,7 +748,7 @@ impl CompLib {
             _ => {
                 match self.find_ident_def(node,li,false) {
                     Ok(d) => o = Some(&d),
-                    Err(_) => rpt!(MsgID::ErrNotFound, node, &node.attr["name"])
+                    Err(_) => rpt!(MsgID::ErrNotFound, node, &format!("identifier {}",node.attr["name"]))
                 }
             }
         }
@@ -784,7 +788,7 @@ impl CompLib {
                     // TODO: check for unpacked dimension
                     let cd = self.find_def_in_obj(&ot,&nc.attr["name"],li);
                     if cd.is_none() {
-                        rpt!(MsgID::ErrNotFound, nc, &nc.attr["name"]);
+                        rpt!(MsgID::ErrNotFound, nc, &format!("member {}",nc.attr["name"]));
                         // println!("[Linking] {:?} | Identifier {} not found in {} ({}{:?})", self.cntxt, nc.attr["name"],node.attr["name"],ot.get_typename(),dim);
                     }
                     else if nc.child.len() > 0 {
@@ -806,7 +810,7 @@ impl CompLib {
                                 SvArrayKind::Queue    => {if let ObjDef::Class(od) = &self.objects["!array!queue"] {od.defs.get(&nc.attr["name"])} else {None} }
                                 SvArrayKind::Dict(_)  => {if let ObjDef::Class(od) = &self.objects["!array!dict" ] {od.defs.get(&nc.attr["name"])} else {None} }
                                 _ => {
-                                    rpt!(MsgID::ErrNotFound, nc, &nc.attr["name"]);
+                                    rpt!(MsgID::ErrNotFound, nc, &format!("array method {}()",nc.attr["name"]));
                                     // println!("[Linking] {:?} | No method {} in array {} ({}{:?})", self.cntxt, nc.attr["name"],node.attr["name"],ot.get_typename(),dim);
                                     None
                                 }
@@ -819,7 +823,7 @@ impl CompLib {
                         cd = if let ObjDef::Class(od) = &self.objects["!array"] {od.defs.get(&nc.attr["name"])} else {None};
                     }
                     if cd.is_none() {
-                        rpt!(MsgID::ErrNotFound, nc, &nc.attr["name"]);
+                        rpt!(MsgID::ErrNotFound, nc, &format!("object method {}()",nc.attr["name"]));
                         // println!("[Linking] {:?} | Method {} not found in {} ({}{:?})", self.cntxt, nc.attr["name"],node.attr["name"],ot.get_typename(),dim);
                     } else {
                         self.check_call(nc,cd,li);
@@ -992,7 +996,7 @@ impl CompLib {
                 "shortreal" | "real" | "realtime" | "string" | "void" | "chandle" | "event" => {},
                 _ => {
                     if self.find_def(name,scope,li,false,false,false).is_err() {
-                        rpt!(MsgID::ErrNotFound, node, &node.attr["type"]);
+                        rpt!(MsgID::ErrNotFound, node, &format!("type {}",node.attr["type"]));
                         // println!("[Linking] {:?} | Type {:?} undeclared", self.cntxt, node.attr["type"]);
                     }
                 }
@@ -1047,7 +1051,7 @@ impl CompLib {
                                                     ports.remove(i);
                                                 }
                                                 else {
-                                                    rpt!(MsgID::ErrNotFound, nc, &nc.attr["name"]);
+                                                    rpt!(MsgID::ErrNotFound, nc, &format!("port {}",nc.attr["name"]));
                                                     // println!("[Linking] {:?} | Unknown port name {} in instance {} of {}", self.cntxt, nc.attr["name"], n.attr["name"], d.name );
                                                 }
                                             }
@@ -1106,7 +1110,7 @@ impl CompLib {
                                                     params.remove(i);
                                                 }
                                                 else {
-                                                    rpt!(MsgID::ErrNotFound, nc, &nc.attr["name"]);
+                                                    rpt!(MsgID::ErrNotFound, nc, &format!("parameter {}",nc.attr["name"]));
                                                     // println!("[Linking] {:?} | Calling {} with unknown parameter name {} in {}", self.cntxt, d.name, nc.attr["name"], params.iter().fold(String::new(), |acc, x| format!("{}{:?},", acc,x)));
                                                 }
                                             }
@@ -1123,7 +1127,7 @@ impl CompLib {
                     }
                 }
             }
-            _ => rpt!(MsgID::ErrNotFound, node, &node.attr["type"])
+            _ => rpt!(MsgID::ErrNotFound, node, &format!("module {} definition",node.attr["type"]))
         }
     }
 
@@ -1156,7 +1160,7 @@ impl CompLib {
                                     ports.remove(i);
                                 }
                                 else {
-                                    rpt!(MsgID::ErrNotFound, p, &p.attr["name"]);
+                                    rpt!(MsgID::ErrNotFound, p, &format!("method argument {}",p.attr["name"]));
                                 }
                             }
                         }
@@ -1171,7 +1175,7 @@ impl CompLib {
                 }
             }
             Some(_) => rpt!(MsgID::ErrNotFound, node, &format!("{} (not a method)",node.attr["name"])),
-            None    => rpt!(MsgID::ErrNotFound, node, &node.attr["name"])
+            None    => rpt!(MsgID::ErrNotFound, node, &format!("method {} definition ",node.attr["name"]))
         }
     }
 
@@ -1223,7 +1227,7 @@ impl CompLib {
                         ldefs = &blk.defs;
                     }
                     _ => {
-                        rpt_s!(MsgID::ErrNotFound, &format!("Bind instance {} not found", inst_name));
+                        rpt_s!(MsgID::ErrNotFound, &format!("bind instance {}", inst_name));
                         found = false;
                         break;
                     }

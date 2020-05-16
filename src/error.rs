@@ -65,7 +65,7 @@ impl fmt::Display for SvError {
             SvErrorKind::Include      => write!(f, ":{} | File {} not found", self.token.pos, self.token.value),
             SvErrorKind::Eof          => write!(f, ":{} | Unexpected end of file !", self.token.pos),
             SvErrorKind::Token        => write!(f, ":{} | Unable to parse token \"{}\" !",self.token.pos, self.token.value),
-            SvErrorKind::Syntax       => write!(f, ":{} | Unexpected {} in {} !",self.token.pos, self.token.kind, self.txt),
+            SvErrorKind::Syntax       => write!(f, ":{} | Unexpected '{}' ({}) in {} !",self.token.pos, self.token.value, self.token.kind, self.txt),
             SvErrorKind::Missing      => write!(f, "Missing {} !", self.txt),
             // SvErrorKind::NotSupported => write!(f, ":{} -- Unsuported syntax : {} !",self.token.pos, self.txt),
         }

@@ -13,6 +13,7 @@ Reminder of special error/warning which needs to be caught by the tool eventuall
  [ ] non-continuous assignment of a wire
  [ ] Array assignement with non matching size
  [ ] Check hierachical access
+ [ ] Check implements
 
 
 # Warning to capture :
@@ -33,8 +34,9 @@ Reminder of special error/warning which needs to be caught by the tool eventuall
  [x] v0.4.0 : Complete identifier check (including going through base class)
  [x] v0.5.0 : Basic function/instance check (definition and number of parameters)
  [x] v0.6.0 : Check hierarchical access
- [x] v0.6.5 : Improved pre-processor
- [ ] v0.7.0 : Setup basic messaging system
+ [x] v0.6.5 : Improved pre-processor: macro-handling
+ [x] v0.7.0 : Setup basic messaging system
+ [ ] v0.7.5 : Improved pre-processor: ifdef/else/...
  [ ] v0.8.0 : Incremental compilation
  [ ] v0.8.5 : Pre-compiled UVM library
  [ ] v0.9.0 : Basic type check (function/instance)
