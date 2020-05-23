@@ -100,6 +100,7 @@ impl Ast {
                                     _ => return Err(SvError::syntax(nt, "virtual declaration. Expecting class"))
                                 }
                             }
+                            TokenKind::KwParam |
                             TokenKind::KwLParam => {
                                 ts.rewind(1); // put back the token so that it can be read by the parse param function
                                 // potential list of param (the parse function extract only one at a time)

@@ -6,7 +6,7 @@ use crate::lex::token::{TokenKind};
 use crate::lex::token_stream::TokenStream;
 use crate::ast::astnode::*;
 use crate::ast::common::*;
-use crate::ast::class::{parse_class,parse_func,parse_task,parse_class_stmt_or_block,parse_assign_or_call};
+use crate::ast::class::{parse_class,parse_func,parse_task,parse_class_stmt,parse_assign_or_call};
 
 // TODO
 // - when parsing named block, ensure the name is unique
@@ -89,6 +89,7 @@ pub fn parse_module_body(ts : &mut TokenStream, node : &mut AstNode, cntxt : Mod
                 node.child.push(node_s);
             }
             TokenKind::KwTypedef => parse_typedef(ts,node)?,
+            TokenKind::KwNettype => parse_nettype(ts,node)?,
             TokenKind::TypeGenvar => {
                 ts.flush_rd();
                 loop {
@@ -120,7 +121,7 @@ pub fn parse_module_body(ts : &mut TokenStream, node : &mut AstNode, cntxt : Mod
             TokenKind::KwPrimTranif => node.child.push(parse_primitive(ts)?),
             // Identifier -> lookahead to detect if it is a signal declaration or an instantiation
             TokenKind::Ident => {
-                let nt = next_t!(ts,true);
+                let mut nt = next_t!(ts,true);
                 // println!("[Module body] Ident followed by {}", nt.kind);
                 match nt.kind {
                     // Scope -> this is a type definition
@@ -130,8 +131,8 @@ pub fn parse_module_body(ts : &mut TokenStream, node : &mut AstNode, cntxt : Mod
                         ts.flush(2);
                         let mut n = AstNode::new(AstNodeKind::Statement, t.pos);
                         n.attr.insert("label".to_owned(),t.value);
-                        let nnt = next_t!(ts,true);
-                        match nnt.kind {
+                        nt = next_t!(ts,true);
+                        match nt.kind {
                             TokenKind::KwAssert => parse_assert(ts,node)?,
                             u => {
                                 println!("[parse_module_body] Labeled stateent {} not supported", u);
@@ -143,18 +144,22 @@ pub fn parse_module_body(ts : &mut TokenStream, node : &mut AstNode, cntxt : Mod
                     }
                     // Identifier : could be a signal declaration or a module/interface instantiation
                     TokenKind::Ident => {
-                        let nnt = next_t!(ts,true);
-                        // println!("[Module body] (Ident Ident) followed by {}", nnt.kind);
-                        match nnt.kind {
-                            // Opening parenthesis indicates
-                            // Semi colon or comma indicate signal declaration
+                        nt = next_t!(ts,true);
+                        // println!("[Module body] (Ident Ident) followed by {}", nt.kind);
+                        match nt.kind {
+                            // Semi colon, comma or equal indicate signal declaration
                             TokenKind::SemiColon |
                             TokenKind::OpEq      |
                             TokenKind::Comma     =>  parse_signal_decl_list(ts,node)?,
                             // Slice -> can be either an unpacked array declaration or an array of instance ...
-                            // TODO: handle case of array of instances
                             TokenKind::SquareLeft =>  {
-                                parse_signal_decl_list(ts,node)?;
+                                ts.peek_until(TokenKind::SquareRight)?;
+                                nt = next_t!(ts,true);
+                                if nt.kind == TokenKind::ParenLeft {
+                                    node.child.push(parse_instance(ts)?);
+                                } else {
+                                    parse_signal_decl_list(ts,node)?;
+                                }
                             }
                             // Open parenthesis -> instance
                             TokenKind::ParenLeft => {
@@ -264,9 +269,11 @@ pub fn parse_assign_c(ts : &mut TokenStream) -> Result<AstNode, SvError> {
         }
         expect_t!(ts,"drive strength",TokenKind::ParenRight);
     }
-    // TODO: support delay
-    ts.rewind(0);
-    t = next_t!(ts,true); // Get first word: expect assign or defparam
+    // Optional delay
+    if t.kind == TokenKind::Hash {
+        node.child.push(parse_delay(ts)?);
+        t = next_t!(ts,true); // Get first word: expect assign or defparam
+    }
     match t.kind {
         // Concatenation operator
         TokenKind::CurlyLeft => {
@@ -374,7 +381,8 @@ pub fn parse_always(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), SvE
         ts.rewind(0);
     }
     //
-    parse_class_stmt_or_block(ts,&mut n)?;
+    parse_class_stmt(ts, &mut n, false, false, false, true)?;
+    // parse_class_stmt_or_block(ts,&mut n)?;
     node.child.push(n);
     Ok(())
 }
@@ -443,7 +451,7 @@ pub fn parse_initial(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), Sv
     let t = next_t!(ts,false);
     let mut n = AstNode::new(AstNodeKind::Process, t.pos);
     n.attr.insert("kind".to_owned(),t.value);
-    parse_class_stmt_or_block(ts,&mut n)?;
+    parse_class_stmt(ts, &mut n, false, false, false, true)?;
     node.child.push(n);
     Ok(())
 }
@@ -545,6 +553,7 @@ pub fn parse_if_else(ts : &mut TokenStream, node: &mut AstNode, is_gen: bool) ->
     // Loop on statement, if/else / case
     if is_gen {
         parse_module_body(ts,&mut node_if, if is_block {ModuleCntxt::Block} else {ModuleCntxt::IfStmt})?;
+        node_if.attr.get("block").map(|n| check_label(ts,n)).unwrap_or(Ok(()))?;
     } else {
         parse_stmt(ts,&mut node_if, is_block)?;
     }
@@ -572,6 +581,9 @@ pub fn parse_if_else(ts : &mut TokenStream, node: &mut AstNode, is_gen: bool) ->
                 if is_gen {
                     ts.rewind(0);
                     parse_module_body(ts,&mut node_else, if is_block {ModuleCntxt::Block} else {ModuleCntxt::IfStmt})?;
+                    if is_block {
+                        node_else.attr.get("block").map(|n| check_label(ts,n)).unwrap_or(Ok(()))?;
+                    }
                 } else {
                     parse_stmt(ts,&mut node_else, is_block)?;
                 }

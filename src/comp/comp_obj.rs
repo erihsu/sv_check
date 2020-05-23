@@ -36,7 +36,6 @@ pub type ObjDefParam<'a> = (&'a ObjDef, Option<HashMap<String,String>>);
 impl ObjDef {
 
     //
-    #[allow(dead_code,unused_variables)]
     pub fn from_ast(ast: &Ast, ast_inc: & HashMap<String,Box<Ast>>, mut lib: &mut CompLib)  {
         for node in &ast.tree.child {
             // println!("[Compiling] Node {:?} ({:?}", node.kind, node.attr);
@@ -119,12 +118,34 @@ impl ObjDef {
                     }
                 }
                 // Handle special case of type/localparams/define done out of context
-                // AstNodeKind::Param => {
-                //     lib.get_mut("!").unwrap().definition.insert(node.attr["name"].clone(),ObjDef::Signal);
-                // }
+                AstNodeKind::Param => {
+                    let m = DefMember::new(node);
+                    // if m.name != "" {self.defs.insert(m.name.clone(),ObjDef::Member(m.clone()));}
+                    for nc in &node.child {
+                        if nc.kind==AstNodeKind::Identifier {
+                            let mut mc = m.clone();
+                            mc.updt(nc);
+                            lib.objects.insert(nc.attr["name"].clone(),ObjDef::Member(mc));
+                        }
+                    }
+                }
+                AstNodeKind::Typedef => {
+                    if let Some(c) = node.child.get(0) {
+                        let d = DefType::from(c);
+                        // Add Enum value if any
+                        if let DefType::Enum(te) = &d {
+                            // println!("[CompLib] Typedef enum {:?}", te);
+                            for tev in te {
+                                lib.objects.insert(tev.clone(),ObjDef::EnumValue(node.attr["name"].clone()));
+                            }
+                        }
+                        // Add typedef definition
+                        lib.objects.insert(node.attr["name"].clone(),ObjDef::Type(d,Vec::new()));
+                    }
+                }
                 // Temporay Whitelist
                 AstNodeKind::Import => {}
-                _ => rpt!(MsgID::DbgSkip,node,"Root")
+                _ => rpt!(MsgID::DbgSkip,node,"Root (comp_obj)")
             }
         }
     }
@@ -140,6 +161,26 @@ impl ObjDef {
             ObjDef::Member(_x) => "member".to_owned(),
             ObjDef::Port(_x) => "member".to_owned(),
             _ => format!("{:?}", self)
+        }
+    }
+
+    pub fn get_def(&self, name: &str) -> Option<&ObjDef> {
+        match self {
+            ObjDef::Class(d) => {
+                if d.defs.contains_key(name) {
+                    return Some(&d.defs[name]);
+                }
+                d.params.get(name)
+            }
+            ObjDef::Module(d) => {
+                // if d.defs.contains_key(name) {
+                //     return Some(&d.defs[name]);
+                // }
+                // d.params.get(name)
+                d.defs.get(name)
+            }
+            ObjDef::Package(d) => d.defs.get(name),
+            _ => None
         }
     }
 }
@@ -585,6 +626,9 @@ impl DefClass {
                     }
                 }
                 AstNodeKind::Extends  => self.base = Some(TypeUser::from(n)),
+                AstNodeKind::Implements => {
+                    // TODO
+                },
                 // Include directive
                 AstNodeKind::Directive => {
                     n.attr.get("include").map(

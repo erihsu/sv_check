@@ -109,6 +109,7 @@ impl DefPort {
                 AstNodeKind::Value      => {self.default = Some(nc.attr["value"].clone()); allow_slice = false; }
                 AstNodeKind::Identifier => {self.default = Some(nc.attr["name"].clone());  allow_slice = false; }
                 AstNodeKind::Type       => {self.default = Some(nc.attr["type"].clone());  allow_slice = false; }
+                AstNodeKind::VIntf      => {self.default = Some(nc.attr["type"].clone());  allow_slice = false; }
                 // TODO !!!
                 AstNodeKind::Slice      |
                 AstNodeKind::Concat     |
@@ -128,6 +129,7 @@ impl DefPort {
 }
 
 pub fn parse_dim(node : &AstNode,) -> SvArrayKind {
+    // rpt!(MsgID::InfoStatus, node, &format!("{}", node));
     if node.child.len() == 0 {SvArrayKind::Dynamic}
     else if node.child.len() > 1 {SvArrayKind::Fixed(0)}
     // else if node.attr.contains_key("range") {self.unpacked.push(SvArrayKind::Fixed(0));}
@@ -240,6 +242,16 @@ impl From<&AstNode> for DefMethod {
                         }
                     }
                 }
+                AstNodeKind::Port => {
+                    let p = DefPort::new(nc,&mut prev_dir, &mut prev_idx);
+                    for ncc in &nc.child {
+                        if ncc.kind==AstNodeKind::Identifier {
+                            let mut pc = p.clone();
+                            pc.updt(&mut prev_idx,ncc);
+                            d.ports.push(pc);
+                        }
+                    }
+                }
                 // Add return type
                 AstNodeKind::Type  => {
                     d.ret = Some(DefType::from(nc));
@@ -248,7 +260,7 @@ impl From<&AstNode> for DefMethod {
                 _ => {break;}
             }
         }
-        // println!("[Method] {:?}", d);
+        // println!("[Method] {} \n -> {:?}", node, d);
         d
     }
 }

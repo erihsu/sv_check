@@ -208,6 +208,7 @@ impl From<&AstNode> for DefType {
                                     packed : node.attr.get("packed").map_or(None,|x| Some(x.clone())),
                                     signed : node.attr.get("signing").map_or(false,|x| x=="signed"),
                                 }),
+                            "genvar" => DefType::IntVector(TypeIntVector {name : "genvar".to_owned(), packed : Some("31:0".to_string()), signed : true,}),
                             // Integer Atomic type
                             "byte"     => DefType::IntAtom(TypeIntAtom {name:IntAtomName::Byte    , signed : node.is_signed()}),
                             "shortint" => DefType::IntAtom(TypeIntAtom {name:IntAtomName::Shortint, signed : node.is_signed()}),

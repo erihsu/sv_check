@@ -1464,5 +1464,46 @@ pub fn get_uvm_macro() -> Box<Ast> {
     ));
     body.clear();
 
+    body.push(Token {kind: KwBegin,value: "begin".to_string(),pos: Position {line: 1, col: 1}});
+    body.push(Token {kind: KwIf,value: "if".to_string(),pos: Position {line: 1, col: 1}});
+    body.push(Token {kind: ParenLeft,value: "(".to_string(),pos: Position {line: 1, col: 1}});
+    body.push(Token {kind: Ident,value: "RO".to_string(),pos: Position {line: 1, col: 1}});
+    body.push(Token {kind: Dot,value: ".".to_string(),pos: Position {line: 1, col: 1}});
+    body.push(Token {kind: Ident,value: "uvm_report_enabled".to_string(),pos: Position {line: 1, col: 1}});
+    body.push(Token {kind: ParenLeft,value: "(".to_string(),pos: Position {line: 1, col: 1}});
+    body.push(Token {kind: Ident,value: "UVM_NONE".to_string(),pos: Position {line: 1, col: 1}});
+    body.push(Token {kind: Comma,value: ",".to_string(),pos: Position {line: 1, col: 1}});
+    body.push(Token {kind: Ident,value: "UVM_ERROR".to_string(),pos: Position {line: 1, col: 1}});
+    body.push(Token {kind: Comma,value: ",".to_string(),pos: Position {line: 1, col: 1}});
+    body.push(Token {kind: Ident,value: "ID".to_string(),pos: Position {line: 1, col: 1}});
+    body.push(Token {kind: ParenRight,value: ")".to_string(),pos: Position {line: 1, col: 1}});
+    body.push(Token {kind: ParenRight,value: ")".to_string(),pos: Position {line: 1, col: 1}});
+    body.push(Token {kind: Ident,value: "RO".to_string(),pos: Position {line: 1, col: 1}});
+    body.push(Token {kind: Dot,value: ".".to_string(),pos: Position {line: 1, col: 1}});
+    body.push(Token {kind: Ident,value: "uvm_report_error".to_string(),pos: Position {line: 1, col: 1}});
+    body.push(Token {kind: ParenLeft,value: "(".to_string(),pos: Position {line: 1, col: 1}});
+    body.push(Token {kind: Ident,value: "ID".to_string(),pos: Position {line: 1, col: 1}});
+    body.push(Token {kind: Comma,value: ",".to_string(),pos: Position {line: 1, col: 1}});
+    body.push(Token {kind: Ident,value: "MSG".to_string(),pos: Position {line: 1, col: 1}});
+    body.push(Token {kind: Comma,value: ",".to_string(),pos: Position {line: 1, col: 1}});
+    body.push(Token {kind: Ident,value: "UVM_NONE".to_string(),pos: Position {line: 1, col: 1}});
+    body.push(Token {kind: Comma,value: ",".to_string(),pos: Position {line: 1, col: 1}});
+    body.push(Token {kind: MacroCall,value: "`__FILE__".to_string(),pos: Position {line: 1, col: 1}});
+    body.push(Token {kind: Comma,value: ",".to_string(),pos: Position {line: 1, col: 1}});
+    body.push(Token {kind: MacroCall,value: "`__LINE__".to_string(),pos: Position {line: 1, col: 1}});
+    body.push(Token {kind: Comma,value: ",".to_string(),pos: Position {line: 1, col: 1}});
+    body.push(Token {kind: Str,value: "".to_string(),pos: Position {line: 1, col: 1}});
+    body.push(Token {kind: Comma,value: ",".to_string(),pos: Position {line: 1, col: 1}});
+    body.push(Token {kind: Integer,value: "1".to_string(),pos: Position {line: 1, col: 1}});
+    body.push(Token {kind: ParenRight,value: ")".to_string(),pos: Position {line: 1, col: 1}});
+    body.push(Token {kind: SemiColon,value: ";".to_string(),pos: Position {line: 1, col: 1}});
+    body.push(Token {kind: KwEnd,value: "end".to_string(),pos: Position {line: 1, col: 1}});
+    ast.defines.insert("`uvm_error_context".to_string(), Some(
+        MacroDef {
+            ports: [("ID".to_string(),[].to_vec()), ("MSG".to_string(),[].to_vec()), ("RO".to_string(),[].to_vec())].to_vec(),
+            body: body.clone()}
+    ));
+    body.clear();
+
     Box::new(ast)
 }

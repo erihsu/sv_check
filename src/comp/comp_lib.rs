@@ -75,7 +75,7 @@ impl CompLib {
             rpt_set_fname!(&ast.filename);
             // println!("Linking AST from {:?}", path_display(&ast.filename));
             let mut li = LocalInfo{imports: Vec::new(),defs: Vec::new(), obj: None};
-            lib.check_ast(&ast.tree, ast_inc, &mut li, false);
+            lib.check_ast(&ast.tree, ast_inc, &mut li, true);
         }
 
         lib
@@ -86,6 +86,23 @@ impl CompLib {
         let mut port_idx = -1 as i16;
         if new_cntxt {
             li.defs.push(HashMap::new());
+            // For function autodeclare a variable with the return type
+            if node.kind == AstNodeKind::Function && li.obj.is_some() {
+                // TODO: get it directly from li.obj
+                let mut rt = None;
+                // if let Ok((ObjDef::Method(m),_)) = self.find_def(&node.attr["name"],None,li,false,true,false) {
+                if let Some(ObjDef::Method(m)) = li.obj.as_ref().unwrap().get_def(&node.attr["name"]) {
+                    match &m.ret {
+                        Some(x) => rt = Some(x.clone()),
+                        None => rt = Some(TYPE_INT), // Should actually be a bit ...
+                    }
+                }
+                if let Some(k) = rt {
+                    let mb = DefMember{name: node.attr["name"].clone(),kind: k, unpacked : Vec::new(), is_const: false, access: Access::Public};
+                    li.add_def(node.attr["name"].clone(),ObjDef::Member(mb));
+                }
+
+            }
         }
         for nc in &node.child {
             match nc.kind {
@@ -375,7 +392,7 @@ impl CompLib {
                     // }
                 }
                 AstNodeKind::Param => {
-                    let p = DefPort::new(nc,&mut PortDir::Param,&mut port_idx); // Index is actually irrelevant here so reuse the ame as port
+                    let p = DefPort::new(nc,&mut PortDir::Param,&mut port_idx); // Index is actually irrelevant here so reuse the same as port
                     for ncc in &nc.child {
                         if ncc.kind==AstNodeKind::Identifier {
                             let mut pc = p.clone();
@@ -419,7 +436,8 @@ impl CompLib {
                 }
                 //-----------------------------
                 // Check
-                AstNodeKind::Extends  => {
+                AstNodeKind::Extends |
+                AstNodeKind::Implements  => {
                     // println!("[Linking] {:?} | Extendind {:?}",self.cntxt, nc.attr);
                     self.check_type(nc,li);
                 }
@@ -470,7 +488,7 @@ impl CompLib {
                 AstNodeKind::Bind  => {
                     // println!("[Linking] {:?} | Binding ignored {:?} ({} childs) : {:?}", self.cntxt, nc.kind, nc.child.len(), nc.attr);
                 }
-                _ => rpt!(MsgID::DbgSkip,nc,"Root")
+                _ => rpt!(MsgID::DbgSkip,nc,"Root (comp_lib)")
             }
         }
         if new_cntxt {
@@ -547,31 +565,9 @@ impl CompLib {
             }
         }
         // Check local definition
-        if check_obj {
-            // TODO: write some traits or whatever to get easy access to the defs
-            match &li.obj {
-                Some(ObjDef::Class(d)) => {
-                    if d.defs.contains_key(name) {
-                        return Ok((&d.defs[name],None));
-                    }
-                    if d.params.contains_key(name) {
-                        return Ok((&d.params[name],None));
-                    }
-                }
-                Some(ObjDef::Module(d)) => {
-                    if d.defs.contains_key(name) {
-                        return Ok((&d.defs[name],None));
-                    }
-                    // if d.params.contains_key(name) {
-                    //     return (Some(&d.params[name]),None);
-                    // }
-                }
-                Some(ObjDef::Package(d)) => {
-                    if d.defs.contains_key(name) {
-                        return Ok((&d.defs[name],None));
-                    }
-                }
-                _ => {}
+        if check_obj && li.obj.is_some() {
+            if let Some(d) = li.obj.as_ref().unwrap().get_def(name) {
+                return Ok((d,None));
             }
         }
         for i in &li.defs {

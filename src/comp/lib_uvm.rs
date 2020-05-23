@@ -690,6 +690,11 @@ pub fn get_uvm_lib() -> ObjDef {
     m = DefMethod::new("new".to_owned(),false);
     m.ports.push(DefPort{name:"name".to_owned()  , dir:PortDir::Input, kind:TYPE_STR, idx: 0, unpacked: Vec::new(), default: Some("".to_owned())});
     o.defs.insert(m.name.clone(),ObjDef::Method(m));
+    mb = DefMember{ name: "supports_byte_enable".to_owned(), kind: TYPE_INT, unpacked : Vec::new(), is_const: false, access: Access::Public};
+    o.defs.insert(mb.name.clone(),ObjDef::Member(mb));
+    mb = DefMember{ name: "provides_responses".to_owned(), kind: TYPE_INT, unpacked : Vec::new(), is_const: false, access: Access::Public};
+    o.defs.insert(mb.name.clone(),ObjDef::Member(mb));
+
     p.defs.insert(o.name.clone(),ObjDef::Class(o));
     //
     o = DefClass::new("uvm_reg_addr_t".to_owned());
@@ -815,6 +820,18 @@ pub fn get_uvm_lib() -> ObjDef {
     m = DefMethod::new("from_name".to_owned(),false);
     m.ports.push(DefPort{name:"name".to_owned()  , dir:PortDir::Input, kind:TYPE_STR, idx: 0, unpacked: Vec::new(), default: None});
     m.ports.push(DefPort{name:"value".to_owned()  , dir:PortDir::Input, kind:DefType::User(TypeUser::new("T".to_owned())), idx: 1, unpacked: Vec::new(), default: None});
+    o.defs.insert(m.name.clone(),ObjDef::Method(m));
+    p.defs.insert(o.name.clone(),ObjDef::Class(o));
+
+    //
+    o = DefClass::new("uvm_coreservice_t".to_owned());
+    m = DefMethod::new("get".to_owned(),true);
+    m.ret = Some(DefType::User(TypeUser::new("uvm_coreservice_t".to_owned())));
+    o.defs.insert(m.name.clone(),ObjDef::Method(m));
+    p.defs.insert(o.name.clone(),ObjDef::Class(o));
+    o = DefClass::new("uvm_root".to_owned());
+    m = DefMethod::new("get".to_owned(),true);
+    m.ret = Some(DefType::User(TypeUser::new("uvm_root".to_owned())));
     o.defs.insert(m.name.clone(),ObjDef::Method(m));
     p.defs.insert(o.name.clone(),ObjDef::Class(o));
 
