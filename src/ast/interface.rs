@@ -21,7 +21,7 @@ pub fn parse_interface(ts : &mut TokenStream) -> Result<AstNode, SvError> {
     // Parse package body
     let mut node_b = AstNode::new(AstNodeKind::Body, ts.last_pos);
     loop {
-        let t = next_t!(ts,true);
+        let t = ts.next_t(true)?;
         // println!("[parse_module_body] Token = {}", t);
         match t.kind {
             // Modport
@@ -37,7 +37,7 @@ pub fn parse_interface(ts : &mut TokenStream) -> Result<AstNode, SvError> {
                 loop {
                     let node_param = parse_param_decl(ts,true)?;
                     node_b.child.push(node_param);
-                    let nt = next_t!(ts,false);
+                    let nt = ts.next_t(false)?;
                     match nt.kind {
                         TokenKind::Comma => {}, // Comma indicate a list -> continue
                         TokenKind::SemiColon => {break;}, // Semi colon indicate end of statement, stop the loop
@@ -71,7 +71,7 @@ pub fn parse_interface(ts : &mut TokenStream) -> Result<AstNode, SvError> {
             TokenKind::TypeGenvar => {
                 ts.flush_rd();
                 loop {
-                    let nt = next_t!(ts,false);
+                    let nt = ts.next_t(false)?;
                     match nt.kind {
                         TokenKind::Ident => {
                             let mut n = AstNode::new(AstNodeKind::Declaration, nt.pos);
@@ -86,14 +86,14 @@ pub fn parse_interface(ts : &mut TokenStream) -> Result<AstNode, SvError> {
             }
             // Identifier -> lookahead to detect if it is a signal declaration or an instantiation
             TokenKind::Ident => {
-                let nt = next_t!(ts,true);
+                let nt = ts.next_t(true)?;
                 // println!("[Module body] Ident followed by {}", nt.kind);
                 match nt.kind {
                     // Scope -> this is a type definition
                     TokenKind::Scope => parse_signal_decl_list(ts,&mut node_b)?,
                     // Identifier : could be a signal declaration or a module/interface instantiation
                     TokenKind::Ident => {
-                        let nnt = next_t!(ts,true);
+                        let nnt = ts.next_t(true)?;
                         // println!("[Module body] (Ident Ident) followed by {}", nnt.kind);
                         match nnt.kind {
                             // Opening parenthesis indicates
@@ -171,13 +171,13 @@ pub fn parse_modport(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), Sv
     ts.flush_rd(); // Suppose modport keyword is now consumed
     let mut node_mp = AstNode::new(AstNodeKind::Modport, ts.last_pos);
     // Expect identifier for the modport name
-    let mut t = next_t!(ts,false);
+    let mut t = ts.next_t(false)?;
     if t.kind!=TokenKind::Ident {
         return Err(SvError::syntax(t,"modport. Expecting Identifier"));
     }
     node_mp.attr.insert("name".to_owned(),t.value);
     // Expect open parenthesis
-    t = next_t!(ts,false);
+    t = ts.next_t(false)?;
     if t.kind!=TokenKind::ParenLeft {
         return Err(SvError::syntax(t,"modport. Expecting ("));
     }
@@ -185,17 +185,17 @@ pub fn parse_modport(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), Sv
     // In case of import should also support import with task prototype
     // In case of port (in/out/inout) need to support port expresison in the form .ID(expr)
     loop {
-        t = next_t!(ts,false);
+        t = ts.next_t(false)?;
         let mut node_p = AstNode::new(AstNodeKind::Port, t.pos);
         match t.kind {
             TokenKind::KwInput | TokenKind::KwOutput | TokenKind::KwInout | TokenKind::KwRef => {
                 node_p.attr.insert("dir".to_owned(), t.value);
-                t = next_t!(ts,false);
+                t = ts.next_t(false)?;
                 match t.kind {
                     TokenKind::Ident =>  {node_p.attr.insert("name".to_owned(), t.value);}
                     // modport expression
                     TokenKind::Dot => {
-                        t = next_t!(ts,false);
+                        t = ts.next_t(false)?;
                         match t.kind {
                             TokenKind::Ident => {node_p.attr.insert("name".to_owned(), t.value);}
                             _ =>  return Err(SvError::syntax(t,"modport. Expecting identifier")),
@@ -206,7 +206,7 @@ pub fn parse_modport(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), Sv
             }
             TokenKind::KwClocking => {
                 node_p.kind = AstNodeKind::Clocking;
-                t = next_t!(ts,false);
+                t = ts.next_t(false)?;
                 match t.kind {
                     TokenKind::Ident => {node_p.attr.insert("name".to_owned(), t.value);}
                     _ =>  return Err(SvError::syntax(t,"modport. Expecting port name/expression")),
@@ -218,7 +218,7 @@ pub fn parse_modport(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), Sv
             TokenKind::KwImport | TokenKind::KwExport => {
                 node_p.kind = AstNodeKind::Import;
                 node_p.attr.insert("kind".to_owned(), t.value);
-                t = next_t!(ts,false);
+                t = ts.next_t(false)?;
                 match t.kind {
                     TokenKind::Ident => {node_p.attr.insert("name".to_owned(), t.value);}
                     // TODO: support task prototype
@@ -229,7 +229,7 @@ pub fn parse_modport(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), Sv
             _ =>  return Err(SvError::syntax(t,"modport. Expecting direction/identifier/cloking/import/export (")),
         }
         node_mp.child.push(node_p);
-        t = next_t!(ts,false);
+        t = ts.next_t(false)?;
         match t.kind {
             TokenKind::Comma => {},
             TokenKind::ParenRight => break,
@@ -237,7 +237,7 @@ pub fn parse_modport(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), Sv
         }
     }
     // Expect semi-colon
-    t = next_t!(ts,false);
+    t = ts.next_t(false)?;
     if t.kind!=TokenKind::SemiColon {
         return Err(SvError::syntax(t,"modport. Expecting ;"));
     }
@@ -249,22 +249,22 @@ pub fn parse_modport(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), Sv
 pub fn parse_clocking(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), SvError> {
     let mut node_c = AstNode::new(AstNodeKind::Clocking, ts.last_pos);
     // Optionnal default/global
-    let mut t = next_t!(ts,false);
+    let mut t = ts.next_t(false)?;
     let has_id = t.kind!=TokenKind::KwDefault;
     let need_event = t.kind==TokenKind::KwClocking;
     if t.kind== TokenKind::KwDefault || t.kind== TokenKind::KwGlobal {
         node_c.attr.insert("scope".to_owned(), t.value);
-        t = next_t!(ts,false);
+        t = ts.next_t(false)?;
     }
     // Expect clocking keyword
     if t.kind!=TokenKind::KwClocking {
         return Err(SvError::syntax(t,"clocking block. Expecting ;"));
     }
-    t = next_t!(ts,false);
+    t = ts.next_t(false)?;
     // Clocking block identifier : optional when default
     if t.kind == TokenKind::Ident {
         node_c.attr.insert("name".to_owned(), t.value);
-        t = next_t!(ts,false);
+        t = ts.next_t(false)?;
     } else if has_id {
         return Err(SvError::syntax(t,"clocking block. Expecting identifier"));
     }
@@ -279,12 +279,12 @@ pub fn parse_clocking(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), S
     }
     node_c.child.push(parse_sensitivity(ts,true)?);
     //
-    t = next_t!(ts,false);
+    t = ts.next_t(false)?;
     if t.kind!=TokenKind::SemiColon {
         return Err(SvError::syntax(t,"clocking block. Expecting ;"));
     }
     loop {
-        t = next_t!(ts,false);
+        t = ts.next_t(false)?;
         match t.kind {
             TokenKind::KwEndClocking => {
                 if has_id {

@@ -15,22 +15,22 @@ pub fn parse_package(ts : &mut TokenStream) -> Result<AstNode, SvError> {
     let mut t = expect_t!(ts, "package declaration", TokenKind::KwPackage);
     let mut node = AstNode::new(AstNodeKind::Package, t.pos);
     // Parse package header
-    t = next_t!(ts,false);
+    t = ts.next_t(false)?;
     if t.kind==TokenKind::KwStatic || t.kind==TokenKind::KwAutomatic {
         node.attr.insert("lifetime".to_owned(),t.value);
-        t = next_t!(ts,false);
+        t = ts.next_t(false)?;
     }
     if t.kind!=TokenKind::Ident {
         return Err(SvError::syntax(t, "package header. Expecting identifier"));
     }
     node.attr.insert("name".to_owned(),t.value);
-    t = next_t!(ts,false);
+    t = ts.next_t(false)?;
     if t.kind!=TokenKind::SemiColon {
         return Err(SvError::syntax(t, "package header. Expecting ;"));
     }
     // Parse package body
     loop {
-        t = next_t!(ts,true);
+        t = ts.next_t(true)?;
         // println!("[parse_module_body] Token = {}", t);
         match t.kind {
             // Import statement
@@ -44,7 +44,7 @@ pub fn parse_package(ts : &mut TokenStream) -> Result<AstNode, SvError> {
                 loop {
                     let node_param = parse_param_decl(ts,true)?;
                     node.child.push(node_param);
-                    let nt = next_t!(ts,false);
+                    let nt = ts.next_t(false)?;
                     match nt.kind {
                         TokenKind::Comma => {}, // Comma indicate a list -> continue
                         TokenKind::SemiColon => {break;}, // Semi colon indicate end of statement, stop the loop
@@ -80,7 +80,7 @@ pub fn parse_package(ts : &mut TokenStream) -> Result<AstNode, SvError> {
             TokenKind::TypeGenvar => {
                 ts.flush_rd();
                 loop {
-                    let nt = next_t!(ts,false);
+                    let nt = ts.next_t(false)?;
                     match nt.kind {
                         TokenKind::Ident => {
                             let mut n = AstNode::new(AstNodeKind::Declaration, t.pos);

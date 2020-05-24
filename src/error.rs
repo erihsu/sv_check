@@ -31,6 +31,7 @@ impl SvError {
         SvError {kind:k, token: t, txt}
     }
 
+    #[allow(dead_code)]
     pub fn eof(pos: Position) -> SvError {
         SvError {kind:SvErrorKind::Eof, token: Token::new(TokenKind::EOF, "".to_string(), pos), txt: "".to_string()}
     }

@@ -17,6 +17,7 @@ pub struct TokenStream<'a,'b> {
     rd_ptr : usize,
     pub inc_files : Vec<String>,
     pub project : &'b mut Project,
+    branch : Vec<BranchState>
 }
 
 /// Enum for the state machine parsing number
@@ -25,6 +26,9 @@ enum NumParseState {Start, Base, IntStart, Int, Dec, Exp}
 
 #[derive(PartialEq, Debug)]
 enum NumBase {Binary, Octal, Hexa, Decimal}
+
+#[derive(PartialEq, Debug,  Clone)]
+enum BranchState {Success, Fail, Done}
 
 impl<'a,'b> TokenStream<'a,'b> {
 
@@ -36,6 +40,7 @@ impl<'a,'b> TokenStream<'a,'b> {
             project : project,
             last_pos : Position::new() ,
             buffer   : VecDeque::new() ,
+            branch   : Vec::new() ,
             rd_ptr   : 0,
             inc_files: Vec::new()
         }
@@ -165,16 +170,16 @@ impl<'a,'b> TokenStream<'a,'b> {
     /// Get all characters until end of string
     fn parse_string(&mut self, is_macro: bool) -> Result<Token,SvError> {
         // TODO: Macro interpolated string to be handled
-        let mut s = if is_macro {"".to_owned()} else {"".to_owned()};
-        // let mut s = "".to_owned();
+        let mut s = "".to_owned();
         let p = self.last_pos;
         let mut cpp = ' ';
         while let Some(c) = self.source.get_char() {
-            s.push(c);
-            if c == '"' && (self.last_char != '\\' || cpp == '\\') {
-                s.pop();
+            let done = c == '"' && if is_macro {self.last_char == '`'} else {self.last_char != '\\' || cpp == '\\'};
+            if done {
+                if is_macro {s.pop();}
                 break;
             }
+            s.push(c);
             cpp = self.last_char;
             self.last_char = c;
         }
@@ -746,49 +751,80 @@ impl<'a,'b> TokenStream<'a,'b> {
         }
     }
 
-    pub fn next_non_comment(&mut self, peek: bool) -> Option<Result<Token,SvError>> {
+    pub fn next_token_processed(&mut self, skip_comment: bool, peek: bool) -> Result<(Token,bool),SvError> {
+        let mut branch_ok = true;
+        loop {
+            match self.get_next_token() {
+                Ok(t) => {
+                    match t.kind {
+                        TokenKind::MacroCall if branch_ok => {
+                            let b = Vec::new(); // Empty body: unused since top caller
+                            let a = HashMap::new(); // Empty argument list: unused since top caller
+                            let pos = t.pos.clone();
+                            match self.macro_expand(t, pos, true, &mut b.into_iter(), &a) {
+                                Some(Err(t)) => {return Err(t);}
+                                Some(Ok(t)) => {return Ok((t,false));}
+                                // None => {return Err(SvError::null(self.last_pos));}
+                                None => {
+                                    if self.buffer.len() > self.rd_ptr || (!peek && !self.buffer.is_empty()) {
+                                        if !peek {
+                                            if self.rd_ptr>0 {self.rd_ptr -= 1;}
+                                            return Ok((self.buffer.pop_front().unwrap(), false));
+                                        }
+                                        else {
+                                            let t = self.buffer.get(self.rd_ptr).unwrap();
+                                            self.rd_ptr += 1;
+                                            return Ok((t.clone(), true));
+                                        }
+                                    }
+                                    // else {
+                                    //     Err(SvError::eof(self.source.pos))
+                                    // }
+                                    // return Err(SvError::null(self.last_pos));
+                                }
+                            }
+                        }
+                        TokenKind::CompDir => {
+                            self.branch_updt(&t)?;
+                            branch_ok = self.branch.iter().fold(true,|s,b| s & (*b==BranchState::Success));
+                            // rpt_t!(MsgID::DbgStatus, &t, &format!("Token {} => {:?} -> ok={}",t, self.branch, branch_ok));
+                        }
+                        TokenKind::Comment   if skip_comment => {},
+                        TokenKind::Attribute if skip_comment => {},
+                        _ if branch_ok => {return Ok((t,false));}
+                        _ => {
+                            // rpt_t!(MsgID::DbgStatus, &t, &format!("Branch fail : skipping token {}",t));
+                        }
+                    }
+                }
+                Err(e) => {return Err(e);}
+            }
+        }
+    }
+
+    // Next token from the buffer after preprocessor
+    pub fn next_t(&mut self, peek: bool) -> Result<Token,SvError> {
         // println!("Buffer = {:?} , rd_ptr = {}", self.buffer, self.rd_ptr);
         if self.buffer.len()>self.rd_ptr || (!peek && !self.buffer.is_empty()) {
             if !peek {
                 if self.rd_ptr>0 {self.rd_ptr -= 1;}
-                return Some(Ok(self.buffer.pop_front()?));
+                return Ok(self.buffer.pop_front().unwrap());
             }
             else {
-                let t = self.buffer.get(self.rd_ptr)?;
+                let t = self.buffer.get(self.rd_ptr).unwrap();
                 self.rd_ptr += 1;
-                return Some(Ok(t.clone()));
+                return Ok(t.clone());
             }
         }
-        loop {
-            match self.next() {
-                Some(Ok(t)) => {
-                    if t.kind!=TokenKind::Comment && t.kind!=TokenKind::Attribute {
-                        if peek {
-                            self.buffer.push_back(t.clone());
-                            self.rd_ptr += 1;
-                        }
-                        return Some(Ok(t));
-                    } else {
-                        // println!("Comment = {:?}", t);
-                        continue
-                    }
+        match self.next_token_processed(true, peek) {
+            Ok((t,peeked)) => {
+                if peek && !peeked {
+                    self.buffer.push_back(t.clone());
+                    self.rd_ptr += 1;
                 }
-                Some(Err(t)) => return Some(Err(t)),
-                None => {
-                    if self.buffer.len() > self.rd_ptr || (!peek && !self.buffer.is_empty()) {
-                        if !peek {
-                            if self.rd_ptr>0 {self.rd_ptr -= 1;}
-                            return Some(Ok(self.buffer.pop_front()?));
-                        }
-                        else {
-                            let t = self.buffer.get(self.rd_ptr)?;
-                            self.rd_ptr += 1;
-                            return Some(Ok(t.clone()));
-                        }
-                    }
-                    return None
-                }
-            };
+                Ok(t)
+            }
+            Err(t) => Err(t)
         }
     }
 
@@ -854,8 +890,8 @@ impl<'a,'b> TokenStream<'a,'b> {
             }
         }
         loop {
-            match self.next() {
-                Some(Ok(t)) => {
+            match self.next_token_processed(true, true) {
+                Ok((t,_)) => {
                     match t.kind {
                         TokenKind::ParenLeft  => cnt_p += 1,
                         TokenKind::ParenRight => cnt_p -= 1,
@@ -870,11 +906,7 @@ impl<'a,'b> TokenStream<'a,'b> {
                     }
                     // println!("Skipping {} (cnt {}/{}/{})", t,cnt_p,cnt_b,cnt_c);
                 }
-                Some(Err(t)) => return Err(t),
-                None => {
-                    // TODO: handle macro case where buffer is filled after macro expansion
-                    return Err(SvError::eof(self.source.pos))
-                }
+                Err(t) => return Err(t)
             };
         }
         // println!("[skip_until] File = {:#?} new pos = {}", self.source.filename, self.source.pos);
@@ -895,13 +927,14 @@ impl<'a,'b> TokenStream<'a,'b> {
                 t = self.buffer[self.rd_ptr].clone();
             } else {
                 rd_stream = true;
-                match self.next() {
-                    Some(Ok(x)) => {
-                        self.buffer.push_back(x.clone());
-                        t = x.clone();
+                match self.next_token_processed(true, true) {
+                    Ok((nt,peeked)) => {
+                        t = nt.clone();
+                        if !peeked {
+                            self.buffer.push_back(nt);
+                        }
                     }
-                    Some(Err(e)) => return Err(e),
-                    None => return Err(SvError::eof(self.source.pos)),
+                    Err(e) => return Err(e)
                 }
             };
             // Increment read pointer in all cases since the token is always in thebuffer
@@ -1138,21 +1171,63 @@ impl<'a,'b> TokenStream<'a,'b> {
             }
         }
     }
-}
 
-impl<'a,'b> Iterator for TokenStream<'a,'b> {
-    type Item = Result<Token,SvError>;
-
-    fn next(&mut self) -> Option<Result<Token,SvError>> {
-        match self.get_next_token() {
-            Err(e) => if e.kind != SvErrorKind::Null {Some(Err(e))} else {None},
-            Ok(t) if t.kind==TokenKind::MacroCall => {
-                let b = Vec::new(); // Empty body: unused since top caller
-                let a = HashMap::new(); // Empty argument list: unused since top caller
-                let pos = t.pos.clone();
-                self.macro_expand(t, pos, true, &mut b.into_iter(), &a)
+    pub fn branch_updt(&mut self, t: &Token) -> Result<(),SvError> {
+        match t.value.as_ref() {
+            "`ifndef" => {
+                match self.get_next_token() {
+                    Err(e) => Err(e),
+                    Ok(t) if t.kind == TokenKind::Ident => {
+                        self.branch.push(if self.project.defines.contains_key(&t.value) {BranchState::Fail} else {BranchState::Success});
+                        Ok(())
+                    }
+                    Ok(t) => Err(SvError::syntax(t,"Expecting Identifier"))
+                }
             }
-            Ok(t) => Some(Ok(t))
+            "`ifdef"  => {
+                match self.get_next_token() {
+                    Err(e) => Err(e),
+                    Ok(t) if t.kind == TokenKind::Ident => {
+                        self.branch.push(if self.project.defines.contains_key(&t.value) {BranchState::Success} else {BranchState::Fail});
+                        Ok(())
+                    }
+                    Ok(t) => Err(SvError::syntax(t,"Expecting Identifier"))
+                }
+            }
+            "`elsif"  => {
+                match self.get_next_token() {
+                    Err(e) => Err(e),
+                    Ok(t) if t.kind == TokenKind::Ident => {
+                        if let Some(s) = self.branch.last_mut() {
+                            *s = if *s!=BranchState::Fail {BranchState::Done}
+                                else if self.project.defines.contains_key(&t.value) {BranchState::Success}
+                                else {BranchState::Fail};
+                            Ok(())
+                        } else {
+                            Err(SvError::syntax(t,"No matching `ifedf"))
+                        }
+                    }
+                    Ok(t) => Err(SvError::syntax(t,"Expecting Identifier"))
+                }
+            }
+            "`else"   => {
+                if let Some(s) = self.branch.last_mut() {
+                    *s = if *s==BranchState::Fail {BranchState::Success} else {BranchState::Fail};
+                    Ok(())
+                } else {
+                    Err(SvError::syntax(t.clone(),"No matching `ifedf"))
+                }
+            }
+            "`endif"  => {
+                if self.branch.len() == 0 {
+                    Err(SvError::syntax(t.clone(),"No matching `ifedf"))
+                } else {
+                    self.branch.pop();
+                    Ok(())
+                }
+            }
+            _ => Err(SvError::syntax(t.clone(),"Expecting Compilation directive"))
         }
     }
+
 }

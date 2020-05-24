@@ -10,33 +10,32 @@ use crate::ast::common::*;
 /// This function should be called after a keyword module/macromodule
 pub fn parse_module_hdr(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), SvError> {
     // First extract next token: can be lifetime or identifier.
-    // let t = ts.next_non_comment(false);
-    let mut t = next_t!(ts,true);
+    let mut t = ts.next_t(true)?;
     let mut node_h = AstNode::new(AstNodeKind::Header, t.pos);
 
     if t.kind==TokenKind::KwStatic || t.kind==TokenKind::KwAutomatic {
         node_h.attr.insert("lifetime".to_owned(),t.value);
         ts.flush(1);
-        t = next_t!(ts,true);
+        t = ts.next_t(true)?;
     }
     match t.kind {
         TokenKind::Ident => {
             node.attr.insert("name".to_owned(),t.value);
             ts.flush(1);
-            t = next_t!(ts,true);
+            t = ts.next_t(true)?;
         },
         _ => return Err(SvError::syntax(t, "module/interface declaration, expecting identifier or lifetime (static/automatic)"))
     }
     // Optional package import
     while t.kind == TokenKind::KwImport {
         parse_import(ts,&mut node_h)?;
-        t = next_t!(ts,true);
+        t = ts.next_t(true)?;
     }
     // Optional parameter list
     if t.kind==TokenKind::Hash {
         ts.flush(1);
         expect_t!(ts,"parameter declaration",TokenKind::ParenLeft);
-        t = next_t!(ts,true);
+        t = ts.next_t(true)?;
         if t.kind!=TokenKind::ParenRight {
             ts.rewind(1);
             loop {
@@ -45,12 +44,12 @@ pub fn parse_module_hdr(ts : &mut TokenStream, node: &mut AstNode) -> Result<(),
                 loop_args_break_cont!(ts,"parameter declaration",ParenRight);
             }
         } else {ts.flush(1);}
-        t = next_t!(ts,true);
+        t = ts.next_t(true)?;
     }
     // Optional Port list
     if t.kind==TokenKind::ParenLeft {
         ts.flush(1);
-        t = next_t!(ts,true);
+        t = ts.next_t(true)?;
         if t.kind!=TokenKind::ParenRight {
             ts.rewind(1);
             loop {
@@ -59,7 +58,7 @@ pub fn parse_module_hdr(ts : &mut TokenStream, node: &mut AstNode) -> Result<(),
                 loop_args_break_cont!(ts,"port declaration",ParenRight);
             }
         } else {ts.flush(1);}
-        t = next_t!(ts,false);
+        t = ts.next_t(false)?;
     }
     // End of header
     if t.kind != TokenKind::SemiColon {
