@@ -60,6 +60,7 @@ impl Ast {
         loop {
             match ts.next_t(true) {
                 Ok(t) => {
+                    // rpt_t!(MsgID::InfoStatus,&t, "top token");
                     match t.kind {
                         // Skip Comment / Attribute (TEMP)
                         // TODO: actually use them to try associate comment with a node
@@ -89,7 +90,7 @@ impl Ast {
                             self.tree.child.push(package::parse_package(ts)?);
                         },
                         TokenKind::KwTypedef => parse_typedef(ts,&mut self.tree)?,
-                        TokenKind::KwImport  => parse_import(ts,&mut self.tree)?,
+                        TokenKind::KwImport | TokenKind::KwExport  => parse_import(ts,&mut self.tree)?,
                         TokenKind::KwClass => self.tree.child.push(class::parse_class(ts)?),
                         TokenKind::KwVirtual => {
                             let nt = ts.next_t(true)?;
@@ -98,6 +99,7 @@ impl Ast {
                                 _ => return Err(SvError::syntax(nt, "virtual declaration. Expecting class"))
                             }
                         }
+                        // Parameters
                         TokenKind::KwParam |
                         TokenKind::KwLParam => {
                             ts.rewind(1); // put back the token so that it can be read by the parse param function
@@ -107,10 +109,25 @@ impl Ast {
                                 loop_args_break_cont!(ts,"parameter declaration",SemiColon);
                             }
                         }
+                        // Signal declaration
+                        TokenKind::KwConst       |
+                        TokenKind::KwReg         |
+                        TokenKind::KwVar         |
+                        TokenKind::TypeIntAtom   |
+                        TokenKind::TypeIntVector |
+                        TokenKind::TypeReal      |
+                        TokenKind::TypeString    |
+                        TokenKind::TypeCHandle   |
+                        TokenKind::TypeEvent     |
+                        TokenKind::Ident          => parse_signal_decl_list(ts,&mut self.tree)?,
+
+                        TokenKind::KwFunction => class::parse_func(ts, &mut self.tree, true, false)?,
+                        TokenKind::KwTask     => class::parse_task(ts, &mut self.tree)?,
+                        //
                         TokenKind::SemiColon => ts.flush(1),
                         // Display all un-implemented token (TEMP)
                         _ => {
-                            rpt_s!(MsgID::DbgSkip, &format!("{} {} | Skipping {}", ts.source.get_filename(), t.pos, t.kind));
+                            rpt_s!(MsgID::DbgSkip, &format!("{}:{} | Parser Skipping {}", ts.source.get_filename(), t.pos, t.kind));
                             // println!("[Warning] {:?} -- Root skipping {}",ts.source.get_filename(), t);
                             ts.flush_rd();
                         }
@@ -120,6 +137,7 @@ impl Ast {
                     match t.kind {
                         SvErrorKind::Null |
                         SvErrorKind::Eof  => {
+                            // rpt_s!(MsgID::DbgStatus, &format!("{:?}", ts.project.defines.keys()));
                             self.defines = ts.project.defines.clone();
                             return Ok(());
                         }

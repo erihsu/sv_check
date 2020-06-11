@@ -104,12 +104,37 @@ impl DefPort {
         self.idx = idx.clone();
         *idx += 1;
         for nc in &node.child {
+            // rpt_s!(MsgID::DbgStatus, &format!("Port update: {}", nc));
             match nc.kind {
                 AstNodeKind::Slice if allow_slice => self.unpacked.push(parse_dim(nc)),
-                AstNodeKind::Value      => {self.default = Some(nc.attr["value"].clone()); allow_slice = false; }
-                AstNodeKind::Identifier => {self.default = Some(nc.attr["name"].clone());  allow_slice = false; }
-                AstNodeKind::Type       => {self.default = Some(nc.attr["type"].clone());  allow_slice = false; }
-                AstNodeKind::VIntf      => {self.default = Some(nc.attr["type"].clone());  allow_slice = false; }
+                AstNodeKind::Value      => {
+                    if let Some(val) = nc.attr.get("value") {
+                        self.default = Some(val.clone()); allow_slice = false;
+                    } else {
+                        rpt!(MsgID::ErrNotFound, nc, "value attribute");
+                    }
+                }
+                AstNodeKind::Identifier => {
+                    if let Some(val) = nc.attr.get("name") {
+                        self.default = Some(val.clone());  allow_slice = false;
+                    } else {
+                        rpt!(MsgID::ErrNotFound, nc, "name attribute");
+                    }
+                }
+                AstNodeKind::Type       => {
+                    if let Some(val) = nc.attr.get("type").or_else(|| nc.attr.get("name")) {
+                        self.default = Some(val.clone());  allow_slice = false;
+                    } else {
+                        rpt!(MsgID::ErrNotFound, nc, &format!("type/name attribute (port) : {}",nc));
+                    }
+                }
+                AstNodeKind::VIntf      => {
+                    if let Some(val) = nc.attr.get("type").or_else(|| nc.attr.get("name")) {
+                        self.default = Some(val.clone());  allow_slice = false;
+                    } else {
+                        rpt!(MsgID::ErrNotFound, nc, "type attribute");
+                    }
+                }
                 // TODO !!!
                 AstNodeKind::Slice      |
                 AstNodeKind::Concat     |
@@ -180,10 +205,29 @@ impl fmt::Display for DefPort {
 pub fn param_value(node: &AstNode) -> String {
     let mut s = "".to_owned();
     for npc in &node.child {
+        // rpt_s!(MsgID::DbgStatus,&format!("param_value : {}",npc));
         match npc.kind {
-            AstNodeKind::Type |
-            AstNodeKind::Identifier => s.push_str(&npc.attr["name"].clone()),
-            AstNodeKind::Value => s.push_str(&npc.attr["value"].clone()),
+            AstNodeKind::Type       => {
+                if let Some(str_val) = npc.attr.get("type").or_else(|| npc.attr.get("name")) {
+                    s.push_str(str_val);
+                } else {
+                    rpt!(MsgID::ErrNotFound, npc, &format!("type attribute in param value {}",npc));
+                }
+            }
+            AstNodeKind::Identifier => {
+                if let Some(str_val) = npc.attr.get("name") {
+                    s.push_str(str_val);
+                } else {
+                    rpt!(MsgID::ErrNotFound, npc, "name attribute");
+                }
+            }
+            AstNodeKind::Value      => {
+                if let Some(str_val) = npc.attr.get("value") {
+                    s.push_str(str_val);
+                } else {
+                    rpt!(MsgID::ErrNotFound, npc, "value attribute");
+                }
+            }
             // TODO
             AstNodeKind::Slice => {},
             AstNodeKind::Concat => {},
@@ -396,7 +440,7 @@ impl DefCovergroup {
 #[derive(Debug, Clone)]
 pub struct DefModule {
     pub name   : String,
-    pub params : HashMap<String,DefPort>,
+    pub params : HashMap<String,ObjDef>,
     pub ports  : HashMap<String,ObjDef>,
     pub defs   : HashMap<String,ObjDef>,
 }

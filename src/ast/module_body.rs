@@ -1,6 +1,7 @@
 // This file is part of sv_check and subject to the terms of MIT Licence
 // Copyright (c) 2019, clams@mail.com
 
+use crate::reporter::{REPORTER, MsgID};
 use crate::error::SvError;
 use crate::lex::token::{TokenKind};
 use crate::lex::token_stream::TokenStream;
@@ -223,6 +224,16 @@ pub fn parse_module_body(ts : &mut TokenStream, node : &mut AstNode, cntxt : Mod
             TokenKind::KwEndModule   if cntxt == ModuleCntxt::Top      => {ts.flush(1); break},
             TokenKind::Macro => parse_macro(ts,node)?,
             TokenKind::CompDir => parse_macro(ts,node)?,
+            TokenKind::SystemTask => {
+                // allow only elaboration system task: fatal/error/warning/info
+                // But still parse the whole systemTask and try to continue
+                let node_c = parse_system_task(ts)?;
+                match t.value.as_ref() {
+                    "$error" | "$fatal" | "$warning" | "$info" => node.child.push(node_c),
+                    _ => rpt_t!(MsgID::ErrInvalid,&t,"module body")
+                }
+
+            }
             // Any un-treated token is an error
             _ => {
                 // println!("{}", node);
@@ -392,17 +403,19 @@ pub fn parse_always(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), SvE
 /// An empty sensitivity node corresponds to @(*) or @*
 pub fn parse_sensitivity(ts : &mut TokenStream, is_process: bool) -> Result<AstNode, SvError> {
     // Check next character: open parenthesis or *
-    let mut t = ts.next_t(false)?;
+    let mut t = ts.next_t(true)?;
     let mut node = AstNode::new(AstNodeKind::Sensitivity, t.pos);
     // println!("[parse_sensitivity] First Token {}", t);
     match t.kind {
         TokenKind::OpStar   |
-        TokenKind::SensiAll => return Ok(node),
+        TokenKind::SensiAll => {ts.flush(1); return Ok(node);}
         TokenKind::Ident if !is_process => {
-            node.attr.insert("clk_event".to_owned(), t.value);
+            node.child.push(parse_ident_hier(ts)?);
+            // node.attr.insert("clk_event".to_owned(), t.value);
             return Ok(node);
         }
         TokenKind::ParenLeft => {
+            ts.flush(1);
             t = ts.next_t(true)?;
             if t.kind == TokenKind::OpStar {
                 ts.flush(1);
@@ -420,9 +433,11 @@ pub fn parse_sensitivity(ts : &mut TokenStream, is_process: bool) -> Result<AstN
         if t.kind == TokenKind::KwEdge {
             n.attr.insert("edge".to_owned(),t.value );
             ts.flush_rd(); // consume keyword
+        } else {
+            ts.rewind(1);
         }
         // Capture event name
-        n.child.push(parse_ident_hier(ts)?);
+        n.child.push(parse_expr(ts,ExprCntxt::Sensitivity,false)?);
         // Check for iff
         t = ts.next_t(false)?;
         if t.kind==TokenKind::KwIff {

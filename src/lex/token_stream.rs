@@ -869,47 +869,23 @@ impl<'a,'b> TokenStream<'a,'b> {
         let mut cnt_p = 0;
         let mut cnt_c = 0;
         let mut cnt_b = 0;
-        // self.display_status("Starting skip_until");
-        // Check buffer first
-        while !self.buffer.is_empty() {
-            if let Some(t) = self.buffer.pop_front() {
-                // println!("Buffer = {:?}", t);
-                match t.kind {
-                    TokenKind::ParenLeft  => cnt_p += 1,
-                    TokenKind::ParenRight => cnt_p -= 1,
-                    TokenKind::CurlyLeft  => cnt_c += 1,
-                    TokenKind::CurlyRight => cnt_c -= 1,
-                    TokenKind::KwBegin => cnt_b += 1,
-                    TokenKind::KwEnd   => cnt_b -= 1,
-                    _ => {}
-                }
-                if t.kind==tk_end && cnt_p<=0 && cnt_b<=0 && cnt_c<=0 {
-                    self.last_pos = self.source.pos;
-                    return Ok(());
-                }
-            }
-        }
         loop {
-            match self.next_token_processed(true, true) {
-                Ok((t,_)) => {
-                    match t.kind {
-                        TokenKind::ParenLeft  => cnt_p += 1,
-                        TokenKind::ParenRight => cnt_p -= 1,
-                        TokenKind::CurlyLeft  => cnt_c += 1,
-                        TokenKind::CurlyRight => cnt_c -= 1,
-                        TokenKind::KwBegin => cnt_b += 1,
-                        TokenKind::KwEnd   => cnt_b -= 1,
-                        _ => {}
-                    }
-                    if t.kind==tk_end && cnt_p<=0 && cnt_b<=0 && cnt_c<=0 {
-                        break;
-                    }
-                    // println!("Skipping {} (cnt {}/{}/{})", t,cnt_p,cnt_b,cnt_c);
-                }
-                Err(t) => return Err(t)
-            };
+            let t = self.next_t(false)?;
+            match t.kind {
+                TokenKind::ParenLeft  => cnt_p += 1,
+                TokenKind::ParenRight => cnt_p -= 1,
+                TokenKind::CurlyLeft  => cnt_c += 1,
+                TokenKind::CurlyRight => cnt_c -= 1,
+                TokenKind::KwBegin => cnt_b += 1,
+                TokenKind::KwEnd   => cnt_b -= 1,
+                _ => {}
+            }
+            if t.kind==tk_end && cnt_p<=0 && cnt_b<=0 && cnt_c<=0 {
+                break;
+            }
+            // println!("Skipping {} (cnt {}/{}/{})", t,cnt_p,cnt_b,cnt_c);
         }
-        // println!("[skip_until] File = {:#?} new pos = {}", self.source.filename, self.source.pos);
+        // rpt_s!(MsgID::DbgStatus,"[skip_until] new pos = {}", self.source.pos);
         self.last_pos = self.source.pos;
         Ok(())
     }
@@ -1122,31 +1098,115 @@ impl<'a,'b> TokenStream<'a,'b> {
                 // if top {println!("[macro_expand] {} : macro {} -> ", self.source.get_filename(),macro_name);}
                 // let mut s = "".to_string();
                 let mut prev_was_inc = false;
+                let mut append = false;
+                let mut col_next = 0;
                 while let Some(bt) = body.next() {
                     match bt.kind {
                         TokenKind::MacroCall => {
-                            if let Some(Err(e)) = self.macro_expand(bt, pos, false,&mut body, &args) {
-                                return Some(Err(e));
-                            }
-                        }
-                        // Replace identifier by argument value
-                        TokenKind::IdentInterpolated => {
-                            if args.contains_key(&bt.value) {
-                                for at in args[&bt.value].clone() {
-                                    self.buffer.push_back(Token{kind:at.kind,value:at.value,pos:pos});
+                            col_next = bt.pos.col + bt.value.len() as u32;
+                            if bt.value=="`__FILE__" || bt.value=="`__LINE__" || self.project.defines.contains_key(&bt.value) {
+                                if let Some(Err(e)) = self.macro_expand(bt, pos, false,&mut body, &args) {
+                                    return Some(Err(e));
                                 }
                             } else {
-                                return Some(Err(SvError::syntax(bt,&format!("macro call. Parameter not found: {:?}",args.keys()))));
+                                // Unknown Macro ? push as is, hopefully  will be concatenated (might need to add check that this is resolved on next)
+                                self.buffer.push_back(Token{kind:bt.kind,value:bt.value,pos:pos});
                             }
+                        }
+                        // Mark an interpolation: next token should be append to previous one
+                        TokenKind::IdentInterpolated => {
+                            append = true;
+                            // if macro_name=="`MACRONAME" {rpt_s!(MsgID::DbgStatus,&format!("Interpolating {} ({}) to {:?}", bt.value, bt.pos.col, args.get(&bt.value)));}
+                            let val =
+                                if let Some(ea) = args.get(&bt.value) {
+                                    if ea.len() != 1 {
+                                        return Some(Err(SvError::syntax(bt,"macro expansion (More than one item in the expansion)")));
+                                    }
+                                    ea[0].value.clone()
+                                } else {
+                                    bt.value.clone()
+                                };
+                            if let Some(mut lt) = self.buffer.pop_back() {
+                                // if macro_name=="`MACRONAME" {rpt_s!(MsgID::DbgStatus,&format!("Interpolating {} ({}) to {} and append to {} ({})", bt.value, bt.pos.col, val, lt.value, col_next));}
+                                if (lt.kind == TokenKind::Ident || lt.kind == TokenKind::MacroCall) && col_next == bt.pos.col {
+                                    lt.value.push_str(&val);
+                                    if lt.kind == TokenKind::MacroCall && (lt.value=="`__FILE__" || lt.value=="`__LINE__" || self.project.defines.contains_key(&lt.value)) {
+                                        append = false;
+                                        if let Some(Err(e)) = self.macro_expand(lt, pos, false,&mut body, &args) {
+                                            return Some(Err(e));
+                                        }
+                                    } else {
+                                        self.buffer.push_back(lt);
+                                    }
+                                } else {
+                                    if val.len() != 0 {rpt_t!(MsgID::DbgStatus, &t, "Unable to interpolate in macro");}
+                                    self.buffer.push_back(lt);
+
+                                    // self.buffer.push_back(expand_token);
+                                }
+                            }
+                            col_next = bt.pos.col + 2 + bt.value.len() as u32;
+                            continue;
                         }
                         TokenKind::Ident if args.contains_key(&bt.value) => {
                             // println!("[macro_expand] Replacing {} by {:?}", bt.value, args[&bt.value]);
-                            for at in args[&bt.value].clone() {
+                            let mut arg_iter = args[&bt.value].clone().into_iter();
+                            // for at in args[&bt.value].clone() {
+                            while let Some(at) = arg_iter.next() {
                                 // if at.kind==TokenKind::Str {s = format!("{} \"{}\"",s, at.value);} else {s = format!("{} {}",s, at.value);}
-                                self.buffer.push_back(Token{kind:at.kind,value:at.value,pos:pos});
+                                match at.kind {
+                                    TokenKind::MacroCall => {
+                                        if let Some(Err(e)) = self.macro_expand(at, pos, false, &mut arg_iter, &args) {
+                                            return Some(Err(e));
+                                        }
+                                    }
+                                    _ => self.buffer.push_back(Token{kind:at.kind,value:at.value,pos:pos})
+                                }
                             }
+                            col_next = bt.pos.col + bt.value.len() as u32;
                         }
                         _ => {
+                            //
+                            let no_space = bt.pos.col==col_next;
+                            col_next = bt.pos.col + bt.value.len() as u32;
+                            if append {
+                                if let Some(mut lt) = self.buffer.pop_back() {
+                                    match lt.kind {
+                                        TokenKind::OpDiv if bt.kind==TokenKind::OpStar => {
+                                            lt.kind = TokenKind::Comment;
+                                        }
+                                        TokenKind::Comment => {
+                                            if bt.kind==TokenKind::OpDiv && lt.value.chars().last()==Some('*'){
+                                                append = false;
+                                                // For the momentjust drop the comment, no need to expand it
+                                                // Still construct it fully in case we want to do something about it (like documentation, ...)
+                                                continue;
+                                            } else {
+                                                lt.value.push_str(" ");
+                                            }
+                                        }
+                                        _ => {
+                                            append = false;
+                                            // if macro_name=="`MACRONAME" {rpt_s!(MsgID::DbgStatus,&format!("Append {} ({}) to {} ({})", bt, bt.pos.col, lt, no_space));}
+                                            // rpt_s!(MsgID::DbgStatus,"Simple concat");
+                                        }
+                                    }
+                                    if no_space || append {
+                                        lt.value.push_str(&bt.value);
+                                    }
+                                    if lt.kind == TokenKind::MacroCall && (bt.value=="`__FILE__" || bt.value=="`__LINE__" || self.project.defines.contains_key(&lt.value)) {
+                                        if let Some(Err(e)) = self.macro_expand(lt, pos, false,&mut body, &args) {
+                                            return Some(Err(e));
+                                        }
+                                    } else {
+                                        self.buffer.push_back(lt);
+                                        if !no_space && !append {
+                                            self.buffer.push_back(Token{kind:bt.kind,value:bt.value,pos:pos});
+                                        }
+                                    }
+                                }
+                                continue;
+                            }
                             if prev_was_inc && bt.kind==TokenKind::Str {
                                 if self.project.ast_inc.contains_key(&bt.value) {
                                     // println!("[macro_expand] Found include {} : updating defines", bt.value);
@@ -1167,6 +1227,7 @@ impl<'a,'b> TokenStream<'a,'b> {
                     }
                 }
                 // if s.len() != 0 {println!("{}", s);}
+                // if macro_name=="`MACRO_NAME" {self.display_status("MACRO");}
                 None
             }
         }

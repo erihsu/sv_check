@@ -28,12 +28,13 @@ pub struct Project {
     pub ast_list : Vec<Ast>,
     pub ast_inc : HashMap<String,Box<Ast>>,
     pub cur_dir : PathBuf,
+    pub comp_uvm : bool,
 }
 
 impl Project {
 
     // Create a project based on a vector of file/dir
-    pub fn from_list(list: Vec<PathBuf>, incs: Vec<PathBuf>) -> Result<Project,std::io::Error> {
+    pub fn from_list(list: Vec<PathBuf>, incs: Vec<PathBuf>, comp_uvm: bool) -> Result<Project,std::io::Error> {
         // Create the include dir list
         let mut incdir = HashSet::new();
         for d in incs {
@@ -63,20 +64,22 @@ impl Project {
         // println!("[Project] Filelist = {:?}", filelist);
         // println!("[Project] Include Dir = {:?}", incdir);
         let mut ast_inc = HashMap::new();
-        ast_inc.insert("uvm_macros.svh".to_string(),uvm_macro::get_uvm_macro());
+        if !comp_uvm {
+            ast_inc.insert("uvm_macros.svh".to_string(),uvm_macro::get_uvm_macro());
+        }
         Ok(Project {
             filelist,
             incdir,
             defines: HashMap::new(),
             cur_dir: PathBuf::new(),
             ast_list: Vec::new(),
-            ast_inc,
+            ast_inc, comp_uvm,
         })
     }
 
     // Create a project based on a source list (in .f format)
     #[allow(unused_mut)]
-    pub fn from_srcfile(srclist: PathBuf, incs: Vec<PathBuf>) -> Result<Project,std::io::Error> {
+    pub fn from_srcfile(srclist: PathBuf, incs: Vec<PathBuf>, comp_uvm: bool) -> Result<Project,std::io::Error> {
         // Create the include dir list
         let mut incdir = HashSet::new();
         for d in incs {
@@ -118,20 +121,21 @@ impl Project {
             }
         }
         let mut ast_inc = HashMap::new();
-        ast_inc.insert("uvm_macros.svh".to_string(),uvm_macro::get_uvm_macro());
+        if !comp_uvm {
+            ast_inc.insert("uvm_macros.svh".to_string(),uvm_macro::get_uvm_macro());
+        }
         Ok(Project {
             filelist,
             incdir,
             defines: HashMap::new(), // TODO: handle define from source list
             ast_list: Vec::new(),
             cur_dir: PathBuf::new(),
-            ast_inc,
+            ast_inc, comp_uvm,
         })
     }
 
-    // Compile all file from the project
+    // Parse one file
     pub fn parse_file(&mut self, fname: PathBuf) -> Result<Ast,SvError> {
-        rpt_set_fname!(&fname);
         // rpt_s!(MsgID::InfoStatus, "Parsing include");
         let mut src = Source::from_file(fname.clone())?;
         let mut ts = TokenStream::new(&mut src, self);
@@ -207,10 +211,12 @@ impl Project {
         match f {
             Some(f_abs) => {
                 // println!("Compiling include file {:?}", f_abs);
+                rpt_push_fname!(f_abs);
                 match self.parse_file(f_abs.clone()) {
                     Ok(ast) => {self.ast_inc.insert(inc_name,Box::new(ast));}
                     Err(e) => rpt_e!(e)
                 }
+                rpt_pop_fname!();
                 Ok(())
             }
             None => Err(SvError::new(SvErrorKind::Include, token, "".to_string()))

@@ -15,6 +15,7 @@ pub enum SvErrorKind {
     Token,
     Syntax,
     Missing,
+    Scope,
     // NotSupported,
 }
 
@@ -44,6 +45,10 @@ impl SvError {
         SvError {kind:SvErrorKind::Missing, token: Token::new(TokenKind::EOF, "".to_owned(), Position::new()), txt: txt.to_string()}
     }
 
+    pub fn scope(txt: &str) -> SvError {
+        SvError {kind:SvErrorKind::Scope, token: Token::new(TokenKind::EOF, "".to_owned(), Position::new()), txt: txt.to_string()}
+    }
+
     pub fn token(pos: Position, s: String) -> SvError {
         SvError {
             kind:SvErrorKind::Syntax,
@@ -61,13 +66,14 @@ impl SvError {
 impl fmt::Display for SvError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match &self.kind {
-            SvErrorKind::Null         => write!(f, "End of file reached."),
-            SvErrorKind::Io           => write!(f, "{}", self.txt),
+            SvErrorKind::Null         => write!(f, " | End of file reached."),
+            SvErrorKind::Io           => write!(f, " {}", self.txt),
             SvErrorKind::Include      => write!(f, ":{} | File {} not found", self.token.pos, self.token.value),
             SvErrorKind::Eof          => write!(f, ":{} | Unexpected end of file !", self.token.pos),
             SvErrorKind::Token        => write!(f, ":{} | Unable to parse token \"{}\" !",self.token.pos, self.token.value),
             SvErrorKind::Syntax       => write!(f, ":{} | Unexpected '{}' ({}) in {} !",self.token.pos, self.token.value, self.token.kind, self.txt),
-            SvErrorKind::Missing      => write!(f, "Missing {} !", self.txt),
+            SvErrorKind::Missing      => write!(f, " | Missing {} !", self.txt),
+            SvErrorKind::Scope        => write!(f, " | Unknown scope {} !", self.txt),
             // SvErrorKind::NotSupported => write!(f, ":{} -- Unsuported syntax : {} !",self.token.pos, self.txt),
         }
     }

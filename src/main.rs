@@ -45,6 +45,9 @@ struct Cli {
     /// Only parse file, no elaboration/type check/...
     #[structopt( long = "parse_only")]
     parse_only: bool,
+    /// Compile a UVM library
+    #[structopt( long = "comp_uvm")]
+    comp_uvm: bool,
 }
 
 fn main() {
@@ -53,11 +56,11 @@ fn main() {
     //
     let mut proj;
     if !args.files.is_empty() {
-        proj = Project::from_list(args.files, args.incdir).unwrap_or_else(|e| exit!("{:?} ",e));
+        proj = Project::from_list(args.files, args.incdir, args.comp_uvm).unwrap_or_else(|e| exit!("{:?} ",e));
     }
     // Sourcelist file -> parse it
     else if let Some(srclist) = args.srclist  {
-        proj = Project::from_srcfile(srclist, args.incdir).unwrap_or_else(|e| exit!("{:?} ",e));
+        proj = Project::from_srcfile(srclist, args.incdir, args.comp_uvm).unwrap_or_else(|e| exit!("{:?} ",e));
     }
     // No file or source list provided -> display help message
     else {

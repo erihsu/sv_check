@@ -1,5 +1,4 @@
 use crate::lex::token::{Token,TokenKind::*};
-
 use crate::lex::position::Position;
 use crate::ast::{Ast,MacroDef};
 

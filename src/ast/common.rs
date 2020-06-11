@@ -556,6 +556,17 @@ pub fn parse_opt_slice(ts : &mut TokenStream, node: &mut AstNode, allow_range: b
     Ok(())
 }
 
+pub fn parse_opt_signess(ts : &mut TokenStream, node: &mut AstNode) -> Result<(),SvError> {
+    let t = ts.next_t(true)?;
+    if t.kind == TokenKind::KwSigning {
+        node.attr.insert("signing".to_owned(), t.value);
+        ts.flush(1);
+    } else {
+        ts.rewind(1);
+    }
+    Ok(())
+}
+
 pub fn parse_opt_delay(ts : &mut TokenStream, node : &mut AstNode) -> Result<(), SvError> {
     let t = ts.next_t(true)?;
     if t.kind == TokenKind::Hash {
@@ -1149,50 +1160,54 @@ pub fn parse_macro(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), SvEr
             // if ts.project.defines.contains_key(&name) {println!("[parse_macro] {} : line {} | Macro {} already defined", ts.source.get_filename(),t.pos,t.value);}
             let line_num = t.pos.line;
             ts.flush(1);
-            // Try next token: if new line, it was an empty defined: add it ot the list and rewind
-            t = ts.next_t(true)?;
-            // println!("[parse_macro] Token following define {:?} = {:?} (line_num={})", name, t,line_num);
-            // ts.display_status("define start");
-            if t.pos.line != line_num {
-                // println!("[parse_macro] Define {} ", name);
-                ts.project.defines.insert(name,None);
-                ts.rewind(0);
-            } else {
-                let mut macro_def = MacroDef::new();
-                if t.kind == TokenKind::ParenLeft {
+            // Try next token: if new line, it was an empty define: add it to the list, rewind and return
+            // Also support End Of file
+            match ts.next_t(true) {
+                Ok(t) if t.pos.line != line_num => {
+                    ts.project.defines.insert(name,None);
+                    ts.rewind(0);
+                    return Ok(())
+                }
+                Err(e) => return if e.kind==SvErrorKind::Null {Ok(())} else {Err(e)},
+                // Err(e) => return if e.kind==SvErrorKind::Null || e.kind==SvErrorKind::Eof {Ok(())} else {Err(e)},
+                Ok(t_) => t = t_,
+            }
+            let mut macro_def = MacroDef::new();
+            if t.kind == TokenKind::ParenLeft {
+                // way to differentiate body from port might need more work ...
+                t = ts.next_t(true)?;
+                if t.kind == TokenKind::Ident {
+                    ts.rewind(0);
                     ts.flush(1);
-                    t = ts.next_t(true)?;
-                    if t.kind == TokenKind::Ident {
-                        loop {
-                            t = ts.next_t(false)?;
-                            match t.kind {
-                                TokenKind::Ident => {
-                                    let port_name = t.value;
-                                    // Optional Default value i.e. "= expr"
-                                    t = ts.next_t(true)?;
-                                    if t.kind == TokenKind::OpEq {
-                                        ts.flush(1);
-                                        let def_val = ts.collect_until(true)?;
-                                        macro_def.ports.push((port_name,def_val));
-                                    } else {
-                                        ts.rewind(1);
-                                        macro_def.ports.push((port_name,Vec::new()));
-                                    }
-                                    loop_args_break_cont!(ts,"macro arguments",ParenRight);
+                    loop {
+                        t = ts.next_t(false)?;
+                        match t.kind {
+                            TokenKind::Ident => {
+                                let port_name = t.value;
+                                // Optional Default value i.e. "= expr"
+                                t = ts.next_t(true)?;
+                                if t.kind == TokenKind::OpEq {
+                                    ts.flush(1);
+                                    let def_val = ts.collect_until(true)?;
+                                    macro_def.ports.push((port_name,def_val));
+                                } else {
+                                    ts.rewind(1);
+                                    macro_def.ports.push((port_name,Vec::new()));
                                 }
-                                TokenKind::LineCont => {},
-                                _ =>  return Err(SvError::syntax(t,"define. Expecting port name/expression")),
+                                loop_args_break_cont!(ts,"macro arguments",ParenRight);
                             }
+                            TokenKind::LineCont => {},
+                            _ =>  return Err(SvError::syntax(t,"define. Expecting port name/expression")),
                         }
                     }
                 }
-                ts.rewind(0);
-                macro_def.body = ts.collect_until(false)?;
-                // println!("[parse_macro] Define {} = {:#?}", name, macro_def);
-                // println!("[parse_macro] Define {} ", name);
-                ts.project.defines.insert(name,Some(macro_def));
             }
-            // ts.display_status("define end");
+            ts.rewind(0);
+            // if name == "`" {ts.display_status("Macro : post port");}
+            macro_def.body = ts.collect_until(false)?;
+            // if name == "`" {println!("[parse_macro] Define {} = {:#?}", name, macro_def);}
+            // println!("[parse_macro] Define {} ", name);
+            ts.project.defines.insert(name,Some(macro_def));
         }
         "`pragma" => {
             t = expect_t!(ts,"type",TokenKind::Ident);
@@ -1518,6 +1533,7 @@ pub fn parse_expr(ts : &mut TokenStream, cntxt: ExprCntxt, allow_type: bool) -> 
                     _ => return Err(SvError::syntax(t, "expression"))
                 }
             }
+            TokenKind::KwIff if cntxt==ExprCntxt::Sensitivity => {ts.rewind(1);break;},
             TokenKind::KwOr if cntxt==ExprCntxt::Sensitivity => {ts.rewind(1);break;},
             TokenKind::Casting => {
                 ts.flush(1); // Consume Casting operator
@@ -1538,22 +1554,7 @@ pub fn parse_expr(ts : &mut TokenStream, cntxt: ExprCntxt, allow_type: bool) -> 
                 parse_opt_slice(ts,&mut node_e,false,false)?;
                 t = ts.next_t(true)?;
                 if t.kind == TokenKind::ParenLeft {
-                    ts.flush(1);
-                    t = ts.next_t(true)?;
-                    if t.kind != TokenKind::ParenRight {
-                        ts.rewind(1);
-                        loop {
-                            node_e.child.push(parse_expr(ts,ExprCntxt::ArgList,false)?);
-                            t = ts.next_t(false)?;
-                            match t.kind {
-                                TokenKind::Comma => {},
-                                TokenKind::ParenRight => break,
-                                _ => return Err(SvError::syntax(t, "new arguments. Expecting , or )"))
-                            }
-                        }
-                    } else {
-                        ts.flush(1);
-                    }
+                    parse_func_call(ts, &mut node_e, false)?;
                     t = ts.next_t(true)?;
                 }
                 // Check that the statement will finish on next token and rewind
@@ -1647,12 +1648,39 @@ pub fn parse_expr(ts : &mut TokenStream, cntxt: ExprCntxt, allow_type: bool) -> 
             // Streaming operator
             TokenKind::OpSL |
             TokenKind::OpSR if is_first && cntxt==ExprCntxt::FieldList=> {
-                allow_ident = true;
+                allow_ident = false;
                 allow_op    = false;
                 ts.flush(1);
                 let mut nc = AstNode::new(AstNodeKind::Operation, t.pos);
                 nc.attr.insert("kind".to_owned(),t.value.clone());
-                // TODO: maybe improve check here : optional slice size followed by concatenation
+                // Check optional slice size : type/identifier/constant expression
+                t = ts.next_t(true)?;
+                match t.kind {
+                    TokenKind::TypeIntVector |
+                    TokenKind::TypeIntAtom   => {
+                        let mut ncc = AstNode::new(AstNodeKind::Type, t.pos);
+                        ncc.attr.insert("type".to_owned(), t.value.clone());
+                        ts.flush(1);
+                        parse_opt_signess(ts,&mut ncc)?;
+                        nc.child.push(ncc);
+                    }
+                    TokenKind::Ident => nc.child.push(parse_ident_hier(ts)?),
+                    TokenKind::Integer => {
+                        let mut ncc = AstNode::new(AstNodeKind::Value, t.pos);
+                        ncc.attr.insert("value".to_owned(), t.value);
+                        nc.child.push(ncc);
+                    }
+                    _ => ts.rewind(1)
+                }
+                // Concatenation expression
+                expect_t!(ts,"streaming expression",TokenKind::CurlyLeft);
+                let mut ncc = AstNode::new(AstNodeKind::Concat, t.pos);
+                loop {
+                    // TODO: support "with" after each expression ...
+                    ncc.child.push(parse_expr(ts,ExprCntxt::FieldList,false)?);
+                    loop_args_break_cont!(ts,"concatenation",CurlyRight);
+                }
+                nc.child.push(ncc);
                 node_e.child.push(nc);
             }
             // Operator with two operand
@@ -1693,27 +1721,6 @@ pub fn parse_expr(ts : &mut TokenStream, cntxt: ExprCntxt, allow_type: bool) -> 
                 }
                 node_e.child.push(nc);
                 // println!("{}", node_e);
-                allow_ident = false;
-                allow_op    = true;
-            }
-            TokenKind::KwWith if !is_first => {
-                t = ts.next_t(true)?;
-                // TODO : handle case of randomize with() {}
-                match t.kind {
-                    TokenKind::CurlyLeft => {
-                        ts.rewind(0);
-                        parse_constraint(ts,&mut node_e)?;
-                    }
-                    TokenKind::ParenLeft => {
-                        ts.flush(2);
-                        let mut nc = AstNode::new(AstNodeKind::Constraint, t.pos);
-                        nc.attr.insert("kind".to_owned(),"with".to_owned());
-                        nc.child.push(parse_expr(ts,ExprCntxt::Arg,false)?);
-                        node_e.child.push(nc);
-                        ts.flush(1);
-                    }
-                    _ => return Err(SvError::syntax(t, "with constraint. Expecting ( or {"))
-                }
                 allow_ident = false;
                 allow_op    = true;
             }
@@ -1769,6 +1776,7 @@ pub fn parse_expr(ts : &mut TokenStream, cntxt: ExprCntxt, allow_type: bool) -> 
                 node_e.kind = AstNodeKind::Type;
                 node_e.attr.insert("type".to_owned(), t.value.clone());
                 ts.flush(1);
+                parse_opt_signess(ts,&mut node_e)?;
                 parse_opt_slice(ts,&mut node_e,true,false)?;
                 break; // next character should be , or ) : no need to consume it, will be checked by caller
             }
@@ -1786,6 +1794,9 @@ pub fn parse_expr(ts : &mut TokenStream, cntxt: ExprCntxt, allow_type: bool) -> 
                 node_e.kind = AstNodeKind::Type;
                 node_e.attr.insert("type".to_owned(), t.value.clone());
                 ts.flush(1);
+                if t.kind == TokenKind::TypeIntAtom {
+                    parse_opt_signess(ts,&mut node_e)?;
+                }
                 break; // next character should be , or ) : no need to consume it, will be checked by caller
             }
             TokenKind::KwVirtual if allow_type => {
@@ -1921,7 +1932,29 @@ pub fn parse_member_or_call(ts : &mut TokenStream, is_first: bool) -> Result<Ast
     if t.kind == TokenKind::Dot {
         ts.flush(1);
         n.child.push(parse_member_or_call(ts, false)?);
+        t = ts.next_t(true)?;
     }
+    // Check for constraint
+    if t.kind == TokenKind::KwWith {
+        t = ts.next_t(true)?;
+        match t.kind {
+            TokenKind::CurlyLeft => {
+                ts.rewind(0);
+                parse_constraint(ts,&mut n)?;
+            }
+            TokenKind::ParenLeft => {
+                ts.flush(2);
+                let mut nc = AstNode::new(AstNodeKind::Constraint, t.pos);
+                nc.attr.insert("kind".to_owned(),"with".to_owned());
+                nc.child.push(parse_expr(ts,ExprCntxt::Arg,false)?);
+                n.child.push(nc);
+                ts.flush(1); // Consume closing parenthesis
+            }
+            _ => return Err(SvError::syntax(t, "with constraint. Expecting ( or {"))
+        }
+        // rpt_t!(MsgID::InfoStatus,&t,&format!("{}", nc));
+    }
+
     ts.rewind(1);
     // ts.display_status("parse_member_or_call: end");
     // println!("[parse_member_or_call] {}", n);
@@ -1933,6 +1966,7 @@ pub fn parse_system_task(ts : &mut TokenStream) -> Result<AstNode, SvError> {
     let mut t = expect_t!(ts,"system task",TokenKind::SystemTask);
     let mut n = AstNode::new(AstNodeKind::SystemTask, t.pos);
     let mut name = t.value.clone();
+    let mut allow_type = false;
     // Handle special cases
     match t.value.as_ref() {
         "$test" | "$value" => {
@@ -1943,17 +1977,18 @@ pub fn parse_system_task(ts : &mut TokenStream) -> Result<AstNode, SvError> {
             name.push_str(&t.value);
         }
         "$async" => {
-            t = expect_t!(ts,"system task $plusargs",TokenKind::SystemTask);
+            t = expect_t!(ts,"system task $async",TokenKind::SystemTask);
             if t.value != "$and" && t.value != "$nand" && t.value != "$or" && t.value != "$nor" {
                 return Err(SvError::syntax(t, "system task. Expecting $and/$nand/$or/$nor"))
             }
             name.push_str(&t.value);
-            t = expect_t!(ts,"system task $plusargs",TokenKind::SystemTask);
+            t = expect_t!(ts,"system task $async",TokenKind::SystemTask);
             if t.value != "$array" && t.value != "$plane" {
-                return Err(SvError::syntax(t, "system task. Expecting $array/$plane"))
+                return Err(SvError::syntax(t, "system task $async. Expecting $array/$plane"))
             }
             name.push_str(&t.value);
         }
+        "$bits" => allow_type = true,
         _ => {},
     }
 
@@ -1961,7 +1996,7 @@ pub fn parse_system_task(ts : &mut TokenStream) -> Result<AstNode, SvError> {
     if t.kind==TokenKind::ParenLeft {
         ts.flush(1);
         loop {
-            n.child.push(parse_expr(ts,ExprCntxt::ArgList,false)?);
+            n.child.push(parse_expr(ts,ExprCntxt::ArgList,allow_type)?);
             loop_args_break_cont!(ts,"system task",ParenRight);
         }
     } else {
@@ -2028,6 +2063,7 @@ pub fn parse_func_call(ts : &mut TokenStream, node: &mut AstNode, is_param: bool
                 } else {
                     ts.rewind(1);
                 }
+                parse_opt_slice(ts,&mut node_p,true,true)?;
                 nps.child.push(node_p);
             }
             TokenKind::TypeReal    |

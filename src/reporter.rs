@@ -191,6 +191,8 @@ impl Reporter {
                 MsgID::ErrToken      => format!("Unable to parse token {}.", token.value),
                 MsgID::ErrInvalid    => format!("Invalid {} in {}.", token.value, cntxt),
                 MsgID::ErrMacro      => format!("Macro {} {}.", token.value, cntxt),
+                MsgID::InfoStatus    => format!("Token = {} | {}.", token.value, cntxt),
+                MsgID::DbgStatus     => format!("Token = {} | {}.", token.value, cntxt),
                 _ => cntxt.to_string(),
             };
         // print the message to a file and/or stdout (TODO)

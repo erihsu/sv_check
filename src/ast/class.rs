@@ -1,6 +1,8 @@
 // This file is part of sv_check and subject to the terms of MIT Licence
 // Copyright (c) 2019, clams@mail.com
 
+#[allow(unused_imports)]
+use crate::reporter::{REPORTER, MsgID};
 use crate::error::{SvError};
 use crate::lex::token::{TokenKind};
 use crate::lex::token_stream::TokenStream;
@@ -70,6 +72,8 @@ pub fn parse_class(ts : &mut TokenStream) -> Result<AstNode, SvError> {
         let mut node_e = AstNode::new(AstNodeKind::Extends, t.pos);
         parse_class_type(ts, &mut node_e, false)?;
         node.child.push(node_e);
+        // rpt_t!(MsgID::DbgStatus,&t,&format!("Class declaration -> {}", node));
+        // ts.display_status("class extends");
         t = ts.next_t(false)?;
         if t.kind == TokenKind::Comma && is_class_intf {
             loop {
@@ -99,7 +103,7 @@ pub fn parse_class(ts : &mut TokenStream) -> Result<AstNode, SvError> {
     // Loop on class item
     loop {
         t = ts.next_t(true)?;
-        // println!("[class] Top level token={}", t);
+        // if node.attr["name"]=="uvm_reg_field" {rpt_t!(MsgID::DbgStatus, &t , "[class] Top level token");}
         match t.kind {
             // Class members : known types, identifier, rand qualifier
             TokenKind::TypeIntAtom   |
@@ -307,7 +311,7 @@ pub fn parse_class_members(ts : &mut TokenStream, node : &mut AstNode) -> Result
             TokenKind::KwOutput |
             TokenKind::KwInout  |
             TokenKind::KwRef    if allow_dir => {
-                node.attr.insert("dir".to_owned(), t.value);
+                node_m.attr.insert("dir".to_owned(), t.value);
                 allow_dir = false
             }
             _ => break
@@ -393,7 +397,7 @@ pub fn parse_func(ts : &mut TokenStream, node : &mut AstNode, is_oob : bool, is_
     // Expect return type or function name
     let mut nr = AstNode::new(AstNodeKind::Type, t.pos);
     match t.kind {
-        TokenKind::KwNew => ts.rewind(0),
+        TokenKind::KwNew => {},
         _ => {
             let mut nt = ts.next_t(true)?;
             match nt.kind {
@@ -401,16 +405,20 @@ pub fn parse_func(ts : &mut TokenStream, node : &mut AstNode, is_oob : bool, is_
                 TokenKind::Scope if is_oob => {
                     nt = ts.next_t(true)?;
                     match nt.kind {
-                        TokenKind::KwNew => ts.rewind(0),
+                        TokenKind::KwNew => {},
                         _ => {
-                            parse_data_type(ts,&mut nr, 1)?;
-                            node_f.child.push(nr);
+                            nt = ts.next_t(true)?;
+                            // Support implicit return type
+                            if nt.kind != TokenKind::ParenLeft {
+                                parse_data_type(ts,&mut nr, 1)?;
+                                node_f.child.push(nr);
+                            }
                         }
                     }
                 }
                 // Implicit return type, i.e logic
                 // TODO: generate a warning ?
-                TokenKind::ParenLeft => ts.rewind(0),
+                TokenKind::ParenLeft => {},
                 _ => {
                     parse_data_type(ts,&mut nr, 1)?;
                     node_f.child.push(nr);
@@ -418,30 +426,17 @@ pub fn parse_func(ts : &mut TokenStream, node : &mut AstNode, is_oob : bool, is_
             }
         }
     }
+    // Optionnal scope in case of out of block
+    if is_oob {
+        parse_opt_scope(ts,&mut node_f)?;
+    } else {
+        ts.rewind(0);
+    }
     // Expect function name
     t = ts.next_t(false)?;
     match t.kind {
-        TokenKind::KwNew => {node_f.attr.insert("name".to_owned(),t.value);},
-        // In case of ident check if this is not a class specifier followed by new (only for out-of-block definition)
-        TokenKind::Ident => {
-            if is_oob {
-                node_f.attr.insert("scope".to_owned(),t.value);
-                t = ts.next_t(false)?;
-                if t.kind==TokenKind::Scope {
-                    t = ts.next_t(false)?;
-                    if t.kind == TokenKind::KwNew {
-                        node_f.attr.insert("name".to_owned(),t.value);
-                    } else {
-                        return Err(SvError::syntax(t, "function header. Expecting function name"));
-                    }
-                } else {
-                    return Err(SvError::syntax(t, "function header. Expecting function name"));
-                }
-            } else {
-                node_f.attr.insert("name".to_owned(),t.value);
-            }
-        }
-        // Expect data type
+        TokenKind::KwNew |
+        TokenKind::Ident => {node_f.attr.insert("name".to_owned(),t.value);}
         _ => return Err(SvError::syntax(t, "function header. Expecting function name"))
     }
     // Optional function port definition
@@ -535,16 +530,15 @@ pub fn parse_task(ts : &mut TokenStream, node : &mut AstNode) -> Result<(), SvEr
             _ => return Err(SvError::syntax(t, "task declaration. Expecting method qualifier"))
         }
     }
-    t = ts.next_t(false)?;
+    t = ts.next_t(true)?;
     if t.kind==TokenKind::KwAutomatic || t.kind==TokenKind::KwStatic {
         node_task.attr.insert("lifetime".to_owned(),t.value);
-        t = ts.next_t(false)?;
+        ts.flush(1); // consume lifetime
     }
 
     // Expect task name
-    if t.kind != TokenKind::Ident {
-        return Err(SvError::syntax(t, "task declaration. Expecting task name"))
-    }
+    parse_opt_scope(ts,&mut node_task)?;
+    t = expect_t!(ts,"task name",TokenKind::Ident);
     node_task.attr.insert("name".to_owned(),t.value);
 
     // Optional function port definition
@@ -568,7 +562,7 @@ pub fn parse_task(ts : &mut TokenStream, node : &mut AstNode) -> Result<(), SvEr
     }
     // Expect ;
     if t.kind!=TokenKind::SemiColon {
-        return Err(SvError::syntax(t, "function declaration. Expecting ;"));
+        return Err(SvError::syntax(t, "task declaration. Expecting ;"));
     }
 
     if no_body {
@@ -582,11 +576,9 @@ pub fn parse_task(ts : &mut TokenStream, node : &mut AstNode) -> Result<(), SvEr
         match t.kind {
             TokenKind::KwEndTask => break,
             TokenKind::KwReturn => {
-                node.child.push(AstNode::new(AstNodeKind::Return, ts.get_pos()));
-                t = ts.next_t(false)?;
-                if t.kind!=TokenKind::SemiColon {
-                    return Err(SvError::syntax(t,"return statement. Expecting ;"));
-                }
+                node_task.child.push(AstNode::new(AstNodeKind::Return, ts.get_pos()));
+                ts.flush(1); // consume the return
+                expect_t!(ts,"return statement",TokenKind::SemiColon);
             },
             _ => allow_decl = parse_class_stmt(ts,&mut node_task,false,allow_decl,!has_args, false)?,
         }
@@ -619,7 +611,7 @@ pub fn parse_class_stmt(ts : &mut TokenStream, node: &mut AstNode, is_block: boo
     loop {
         let mut t = ts.next_t(true)?;
         was_decl = false;
-        // println!("[parse_stmt] Token = {} (block={}, allow decl={}, port={})", t, is_block,allow_decl,allow_port);
+        // if t.pos.line==56 && t.pos.col==9 {println!("[parse_stmt] Token = {} (block={}, allow decl={}, port={})", t, is_block,allow_decl,allow_port);}
         // ts.display_status("");
         match t.kind {
             TokenKind::KwBegin => {
@@ -727,9 +719,11 @@ pub fn parse_class_stmt(ts : &mut TokenStream, node: &mut AstNode, is_block: boo
                         break;
                     } else {
                         ts.rewind(1);
-                        let mut ns = AstNode::new(AstNodeKind::Statement, ts.get_pos());
-                        parse_class_stmt_or_block(ts, &mut ns, allow_assign)?;
-                        n.child.push(ns);
+                        parse_class_stmt(ts, &mut n, false, true, false, allow_assign)?;
+                        // let mut ns = AstNode::new(AstNodeKind::Statement, ts.get_pos());
+                        // parse_class_stmt(ts, &mut ns, false, true, false, allow_assign)?;
+                        // // parse_class_stmt_or_block(ts, &mut ns, allow_assign)?;
+                        // n.child.push(ns);
                     }
                 }
                 // println!("Fork {}", n);
@@ -835,7 +829,8 @@ pub fn parse_class_stmt(ts : &mut TokenStream, node: &mut AstNode, is_block: boo
                 parse_class_members(ts, node)?;
                 was_decl = true;
             },
-            TokenKind::CurlyLeft => {
+            TokenKind::CurlyLeft  |
+            TokenKind::OpIncrDecr => {
                 was_decl = parse_assign_or_call(ts,node,ExprCntxt::Stmt)?;
             }
             TokenKind::KwEnd if is_block => {
@@ -864,7 +859,7 @@ pub fn parse_class_stmt(ts : &mut TokenStream, node: &mut AstNode, is_block: boo
                 n.child.push(parse_sensitivity(ts,false)?);
                 t = ts.next_t(true)?;
                 if t.kind != TokenKind::SemiColon {
-                    parse_class_stmt_or_block(ts, &mut n, allow_assign)?;
+                    parse_class_stmt(ts,&mut n, false, false,false, false)?;
                 } else {
                     ts.flush(1);
                     // break;
@@ -1105,11 +1100,19 @@ pub fn parse_class_for(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), 
         let mut ns = AstNode::new(AstNodeKind::Declaration, t.pos);
         match t.kind {
             TokenKind::SemiColon => break, // Handle empty init
+            // Ident means either a user type variable declaration or simply a variable name already declared
+            // Check next to disambigue
             TokenKind::Ident => {
-                if !is_decl {
-                    ns.kind = AstNodeKind::Assign;
+                let nt = ts.next_t(true)?;
+                ts.rewind(2);
+                if nt.kind == TokenKind::Ident {
+                    is_decl = true;
+                    parse_data_type(ts, &mut ns, 2)?;
+                } else {
+                    if !is_decl {
+                        ns.kind = AstNodeKind::Assign;
+                    }
                 }
-                ts.rewind(1);
             },
             _ => {
                 is_decl = true;
@@ -1122,13 +1125,14 @@ pub fn parse_class_for(ts : &mut TokenStream, node: &mut AstNode) -> Result<(), 
                 parse_data_type(ts, &mut ns, 2)?;
             }
         }
-        parse_var_decl_name(ts, &mut ns,ExprCntxt::StmtList,true,false)?;
+        // ts.display_status(&format!("{}", ns));
+        parse_var_decl_name(ts, &mut ns, ExprCntxt::StmtList, true, false)?;
         ns.attr.insert("loop".to_owned(), "init".to_owned());
         node_hdr.child.push(ns);
         // Stop loop on semicolon, consume comma if any
         loop_args_break_cont!(ts,"for loop init statement",SemiColon);
     }
-    ts.flush(1); // clear semi-colon
+
     // Parse test part : end on ;
     let mut ns = parse_expr(ts,ExprCntxt::Stmt,false)?;
     ns.attr.insert("loop".to_owned(), "test".to_owned());

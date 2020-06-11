@@ -84,7 +84,7 @@ pub struct TypeStruct {
 }
 
 
-// TODO: KeYVal is used to stored param default value: it should not be a string, but something to handle parameterized param
+// TODO: KeyVal is used to stored param default value: it should not be a string, but something to handle parameterized param
 #[derive(Debug, Clone)]
 pub struct KeyVal {pub key:String, pub val:String}
 type VecKeyVal = Vec<KeyVal>;
@@ -93,11 +93,9 @@ impl From<&AstNode> for VecKeyVal {
     fn from(node: &AstNode) -> Self {
         let mut v = VecKeyVal::new();
         for np in &node.child {
-            // println!("[VecKeyVal] {:?} : Params {:?}",node.attr, np);
+            // rpt_s!(MsgID::DbgStatus,&format!("VecKeyVal : {}",np));
             match np.kind {
-                AstNodeKind::Param => {
-                    v.push(KeyVal{key:np.attr["name"].clone(), val: param_value(np)});
-                }
+                AstNodeKind::Param => v.push(KeyVal{key:np.attr["name"].clone(), val: param_value(np)}),
                 _ => rpt!(MsgID::DbgSkip,np,"Params child")
             }
         }
@@ -141,10 +139,11 @@ impl TypeUser {
 
 impl From<&AstNode> for TypeUser {
     fn from(node: &AstNode) -> Self {
-        // if node.kind==AstNodeKind::Extends {println!("[TypeUser] {:#?}",node);}
+        // if !node.attr.contains_key("type") {rpt!(MsgID::ErrNotFound,node,"No type attribute");}
         TypeUser {
             name   : node.attr["type"].to_owned(),
-            packed : node.attr.get("packed").map_or(None,|x| Some(x.clone())),
+            packed : node.attr.get("packed").cloned(),
+            // packed : node.attr.get("packed").map_or(None,|x| Some(x.clone())),
             scope  : node.child.get(0)
                         .filter(|x| x.kind==AstNodeKind::Scope)
                         .map(|x| x.attr["name"].clone()),
@@ -187,8 +186,8 @@ impl From<&AstNode> for DefType {
             }
             AstNodeKind::VIntf => DefType::VIntf(TypeVIntf::from(node)),
             _ => {
-                if node.attr.contains_key("intf") {
-                    return DefType::User(TypeUser::new(node.attr["intf"].clone()));
+                if let Some(intf) = node.attr.get("intf") {
+                    return DefType::User(TypeUser::new(intf.to_string()));
                 }
                 // println!("[DefType] {:?}", node.attr);
                 match node.attr.get("type") {
